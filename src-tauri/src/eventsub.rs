@@ -1,0 +1,446 @@
+// Twitch EventSub WebSocket client - real-time events (redemptions, follows,
+// subs) without polling. In Rust because WebView2 Tracking Prevention kills
+// webview WebSockets. Flow: connect, get session_id from session_welcome, POST
+// subscriptions referencing it, receive notifications; reconnect on
+// session_reconnect before closing the old socket.
+//
+// Redemption subscriptions need broadcaster/mod scope (channel:read:redemptions)
+// and 403 for regular viewers - handled silently.
+
+use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter};
+use tokio_tungstenite::tungstenite::Message;
+
+const EVENTSUB_WS: &str = "wss://eventsub.wss.twitch.tv/ws";
+
+// --- Wire types ---
+
+#[derive(Deserialize)]
+struct Envelope {
+    metadata: Metadata,
+    #[serde(default)]
+    payload: Value,
+}
+
+#[derive(Deserialize)]
+struct Metadata {
+    message_type: String,
+}
+
+// --- Public entry point ---
+
+/// Runs the EventSub WebSocket loop in a background Tokio task. Exits when
+/// stop_rx fires or the connection fails unrecoverably.
+pub async fn run(
+    app: AppHandle,
+    broadcaster_id: String,
+    moderator_id: String,
+    access_token: String,
+    mut stop_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    let mut connect_url = EVENTSUB_WS.to_string();
+
+    // Outer loop: handles session_reconnect by re-entering with a new URL.
+    'reconnect: loop {
+        let ws = match tokio_tungstenite::connect_async(&connect_url).await {
+            Ok((ws, _)) => ws,
+            Err(e) => {
+                eprintln!("[eventsub] connect failed: {e}");
+                return;
+            }
+        };
+
+        let (mut write, mut read) = ws.split();
+
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => {
+                    let _ = write.send(Message::Close(None)).await;
+                    return;
+                }
+                msg = read.next() => {
+                    match msg {
+                        Some(Ok(Message::Text(text))) => {
+                            let env: Envelope = match serde_json::from_str(&text) {
+                                Ok(e) => e,
+                                Err(_) => continue,
+                            };
+
+                            match env.metadata.message_type.as_str() {
+                                "session_welcome" => {
+                                    let session_id = env.payload
+                                        .get("session").and_then(|s| s.get("id"))
+                                        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                                    // Channel point redemptions. 403 = not mod/broadcaster; log and continue
+                                    // so the rest of the app keeps working.
+                                    if let Err(e) = subscribe_channel_point_redemptions(
+                                        &session_id, &broadcaster_id, &access_token,
+                                    ).await {
+                                        eprintln!(
+                                            "[eventsub] subscription skipped \
+                                             (need mod/broadcaster on this channel): {e}"
+                                        );
+                                    }
+                                    // AutoMod-held messages. Same 403-for-non-mods story, but this one also
+                                    // needs moderator_id in its own right (not just
+                                    // broadcaster_id): Twitch delivers these only to the
+                                    // specific moderator's session, never as a broadcast to
+                                    // anyone watching.
+                                    if let Err(e) = subscribe_automod_message_hold(
+                                        &session_id, &broadcaster_id, &moderator_id, &access_token,
+                                    ).await {
+                                        eprintln!(
+                                            "[eventsub] automod subscription skipped \
+                                             (need mod/broadcaster on this channel): {e}"
+                                        );
+                                    }
+                                    // Outgoing raids FROM this channel (the watched streamer raiding
+                                    // someone). Unlike the two above, channel.raid needs no
+                                    // scope/mod status per Twitch's docs - any token can
+                                    // subscribe for any broadcaster, so a failure here is a
+                                    // genuine error worth logging loudly, not the
+                                    // expected-for-most-viewers 403.
+                                    if let Err(e) = subscribe_channel_raid(
+                                        &session_id, &broadcaster_id, &access_token,
+                                    ).await {
+                                        eprintln!("[eventsub] raid subscription failed: {e}");
+                                    }
+
+                                    // Hype Train and Predictions. These need
+                                    // channel:read:hype_train / channel:read:predictions,
+                                    // which ONLY the broadcaster can grant - so for most
+                                    // viewers they 403 and are skipped (same as
+                                    // redemptions/automod). They light up when you watch your
+                                    // own channel. Failures logged quietly.
+                                    for (kind, ver) in [
+                                        ("channel.hype_train.begin", "1"),
+                                        ("channel.hype_train.progress", "1"),
+                                        ("channel.hype_train.end", "1"),
+                                        ("channel.prediction.begin", "1"),
+                                        ("channel.prediction.progress", "1"),
+                                        ("channel.prediction.lock", "1"),
+                                        ("channel.prediction.end", "1"),
+                                    ] {
+                                        if let Err(e) = subscribe_broadcaster_event(
+                                            &session_id, &broadcaster_id, &access_token, kind, ver,
+                                        ).await {
+                                            eprintln!(
+                                                "[eventsub] {kind} subscription skipped \
+                                                 (needs broadcaster scope): {e}"
+                                            );
+                                        }
+                                    }
+                                }
+                                "session_keepalive" => {
+                                    // Server heartbeat - nothing to do.
+                                }
+                                "session_reconnect" => {
+                                    // Connect to the new URL BEFORE closing this socket to avoid a gap in
+                                    // event delivery.
+                                    if let Some(url) = env.payload
+                                        .get("session").and_then(|s| s.get("reconnect_url"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        connect_url = url.to_string();
+                                    }
+                                    let _ = write.send(Message::Close(None)).await;
+                                    continue 'reconnect;
+                                }
+                                "notification" => {
+                                    dispatch_notification(&app, &env.payload);
+                                }
+                                "revocation" => {
+                                    // Subscription revoked (scope removed, channel banned the app). Log but
+                                    // keep running, since other subscriptions may still be
+                                    // active.
+                                    eprintln!(
+                                        "[eventsub] subscription revoked: {}",
+                                        env.payload
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                        Some(Ok(Message::Close(_))) | None => {
+                            eprintln!("[eventsub] connection closed");
+                            return;
+                        }
+                        Some(Err(e)) => {
+                            eprintln!("[eventsub] read error: {e}");
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+// --- Subscription ---
+
+async fn subscribe_channel_point_redemptions(
+    session_id: &str,
+    broadcaster_id: &str,
+    access_token: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+
+    let body = json!({
+        "type":    "channel.channel_points_custom_reward_redemption.add",
+        "version": "1",
+        "condition": { "broadcaster_user_id": broadcaster_id },
+        "transport": { "method": "websocket", "session_id": session_id }
+    });
+
+    let resp = client
+        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+        .header("Client-ID",     crate::oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body   = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+
+    eprintln!("[eventsub] subscribed to channel point redemptions for {broadcaster_id}");
+    Ok(())
+}
+
+/// Subscribes to AutoMod-held messages for `broadcaster_id`, delivered to the
+/// `moderator_id` moderator. Per Twitch's docs, over WebSocket transport this
+/// MUST equal the token owner's own user id - see start_eventsub in main.rs for
+/// why that value is threaded all the way through rather than reusing
+/// broadcaster_id for both, as the redemptions subscription does.
+async fn subscribe_automod_message_hold(
+    session_id: &str,
+    broadcaster_id: &str,
+    moderator_id: &str,
+    access_token: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+
+    // Version 1 rather than V2 - both wrap the held text in { "text": "...",
+    // "fragments": [...] }, but V2 adds per-fragment reason annotations the
+    // AutoMod queue UI doesn't use. V1 is enough.
+    let body = json!({
+        "type":    "automod.message.hold",
+        "version": "1",
+        "condition": {
+            "broadcaster_user_id": broadcaster_id,
+            "moderator_user_id":   moderator_id,
+        },
+        "transport": { "method": "websocket", "session_id": session_id }
+    });
+
+    let resp = client
+        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+        .header("Client-ID",     crate::oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body   = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+
+    eprintln!("[eventsub] subscribed to automod holds for {broadcaster_id} (moderator {moderator_id})");
+    Ok(())
+}
+
+/// Subscribes to channel.raid FROM `broadcaster_id` - fires when the watched
+/// channel raids another. Per Twitch's docs this type needs no authorization
+/// (works for any broadcaster, regardless of the token's relationship to them),
+/// unlike the redemptions/automod subscriptions which need the logged-in user
+/// to be a mod/broadcaster. main.js uses it to auto-navigate the player to the
+/// raided-into channel - see the eventsub-raid listener.
+async fn subscribe_channel_raid(
+    session_id: &str,
+    broadcaster_id: &str,
+    access_token: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+
+    let body = json!({
+        "type":    "channel.raid",
+        "version": "1",
+        "condition": { "from_broadcaster_user_id": broadcaster_id },
+        "transport": { "method": "websocket", "session_id": session_id }
+    });
+
+    let resp = client
+        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+        .header("Client-ID",     crate::oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body   = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+
+    eprintln!("[eventsub] subscribed to outgoing raids for {broadcaster_id}");
+    Ok(())
+}
+
+/// Generic subscribe for events conditioned only on broadcaster_user_id (hype
+/// train, predictions). Kept separate from the bespoke helpers above, which
+/// have distinct conditions (moderator_user_id, from_/to_broadcaster). Most
+/// viewers lack the read scopes these need, so callers treat failure as an
+/// expected skip.
+async fn subscribe_broadcaster_event(
+    session_id: &str,
+    broadcaster_id: &str,
+    access_token: &str,
+    event_type: &str,
+    version: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+
+    let body = json!({
+        "type":    event_type,
+        "version": version,
+        "condition": { "broadcaster_user_id": broadcaster_id },
+        "transport": { "method": "websocket", "session_id": session_id }
+    });
+
+    let resp = client
+        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+        .header("Client-ID",     crate::oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body   = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+
+    eprintln!("[eventsub] subscribed to {event_type} for {broadcaster_id}");
+    Ok(())
+}
+
+// --- Notification dispatch ---
+
+fn dispatch_notification(app: &AppHandle, payload: &Value) {
+    let event_type = payload
+        .get("subscription").and_then(|s| s.get("type"))
+        .and_then(|v| v.as_str()).unwrap_or("");
+
+    let Some(event) = payload.get("event") else { return };
+
+    match event_type {
+        "channel.channel_points_custom_reward_redemption.add" => {
+            let redeemer = event.get("user_name")
+                .and_then(|v| v.as_str()).unwrap_or("someone").to_string();
+            let reward   = event.get("reward").cloned().unwrap_or(Value::Null);
+            let reward_title = reward.get("title")
+                .and_then(|v| v.as_str()).unwrap_or("?").to_string();
+            let reward_cost  = reward.get("cost")
+                .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let user_input = event.get("user_input")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
+            let _ = app.emit("eventsub-redeem", json!({
+                "redeemer":     redeemer,
+                "reward_title": reward_title,
+                "reward_cost":  reward_cost,
+                "user_input":   user_input,
+            }));
+        }
+        "automod.message.hold" => {
+            let user_name = event.get("user_name")
+                .and_then(|v| v.as_str()).unwrap_or("someone").to_string();
+            let user_id = event.get("user_id")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            // V1's `message` is an object { "text": "...", "fragments": [...] }, not a
+            // bare string - `.text` is the plain concatenated content, all the AutoMod
+            // queue UI needs.
+            let message = event.get("message")
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let msg_id = event.get("message_id")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let category = event.get("category")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let level = event.get("level").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+            // msg_id empty means the Allow/Deny buttons have nothing to act on - skip
+            // rather than show a useless entry.
+            if msg_id.is_empty() { return; }
+
+            let _ = app.emit("eventsub-automod-hold", json!({
+                "user_name": user_name,
+                "user_id":   user_id,
+                "message":   message,
+                "msg_id":    msg_id,
+                "category":  category,
+                "level":     level,
+            }));
+        }
+        "channel.raid" => {
+            let to_login = event.get("to_broadcaster_user_login")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let to_name = event.get("to_broadcaster_user_name")
+                .and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let viewers = event.get("viewers")
+                .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+            // to_login empty means main.js has nothing to navigate to - skip rather than
+            // emit a useless event.
+            if to_login.is_empty() { return; }
+
+            let _ = app.emit("eventsub-raid", json!({
+                "to_login": to_login,
+                "to_name":  to_name,
+                "viewers":  viewers,
+            }));
+        }
+        // Hype Train + Predictions: the event shapes are rich and the overlay
+        // (chat-events.js) wants most fields, so rather than re-map each one we
+        // forward the raw `event` plus a normalized `kind` the overlay switches on.
+        // The subscription-type suffix ("begin"/"progress"/"end"/"lock") is the
+        // state.
+        "channel.hype_train.begin"
+        | "channel.hype_train.progress"
+        | "channel.hype_train.end" => {
+            let phase = event_type.rsplit('.').next().unwrap_or("");
+            let _ = app.emit("eventsub-hypetrain", json!({
+                "phase": phase,
+                "event": event,
+            }));
+        }
+        "channel.prediction.begin"
+        | "channel.prediction.progress"
+        | "channel.prediction.lock"
+        | "channel.prediction.end" => {
+            let phase = event_type.rsplit('.').next().unwrap_or("");
+            let _ = app.emit("eventsub-prediction", json!({
+                "phase": phase,
+                "event": event,
+            }));
+        }
+        _ => {}
+    }
+}
