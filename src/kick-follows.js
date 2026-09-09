@@ -1,8 +1,7 @@
-// Local follow list behind Kick mode's sidebar "Following" and the info bar's Follow
-// toggle. LOCAL by necessity: Kick's real followed endpoint needs a site cookie the OAuth
-// token can't produce. Follow pins a channel; kick_followed_status answers which are live.
-// Stored in localStorage as {slug, name, avatar} (name/avatar cached so offline rows still
-// render).
+// local follow list behind Kick mode's sidebar "Following" and the info bar Follow
+// toggle. local by necessity: Kick's real followed endpoint wants a site cookie the OAuth
+// token can't produce. follow pins a channel; kick_followed_status says which are live.
+// stored in localStorage as {slug, name, avatar} so offline rows still render
 
 const STORAGE_KEY = "kickFollows";
 
@@ -23,8 +22,7 @@ function write(follows) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(follows));
   } catch {
-    // Quota/serialization failure - the in-memory notify below still keeps this session
-    // correct.
+    // quota/serialization failure, the in-memory notify below still keeps this session right
   }
   for (const cb of listeners) {
     try {
@@ -35,7 +33,6 @@ function write(follows) {
   }
 }
 
-/** @returns {{slug, name, avatar}[]} */
 export function getKickFollows() {
   return read();
 }
@@ -45,8 +42,7 @@ export function isKickFollowed(slug) {
   return read().some((f) => f.slug === s);
 }
 
-/** Follow if not followed, else unfollow. `meta` ({name, avatar}) seeds the cached row on
- *  follow. @returns {boolean} the new state. */
+// meta ({name, avatar}) seeds the cached row on follow
 export function toggleKickFollow(slug, meta = {}) {
   const s = String(slug || "").toLowerCase();
   if (!s) return false;
@@ -66,8 +62,7 @@ export function toggleKickFollow(slug, meta = {}) {
   return true;
 }
 
-/** Subscribe to follow-list changes (fired after the write), so the sidebar re-renders
- *  when the info bar toggles. */
+// fires after the write, so the sidebar re-renders when the info bar toggles
 export function onKickFollowsChange(cb) {
   listeners.add(cb);
   return () => listeners.delete(cb);

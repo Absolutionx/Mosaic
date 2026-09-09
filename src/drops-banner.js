@@ -1,6 +1,5 @@
-// The "this channel has Drops enabled" bar above the video. See drops.js for why: relay
-// playback never counts toward Drops, so a drops-enabled channel needs a route to where
-// it does. Self-contained (own DOM, listeners, state).
+// "this channel has Drops enabled" bar above the video. relay playback never counts
+// toward Drops (see drops.js), so a drops-enabled channel needs a route to where it does
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { streamHasDropsEnabled } from "./drops.js";
@@ -12,8 +11,8 @@ const dropsBannerViewers = document.getElementById("drops-banner-viewers");
 const dropsBannerDismiss = document.getElementById("drops-banner-dismiss");
 const channelInput = document.getElementById("channel-input");
 
-// The login the user dismissed the banner for - re-renders must not reopen it, but a
-// different channel re-evaluates fresh.
+// the login we dismissed the banner for, so re-renders don't reopen it but a
+// different channel re-evaluates fresh
 let manuallyDismissedFor = null;
 
 export function updateDropsBanner(channel, stream) {
@@ -31,7 +30,6 @@ export function updateDropsBanner(channel, stream) {
   dropsBanner.style.display = "flex";
 }
 
-/** Clears the dismissal memory on Stop, so a fresh session re-evaluates from scratch. */
 export function resetDropsDismissal() {
   manuallyDismissedFor = null;
 }
@@ -40,8 +38,8 @@ export function hideDropsBanner() {
   dropsBanner.style.display = "none";
 }
 
-// target="_blank" does nothing in a Tauri webview - intercept the click and hand the URL
-// to openUrl(). The href stays set so it's right-click-copyable.
+// target="_blank" does nothing in a Tauri webview, so intercept the click and hand
+// the url to openUrl(). href stays set so it's right-click-copyable
 dropsBannerLink.addEventListener("click", (e) => {
   e.preventDefault();
   openUrl(dropsBannerLink.href).catch((err) => {

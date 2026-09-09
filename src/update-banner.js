@@ -1,6 +1,5 @@
-// "Update available" banner + one-click in-app update. Windows only (the updater plugin is
-// registered only there; macOS re-downloads the .dmg). Checks latest.json on startup.
-// Self-contained; main.js calls checkForUpdate().
+// "update available" banner + one-click in-app update. Windows only (the updater plugin
+// is registered only there; macOS re-downloads the .dmg). checks latest.json on startup
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -40,13 +39,10 @@ function hideUpdateBanner() {
   }
 }
 
-/**
- * Checks for an update and shows the banner if one exists. Fails OPEN: any error just means
- * no banner, never a blocked startup.
- */
+// fails open: any error just means no banner, never a blocked startup
 export async function checkForUpdate() {
   try {
-    // Windows-only: the updater plugin isn't registered elsewhere.
+    // Windows-only, the updater plugin isn't registered elsewhere
     if (platform() !== "windows") return;
 
     const update = await check();
@@ -68,8 +64,7 @@ export async function checkForUpdate() {
       let downloaded = 0;
       let contentLength = 0;
       try {
-        // Streams progress, then installs. On Windows (NSIS passive) the installer runs and the
-        // app relaunches below.
+        // on Windows (NSIS passive) the installer runs and the app relaunches below
         await update.downloadAndInstall((event) => {
           switch (event.event) {
             case "Started":
@@ -106,12 +101,12 @@ export async function checkForUpdate() {
 
     hideUpdateBanner();
     _bannerEl = buildBanner(update.version, onUpdate);
-    // If the deps banner is also showing (fixed to the top), stack below it.
+    // if the deps banner is also showing (pinned to the top), stack below it
     const depsVisible = document.getElementById("deps-banner")?.offsetParent !== null;
     if (depsVisible) _bannerEl.classList.add("below-deps");
     appEl.appendChild(_bannerEl);
   } catch (err) {
-    // No endpoint yet, offline, not configured, wrong platform - all fine.
+    // no endpoint yet, offline, not configured, wrong platform, all fine
     console.log("[updater] no update / check skipped:", err?.message || err);
   }
 }

@@ -1,11 +1,9 @@
-// Kick.com live-status lookup for Twitch -> Kick failover (see tryKickFailover
-// in main.js). Uses Kick's unofficial v2 channel endpoint, behind Cloudflare;
-// every error reports rather than panics, and the frontend reads any Err as
-// "couldn't check", never "offline".
+// Kick.com live-status lookup for Twitch -> Kick failover (see tryKickFailover in main.js). uses
+// Kick's unofficial v2 channel endpoint, behind Cloudflare; every error reports rather than panics,
+// and the frontend reads any Err as "couldn't check", never "offline".
 //
-// Transport: curl subprocess first, reqwest fallback. Cloudflare fingerprints
-// the TLS handshake (JA3/JA4), so reqwest's rustls handshake gets a 403 while
-// curl's passes. reqwest stays as a fallback for machines without curl.
+// transport: curl subprocess first, reqwest fallback. Cloudflare fingerprints the TLS handshake
+// (JA3/JA4), so reqwest's rustls handshake gets a 403 while curl's passes. reqwest stays as a fallback for machines without curl
 
 use std::sync::Arc;
 
@@ -14,93 +12,61 @@ use crate::stream_relay::{proxied_hls_url, StreamRelayState};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// Browser-ish UA sent on both transports. For curl it's mostly cosmetic
-/// (Cloudflare passes curl on its TLS fingerprint); for the reqwest fallback
-/// it's load-bearing, since reqwest's default UA is a guaranteed block even
-/// before the TLS fingerprint gets a say.
+// browser-ish UA sent on both transports. for curl it's mostly cosmetic (Cloudflare passes curl on
+// its TLS fingerprint); for the reqwest fallback it's load-bearing, since reqwest's default UA is a guaranteed block even before the TLS fingerprint gets a say
 const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
      AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 #[derive(serde::Serialize)]
 pub struct KickLiveInfo {
-    /// Kick's HLS master playlist, already wrapped in the local hls-proxy so hls.js
-    /// can fetch it CORS-free (the proxy is host-agnostic and rewrites nested
-    /// playlist URIs through itself, so Kick rides the exact path Twitch VODs
-    /// do).
+    // Kick's HLS master playlist, already wrapped in the local hls-proxy so hls.js can fetch it CORS-free (the proxy is host-agnostic and rewrites nested playlist URIs through itself, so Kick rides the exact path Twitch VODs do)
     pub proxied_url: String,
     pub title: String,
     pub viewer_count: u64,
     pub category: String,
-    /// Kick chatroom id, used by kick_chat.rs to subscribe to the Pusher channel
-    /// `chatrooms.{id}.v2`. None if the payload didn't include one (chat then
-    /// isn't offered).
+    // used by kick_chat.rs to subscribe to the Pusher channel chatrooms.{id}.v2. None if the payload didn't include one (chat then isn't offered)
     pub chatroom_id: Option<u64>,
-    /// The broadcaster's Kick USER id (distinct from chatroom_id and the channel
-    /// id). Required as `broadcaster_user_id` when POSTing a chat message
-    /// (kick_oauth.rs). None if absent, in which case sending isn't offered (chat
-    /// stays read-only) even when logged in.
+    // the broadcaster's Kick USER id (distinct from chatroom_id and the channel id). required as broadcaster_user_id when POSTing a chat message (kick_oauth.rs). None if absent, in which case sending isn't offered (chat stays read-only) even when logged in
     pub broadcaster_user_id: Option<u64>,
-    /// ISO-8601 UTC start time of this broadcast, when Kick's payload includes one.
-    /// Lets the frontend expand the live seek bar to the full elapsed time and an
-    /// accurate "behind live" readout (playback-controls.js's
-    /// liveDvrStreamStartedAt), like Twitch's get_live_vod_info does with a VOD's
-    /// created_at - see attachKickStream in main.js. Kick has no separate
-    /// on-demand VOD endpoint for an in-progress broadcast; get_kick_live_dvr
-    /// tries to find the session's in-progress RECORDING in the videos list
-    /// instead, and on success this also anchors the seek-bar-to-VOD offset math
-    /// (resolveKickDvr/onLiveDvrSeek). When that lookup fails, this still powers
-    /// the display and deep seeks clamp. None if no timestamp was found anywhere,
-    /// in which case Kick sessions fall back to the same buffer-relative display
-    /// Twitch uses in its first ~30-60s.
+    // ISO-8601 UTC start time of this broadcast, when Kick's payload includes one. lets the frontend
+    // expand the live seek bar to the full elapsed time and an accurate "behind live" readout
+    // (playback-controls.js's liveDvrStreamStartedAt), like Twitch's get_live_vod_info does with a VOD's
+    // created_at. Kick has no separate on-demand VOD endpoint for an in-progress broadcast;
+    // get_kick_live_dvr tries to find the session's in-progress RECORDING in the videos list instead, and
+    // on success this also anchors the seek-bar-to-VOD offset math (resolveKickDvr/onLiveDvrSeek). when
+    // that lookup fails, this still powers the display and deep seeks clamp. None if no timestamp was
+    // found anywhere, in which case Kick sessions fall back to the same buffer-relative display Twitch uses in its first ~30-60s
     pub started_at: Option<String>,
-    /// Kick's id for the CURRENT livestream session (distinct from channel, chatroom,
-    /// and user id - Kick mints a fresh one per broadcast). get_kick_live_dvr uses
-    /// it to pick this exact session's entry from the videos listing, so the DVR
-    /// swap can never land on last week's VOD. None if absent; DVR then falls back
-    /// to the is_live flag match.
+    // Kick's id for the CURRENT livestream session (distinct from channel, chatroom, and user id, Kick mints a fresh one per broadcast). get_kick_live_dvr uses it to pick this exact session's entry from the videos listing, so the DVR swap can never land on last week's VOD. None if absent; DVR then falls back to the is_live flag match
     pub livestream_id: Option<u64>,
-    // --- Channel-page fields (the info bar; see updateKickChannelInfoBar in
-    // main.js). All optional/defaulted: the bar renders whatever subset the
-    // payload carried, like the Twitch bar tolerates a null stream. ---
-    /// Display name (capitalization as the user styled it), vs the slug.
+    // display name (capitalization as the user styled it), vs the slug
     pub display_name: Option<String>,
-    /// The broadcaster's profile picture URL.
+    // the broadcaster's profile picture URL
     pub avatar: Option<String>,
-    /// Kick's verified checkmark. The payload carries this as an object when
-    /// verified and null when not (occasionally a plain bool) - normalized to a
-    /// bool here.
+    // Kick's verified checkmark. the payload carries this as an object when verified and null when not (occasionally a plain bool), normalized to a bool here
     pub verified: bool,
     pub followers_count: Option<u64>,
-    /// Broadcast language as Kick states it (usually a plain English word like
-    /// "English"; sometimes an ISO code - the frontend handles both).
+    // broadcast language as Kick states it (usually a plain English word like "English"; sometimes an ISO code, the frontend handles both)
     pub language: Option<String>,
     pub is_mature: bool,
-    /// Kick's freeform stream tags, when present.
+    // Kick's freeform stream tags, when present
     pub tags: Vec<String>,
-    /// The channel's custom subscriber badge art, one entry per tier ({months, src})
-    /// from the payload's subscriber_badges array. Passed to chat (connectKick ->
-    /// renderBadges) so a subscriber's badge shows the channel's own
-    /// months-matched art like kick.com's chat, falling back to a generic badge
-    /// when the channel has none. Empty when the payload carries none.
+    // the channel's custom subscriber badge art, one entry per tier ({months, src}) from the payload's subscriber_badges array. passed to chat (connectKick -> renderBadges) so a subscriber's badge shows the channel's own months-matched art like kick.com's chat, falling back to a generic badge when the channel has none
     pub subscriber_badges: Vec<KickSubscriberBadge>,
 }
 
-/// One tier of a channel's custom subscriber badge art - see
-/// KickLiveInfo::subscriber_badges.
+// one tier of a channel's custom subscriber badge art, see KickLiveInfo::subscriber_badges
 #[derive(serde::Serialize)]
 pub struct KickSubscriberBadge {
     pub months: u64,
     pub src: String,
 }
 
-/// Chat + identity info for a Kick channel REGARDLESS of live status - the
-/// offline-channel counterpart of get_kick_stream (which returns Ok(None) the
-/// moment a channel isn't live, discarding the very fields chat needs). Kick
-/// chatrooms stay open when offline, so watching an offline Kick channel should
-/// still connect chat - to READ the occasional message and, logged in, to SEND.
-/// Ok(None) only for a genuine 404 (no such channel). None of the
-/// livestream/playback fields are touched; this is purely the channel object's
-/// stable identity.
+// chat + identity info for a Kick channel REGARDLESS of live status, the offline-channel counterpart
+// of get_kick_stream (which returns Ok(None) the moment a channel isn't live, discarding the very
+// fields chat needs). Kick chatrooms stay open when offline, so watching an offline Kick channel
+// should still connect chat, to READ the occasional message and, logged in, to SEND. Ok(None) only for
+// a genuine 404 (no such channel). none of the livestream/playback fields are touched; this is purely the channel object's stable identity
 #[tauri::command]
 pub async fn get_kick_channel_chat_info(slug: String) -> Result<Option<serde_json::Value>, String> {
     let slug = slug.trim().to_lowercase();
@@ -116,7 +82,7 @@ pub async fn get_kick_channel_chat_info(slug: String) -> Result<Option<serde_jso
         return Ok(None); // 404: no such channel
     };
     let Some(chatroom_id) = json.pointer("/chatroom/id").and_then(|v| v.as_u64()) else {
-        // No chatroom on the payload - nothing chat can attach to.
+        // no chatroom on the payload, nothing chat can attach to
         return Ok(None);
     };
     Ok(Some(serde_json::json!({
@@ -138,19 +104,15 @@ pub async fn get_kick_channel_chat_info(slug: String) -> Result<Option<serde_jso
     })))
 }
 
-/// Returns Ok(Some(info)) if `slug` is currently live on Kick, else Ok(None)
-/// (offline OR no such channel - both "nothing to play", and
-/// no-such-Kick-channel is the EXPECTED outcome for most Twitch channels). Err
-/// is reserved for genuine can't-tell failures (network, Cloudflare challenge,
-/// unparseable JSON).
+// returns Ok(Some(info)) if slug is currently live on Kick, else Ok(None) (offline OR no such
+// channel, both "nothing to play", and no-such-Kick-channel is the EXPECTED outcome for most Twitch
+// channels). Err is reserved for genuine can't-tell failures (network, Cloudflare challenge, unparseable JSON)
 #[tauri::command]
 pub async fn get_kick_stream(
     slug: String,
     relay: tauri::State<'_, Arc<StreamRelayState>>,
 ) -> Result<Option<KickLiveInfo>, String> {
-    // Twitch logins are [a-z0-9_]; Kick slugs additionally use '-'. Anything
-    // outside that can't be a valid slug, and since it's interpolated into a URL
-    // path (and a curl argv), reject rather than try to encode.
+    // Twitch logins are [a-z0-9_]; Kick slugs additionally use '-'. anything outside that can't be a valid slug, and since it's interpolated into a URL path (and a curl argv), reject rather than try to encode
     let slug = slug.trim().to_lowercase();
     if slug.is_empty()
         || !slug
@@ -162,14 +124,12 @@ pub async fn get_kick_stream(
 
     let url = format!("https://kick.com/api/v2/channels/{slug}");
 
-    // Ok(None) here means HTTP 404: no such Kick channel.
+    // Ok(None) here means HTTP 404: no such Kick channel
     let Some(json) = fetch_kick_json(&url).await? else {
         return Ok(None);
     };
 
-    // `livestream` is null when offline. When present, is_live should be true -
-    // but check anyway rather than assume: Kick has been seen serving a stale
-    // livestream object right around stream end, exactly when this runs.
+    // livestream is null when offline. when present, is_live should be true, but check anyway rather than assume: Kick has been seen serving a stale livestream object right around stream end, exactly when this runs
     let is_live = json
         .pointer("/livestream/is_live")
         .and_then(|v| v.as_bool())
@@ -182,7 +142,7 @@ pub async fn get_kick_stream(
         .and_then(|v| v.as_str())
         .filter(|s| s.starts_with("http"))
     else {
-        // Live but no usable playback URL - treat as not-failoverable.
+        // live but no usable playback URL, treat as not-failoverable
         return Ok(None);
     };
 
@@ -203,13 +163,9 @@ pub async fn get_kick_stream(
             .unwrap_or("")
             .to_string(),
         chatroom_id: json.pointer("/chatroom/id").and_then(|v| v.as_u64()),
-        // The channel's owning user id. On /api/v2/channels this is the top-level
-        // `user_id` (the channel owner); `/user/id` is the same user's nested object
-        // as a fallback for payload shape drift.
+        // the channel's owning user id. on /api/v2/channels this is the top-level user_id (the channel owner); /user/id is the same user's nested object as a fallback for payload shape drift
         broadcaster_user_id: u64_at(&json, &["/user_id", "/user/id"]),
-        // Same field-name variants livestream_to_helix tries for browse/home listings,
-        // just rooted at /livestream instead of the livestream object being the JSON
-        // root - Kick's timestamp naming isn't consistent across its endpoints.
+        // same field-name variants livestream_to_helix tries for browse/home listings, just rooted at /livestream instead of the livestream object being the JSON root, Kick's timestamp naming isn't consistent across its endpoints
         started_at: str_at(
             &json,
             &["/livestream/created_at", "/livestream/started_at", "/livestream/start_time"],
@@ -263,23 +219,16 @@ pub async fn get_kick_stream(
     }))
 }
 
-/// Live-DVR source for a channel that is CURRENTLY live: the in-progress
-/// recording of this very broadcast, playable as a growing HLS VOD.
-///
-/// Twitch exposes this directly (an "archive" VOD exists from minute one); Kick
-/// has no dedicated endpoint, but for channels with VODs enabled the session's
-/// recording shows up in the channel's own videos listing while still live, with
-/// a uuid that resolves to a master playlist via /api/v1/video/{uuid} - the same
-/// pair of calls kick.com uses for its VOD pages. The recording grows as the
-/// broadcast continues (hls.js handles a growing playlist), trailing the edge by
-/// ~30-60s, like Twitch's in-progress VODs.
-///
-/// Matching WHICH listing entry is this session (rather than an older VOD) is
-/// deliberately strict: the livestream id from get_kick_stream when provided,
-/// else an is_live flag. No "newest entry" fallback - swapping onto last week's
-/// VOD because a seek went past the buffer would be far worse than the clamp
-/// this replaces. Ok(None) = no DVR available (VODs disabled, session not listed
-/// yet, or no playable source) - the frontend keeps clamp-with-notice then.
+// live-DVR source for a channel that is CURRENTLY live: the in-progress recording of this very
+// broadcast, playable as a growing HLS VOD. Twitch exposes this directly (an "archive" VOD exists from
+// minute one); Kick has no dedicated endpoint, but for channels with VODs enabled the session's
+// recording shows up in the channel's own videos listing while still live, with a uuid that resolves
+// to a master playlist via /api/v1/video/{uuid}, the same pair of calls kick.com uses for its VOD
+// pages. the recording grows as the broadcast continues (hls.js handles a growing playlist), trailing
+// the edge by ~30-60s. matching WHICH listing entry is this session (rather than an older VOD) is
+// deliberately strict: the livestream id from get_kick_stream when provided, else an is_live flag. no
+// "newest entry" fallback, swapping onto last week's VOD because a seek went past the buffer would be
+// far worse than the clamp this replaces. Ok(None) = no DVR available (VODs disabled, session not listed yet, or no playable source), the frontend keeps clamp-with-notice then
 #[tauri::command]
 pub async fn get_kick_live_dvr(
     slug: String,
@@ -295,8 +244,7 @@ pub async fn get_kick_live_dvr(
         return Err("invalid channel slug".into());
     }
 
-    // 1) The channel's videos listing - each entry is a livestream object with an
-    //    embedded {video: {uuid}} once a recording exists.
+    // 1) the channel's videos listing, each entry is a livestream object with an embedded {video: {uuid}} once a recording exists
     let url = format!("https://kick.com/api/v2/channels/{slug}/videos");
     let Some(json) = fetch_kick_json(&url).await? else {
         return Ok(None);
@@ -307,16 +255,14 @@ pub async fn get_kick_live_dvr(
     };
     let mut uuid: Option<String> = None;
     if let Some(want) = livestream_id {
-        // Exact session match. Field spelling tried in the known variants, same
-        // per-item tolerance as every other extractor here.
+        // exact session match. field spelling tried in the known variants, same per-item tolerance as every other extractor here
         uuid = items.iter().find_map(|v| {
             let id = u64_at(v, &["/id", "/livestream/id", "/video/live_stream_id"]);
             if id == Some(want) { uuid_of(v) } else { None }
         });
     }
     if uuid.is_none() {
-        // No id to match (or no entry carried it): accept an entry Kick itself flags
-        // as the live one.
+        // no id to match (or no entry carried it): accept an entry Kick itself flags as the live one
         uuid = items.iter().find_map(|v| {
             let live = v
                 .pointer("/is_live")
@@ -330,33 +276,26 @@ pub async fn get_kick_live_dvr(
         return Ok(None);
     };
 
-    // 2) Resolve the uuid to its (proxied) master playlist - shared with
-    //    kick_vod_playback below, which does the same for finished VODs.
+    // 2) resolve the uuid to its (proxied) master playlist, shared with kick_vod_playback below, which does the same for finished VODs
     let Some(proxied) = resolve_kick_video_url(&uuid, &relay).await? else {
-        // Invalid-looking uuid, 404, or listed but no playable source yet -
-        // recording may still be initializing right after stream start. Not an
-        // error; the frontend can simply not offer DVR this session.
+        // invalid-looking uuid, 404, or listed but no playable source yet, recording may still be initializing right after stream start. not an error; the frontend can simply not offer DVR this session
         return Ok(None);
     };
 
     Ok(Some(serde_json::json!({
-        // Wrapped in the local hls-proxy exactly like the live playlist, so hls.js
-        // fetches it CORS-free through the same relay path.
+        // wrapped in the local hls-proxy exactly like the live playlist, so hls.js fetches it CORS-free through the same relay path
         "proxied_vod_url": proxied,
     })))
 }
 
-/// Resolves a Kick video RECORDING uuid to its master playlist, wrapped in the
-/// local hls-proxy. Ok(None) = uuid malformed, video gone (404), or listed but
-/// carrying no playable `source` (recordings right after stream start, or VODs
-/// mid-processing). Shared by get_kick_live_dvr (in-progress recording) and
-/// kick_vod_playback (finished broadcasts) - same endpoint, same contract.
+// resolves a Kick video RECORDING uuid to its master playlist, wrapped in the local hls-proxy.
+// Ok(None) = uuid malformed, video gone (404), or listed but carrying no playable source (recordings
+// right after stream start, or VODs mid-processing). shared by get_kick_live_dvr (in-progress recording) and kick_vod_playback (finished broadcasts), same endpoint, same contract
 async fn resolve_kick_video_url(
     uuid: &str,
     relay: &Arc<StreamRelayState>,
 ) -> Result<Option<String>, String> {
-    // The uuid goes into a URL path - validate its shape (hex + dashes) for the
-    // same reason channel slugs are validated at every entry point here.
+    // the uuid goes into a URL path, validate its shape (hex + dashes) for the same reason channel slugs are validated at every entry point here
     if uuid.is_empty()
         || !uuid
             .chars()
@@ -379,15 +318,11 @@ async fn resolve_kick_video_url(
     Ok(Some(proxied_hls_url(relay, source).await?))
 }
 
-/// Past broadcasts for one channel - the Kick-mode counterpart of
-/// get_videos_for_login (main.rs), backing the same VODs page. Returns a JSON
-/// string of vods.js's expected Helix video shape ({id, title, created_at,
-/// duration, thumbnail_url, view_count}), with:
-///   - id = "kick:<recording uuid>". The prefix routes a card click to the Kick
-///     watch path in main.js (and keeps saved VOD progress keys from colliding
-///     with Twitch's numeric ids).
-///   - duration in Helix's "XhYmZs" spelling, so vods.js's existing
-///     parseDuration/parseDurationToSeconds work unchanged.
+// past broadcasts for one channel, the Kick-mode counterpart of get_videos_for_login (main.rs),
+// backing the same VODs page. returns a JSON string of vods.js's expected Helix video shape ({id,
+// title, created_at, duration, thumbnail_url, view_count}), with id = "kick:<recording uuid>" (the
+// prefix routes a card click to the Kick watch path in main.js, and keeps saved VOD progress keys from
+// colliding with Twitch's numeric ids) and duration in Helix's "XhYmZs" spelling so vods.js's existing parseDuration/parseDurationToSeconds work unchanged
 #[tauri::command]
 pub async fn kick_channel_videos(slug: String) -> Result<String, String> {
     let slug = slug.trim().to_lowercase();
@@ -400,8 +335,7 @@ pub async fn kick_channel_videos(slug: String) -> Result<String, String> {
     }
     let url = format!("https://kick.com/api/v2/channels/{slug}/videos");
     let Some(json) = fetch_kick_json(&url).await? else {
-        // 404: no such channel -> nothing to list, same clean-empty treatment as a
-        // Twitch channel with zero archives.
+        // 404: no such channel -> nothing to list, same clean-empty treatment as a Twitch channel with zero archives
         return Ok("[]".into());
     };
     let vods: Vec<_> = items_of(&json)
@@ -411,11 +345,8 @@ pub async fn kick_channel_videos(slug: String) -> Result<String, String> {
     serde_json::to_string(&vods).map_err(|e| e.to_string())
 }
 
-/// Playback URL for one finished Kick VOD - the id is whatever
-/// kick_channel_videos put on the card ("kick:<uuid>"; a bare uuid is accepted
-/// too). Errors (rather than returning empty) when there's no playable source,
-/// so main.js's watchKickVod shows a real reason instead of a silent black
-/// player.
+// playback URL for one finished Kick VOD, the id is whatever kick_channel_videos put on the card
+// ("kick:<uuid>"; a bare uuid is accepted too). errors (rather than returning empty) when there's no playable source, so main.js's watchKickVod shows a real reason instead of a silent black player
 #[tauri::command]
 pub async fn kick_vod_playback(
     video_id: String,
@@ -432,12 +363,10 @@ pub async fn kick_vod_playback(
     }
 }
 
-/// Normalizes one entry of /api/v2/channels/{slug}/videos (a livestream object
-/// with an embedded {video: {uuid}}) into the Helix video shape vods.js renders
-/// - see kick_channel_videos for the field contract. None = skipped: too
-/// malformed to render (no recording uuid), or the CURRENTLY-LIVE session's
-/// in-progress recording, which the listing includes but a past-broadcasts page
-/// shouldn't (it's already watchable live; get_kick_live_dvr wants that entry).
+// normalizes one entry of /api/v2/channels/{slug}/videos (a livestream object with an embedded
+// {video: {uuid}}) into the Helix video shape vods.js renders, see kick_channel_videos for the field
+// contract. None = skipped: too malformed to render (no recording uuid), or the CURRENTLY-LIVE
+// session's in-progress recording, which the listing includes but a past-broadcasts page shouldn't (it's already watchable live; get_kick_live_dvr wants that entry)
 fn video_entry_to_helix_vod(v: &serde_json::Value) -> Option<serde_json::Value> {
     let uuid = str_at(v, &["/video/uuid", "/uuid"])?;
     let live = v
@@ -452,7 +381,7 @@ fn video_entry_to_helix_vod(v: &serde_json::Value) -> Option<serde_json::Value> 
     let created = str_at(v, &["/start_time", "/created_at", "/video/created_at"])
         .map(to_iso_utc)
         .unwrap_or_default();
-    // Kick states duration in MILLISECONDS on this listing.
+    // Kick states duration in MILLISECONDS on this listing
     let secs = u64_at(v, &["/duration", "/video/duration"]).unwrap_or(0) / 1000;
     let thumb = str_at(
         v,
@@ -470,8 +399,7 @@ fn video_entry_to_helix_vod(v: &serde_json::Value) -> Option<serde_json::Value> 
     }))
 }
 
-/// Seconds -> Helix's duration spelling ("3h8m33s" / "45m12s" / "58s"), matching
-/// /helix/videos so the frontend's one duration parser covers both platforms.
+// seconds -> Helix's duration spelling ("3h8m33s" / "45m12s" / "58s"), matching /helix/videos so the frontend's one duration parser covers both platforms
 fn helix_duration(total_secs: u64) -> String {
     let h = total_secs / 3600;
     let m = (total_secs % 3600) / 60;
@@ -485,18 +413,14 @@ fn helix_duration(total_secs: u64) -> String {
     }
 }
 
-/// GET `url` and parse the body as JSON. Ok(None) = HTTP 404 (channel doesn't
-/// exist), Err = couldn't tell (network / Cloudflare / bad JSON).
-///
-/// curl first; falls back to reqwest ONLY when curl can't spawn (not on PATH). A
-/// curl run that spawns but fails - network error, Cloudflare 403, whatever - is
-/// a real answer about reachability, and reqwest would only do worse against the
-/// same Cloudflare, so no second attempt then.
+// GET url and parse the body as JSON. Ok(None) = HTTP 404 (channel doesn't exist), Err = couldn't
+// tell (network / Cloudflare / bad JSON). curl first; falls back to reqwest ONLY when curl can't spawn
+// (not on PATH). a curl run that spawns but fails (network error, Cloudflare 403, whatever) is a real
+// answer about reachability, and reqwest would only do worse against the same Cloudflare, so no second attempt then
 async fn fetch_kick_json(url: &str) -> Result<Option<serde_json::Value>, String> {
     match fetch_via_curl(url).await {
         Ok(outcome) => outcome,
-        // io::ErrorKind::NotFound from spawn = "curl isn't installed" - the one case
-        // where trying the other transport makes sense.
+        // io::ErrorKind::NotFound from spawn = "curl isn't installed", the one case where trying the other transport makes sense
         Err(spawn_err) if spawn_err.kind() == std::io::ErrorKind::NotFound => {
             fetch_via_reqwest(url).await
         }
@@ -504,18 +428,14 @@ async fn fetch_kick_json(url: &str) -> Result<Option<serde_json::Value>, String>
     }
 }
 
-/// Outer Err = curl failed to SPAWN (caller may fall back to reqwest). Inner
-/// Result/Option = same contract as fetch_kick_json.
+// outer Err = curl failed to SPAWN (caller may fall back to reqwest). inner Result/Option = same contract as fetch_kick_json
 async fn fetch_via_curl(
     url: &str,
 ) -> Result<Result<Option<serde_json::Value>, String>, std::io::Error> {
     let mut cmd = tokio::process::Command::new("curl");
     cmd.args([
         "-s",
-        // Body goes to stdout as usual; then curl appends the HTTP status on its own
-        // line. Needed because -s swallows errors and plain curl exits 0 even on a
-        // 403/404 - the status code is how 404 (clean "no such channel") is told
-        // apart from 403 (Cloudflare, "couldn't check").
+        // body goes to stdout as usual; then curl appends the HTTP status on its own line. needed because -s swallows errors and plain curl exits 0 even on a 403/404, the status code is how 404 (clean "no such channel") is told apart from 403 (Cloudflare, "couldn't check")
         "-w",
         "\n%{http_code}",
         "--max-time",
@@ -530,8 +450,7 @@ async fn fetch_via_curl(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // Same as every other subprocess in this app (see deps_check.rs): without it,
-        // each lookup flashes a console window.
+        // same as every other subprocess in this app (see deps_check.rs): without it, each lookup flashes a console window
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
@@ -539,15 +458,14 @@ async fn fetch_via_curl(
 
     Ok((|| {
         if !output.status.success() {
-            // -s hides curl's own error text; exit code is all there is. 28 = timeout, 6 =
-            // DNS, 7 = connect refused, per curl(1).
+            // -s hides curl's own error text; exit code is all there is. 28 = timeout, 6 = DNS, 7 = connect refused, per curl(1)
             return Err(format!(
                 "curl exited with code {:?}",
                 output.status.code()
             ));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // Split off the status line -w appended after the body.
+        // split off the status line -w appended after the body
         let (body, code) = stdout
             .rsplit_once('\n')
             .ok_or_else(|| "curl produced no output".to_string())?;
@@ -562,10 +480,7 @@ async fn fetch_via_curl(
     })())
 }
 
-/// The original reqwest transport, kept as the no-curl fallback. Expect this to
-/// 403 whenever Cloudflare is fingerprinting TLS (see module comment) - but on a
-/// machine without curl it's the only option, and Cloudflare's strictness has
-/// historically come and gone.
+// the original reqwest transport, kept as the no-curl fallback. expect this to 403 whenever Cloudflare is fingerprinting TLS (see module comment), but on a machine without curl it's the only option, and Cloudflare's strictness has historically come and gone
 async fn fetch_via_reqwest(url: &str) -> Result<Option<serde_json::Value>, String> {
     let client = reqwest::Client::builder()
         .user_agent(BROWSER_UA)
@@ -581,11 +496,10 @@ async fn fetch_via_reqwest(url: &str) -> Result<Option<serde_json::Value>, Strin
         .map_err(|e| format!("Kick request failed: {e}"))?;
 
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None); // no such Kick channel - nothing to fail over to
+        return Ok(None); // no such Kick channel, nothing to fail over to
     }
     if !resp.status().is_success() {
-        // 403 here is almost always Cloudflare challenging us rather than a real
-        // permission answer - genuinely can't tell.
+        // 403 here is almost always Cloudflare challenging us rather than a real permission answer, genuinely can't tell
         return Err(format!("Kick API returned {}", resp.status()));
     }
 
@@ -595,23 +509,16 @@ async fn fetch_via_reqwest(url: &str) -> Result<Option<serde_json::Value>, Strin
         .map_err(|e| format!("Kick API returned unparseable JSON: {e}"))
 }
 
-// --- Kick discovery: home / browse / search for the platform toggle ---
+// Kick discovery: home / browse / search for the platform toggle.
 //
-// Normalizes Kick's payloads into Helix-shaped objects so the same frontend
-// renderers (home.js, browse.js, sidebar.js) work unchanged - platform.js just
-// swaps command names. Each object also carries platform:"kick" (for click
-// routing) and profile_image_url (Kick embeds avatars, skipping a
-// get_users_info call).
-//
-// Endpoints are kick.com's own unofficial ones (curl transport, like
-// fetch_kick_json): featured-livestreams, stream/livestreams (with
-// subcategory/category filters), categories/top, and search. All undocumented,
-// so every extractor tries known field spellings and degrades per-item - schema
-// drift thins the grid, never blanks the app.
+// normalizes Kick's payloads into Helix-shaped objects so the same frontend renderers (home.js,
+// browse.js, sidebar.js) work unchanged, platform.js just swaps command names. each object also
+// carries platform:"kick" (for click routing) and profile_image_url (Kick embeds avatars, skipping a
+// get_users_info call). endpoints are kick.com's own unofficial ones (curl transport, like
+// fetch_kick_json): featured-livestreams, stream/livestreams (with subcategory/category filters),
+// categories/top, and search. all undocumented, so every extractor tries known field spellings and degrades per-item, schema drift thins the grid, never blanks the app
 
-/// Minimal percent-encoder for query VALUES (RFC 3986 unreserved set kept
-/// literal). No dependency pulled in - the app only encodes short user-typed
-/// search strings and category slugs.
+// minimal percent-encoder for query VALUES (RFC 3986 unreserved set kept literal). no dependency pulled in, the app only encodes short user-typed search strings and category slugs
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
@@ -625,19 +532,17 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// First string found at any of the given JSON pointer paths.
+// first string found at any of the given JSON pointer paths
 fn str_at<'a>(v: &'a serde_json::Value, paths: &[&str]) -> Option<&'a str> {
     paths.iter().find_map(|p| v.pointer(p).and_then(|x| x.as_str()))
 }
 
-/// First u64 found at any of the given JSON pointer paths.
+// first u64 found at any of the given JSON pointer paths
 fn u64_at(v: &serde_json::Value, paths: &[&str]) -> Option<u64> {
     paths.iter().find_map(|p| v.pointer(p).and_then(|x| x.as_u64()))
 }
 
-/// Kick timestamps come as "2023-02-26 01:27:10" (UTC, space-separated) in some
-/// payloads and proper ISO in others - normalize to ISO-8601 UTC so anything
-/// downstream treating started_at like Helix's works.
+// Kick timestamps come as "2023-02-26 01:27:10" (UTC, space-separated) in some payloads and proper ISO in others, normalize to ISO-8601 UTC so anything downstream treating started_at like Helix's works
 fn to_iso_utc(ts: &str) -> String {
     if ts.contains('T') {
         ts.to_string()
@@ -648,14 +553,9 @@ fn to_iso_utc(ts: &str) -> String {
     }
 }
 
-/// Normalizes one Kick livestream object (from featured-livestreams or
-/// stream/livestreams - both embed a `channel`) into a Helix-shaped stream. None
-/// = item too malformed to render; caller skips it.
+// normalizes one Kick livestream object (from featured-livestreams or stream/livestreams, both embed a channel) into a Helix-shaped stream. None = item too malformed to render; caller skips it
 fn livestream_to_helix(v: &serde_json::Value) -> Option<serde_json::Value> {
-    // The channel's slug is the watchable identity - without it a card can't do
-    // anything when clicked, so it's the one hard requirement. (/slug alone is NOT
-    // a fallback: on livestream objects that's the STREAM's url slug, not the
-    // channel's.)
+    // the channel's slug is the watchable identity, without it a card can't do anything when clicked, so it's the one hard requirement. (/slug alone is NOT a fallback: on livestream objects that's the STREAM's url slug, not the channel's.)
     let login = str_at(v, &["/channel/slug"])?;
     let title = str_at(v, &["/session_title", "/stream_title", "/title"]).unwrap_or("");
     let display =
@@ -687,9 +587,7 @@ fn livestream_to_helix(v: &serde_json::Value) -> Option<serde_json::Value> {
         // Helix-shaped core, consumed verbatim by the card builders:
         "user_login": login,
         "user_name": display,
-        // Prefixed so it can never collide with a real Twitch user id in the shared
-        // avatars map, and so hydrateAvatars can recognize and exclude it from
-        // get_users_info batches.
+        // prefixed so it can never collide with a real Twitch user id in the shared avatars map, and so hydrateAvatars can recognize and exclude it from get_users_info batches
         "user_id": match channel_id {
             Some(id) => format!("kick:{id}"),
             None => format!("kick:{login}"),
@@ -697,8 +595,7 @@ fn livestream_to_helix(v: &serde_json::Value) -> Option<serde_json::Value> {
         "title": title,
         "viewer_count": viewers,
         "game_name": game,
-        // Plain URL, no {width}x{height} template - thumbnailUrl()'s replace() calls
-        // are no-ops on it, verified in home.js/browse.js.
+        // plain URL, no {width}x{height} template, thumbnailUrl()'s replace() calls are no-ops on it, verified in home.js/browse.js
         "thumbnail_url": thumb,
         "type": "live",
         "started_at": if started.is_empty() { String::new() } else { to_iso_utc(started) },
@@ -710,14 +607,9 @@ fn livestream_to_helix(v: &serde_json::Value) -> Option<serde_json::Value> {
     }))
 }
 
-/// Normalizes one Kick subcategory into a Helix game shape ({id, name,
-/// box_art_url}). Kick's stable handle for a category is its SLUG (what the
-/// livestream-filter endpoint takes), so the slug goes in `id` - browse.js hands
-/// game.id straight back to kick_streams_for_category, like it hands Twitch game
-/// ids to get_streams_for_game_id.
+// normalizes one Kick subcategory into a Helix game shape ({id, name, box_art_url}). Kick's stable handle for a category is its SLUG (what the livestream-filter endpoint takes), so the slug goes in id, browse.js hands game.id straight back to kick_streams_for_category, like it hands Twitch game ids to get_streams_for_game_id
 fn subcategory_to_helix_game(v: &serde_json::Value) -> Option<serde_json::Value> {
-    // Search results have been seen both flat and wrapped ({document: {...}}, a
-    // search-engine hit envelope) - unwrap if present.
+    // search results have been seen both flat and wrapped ({document: {...}}, a search-engine hit envelope), unwrap if present
     let v = v.get("document").unwrap_or(v);
     let slug = str_at(v, &["/slug"])?;
     let name = str_at(v, &["/name"]).unwrap_or(slug);
@@ -735,8 +627,7 @@ fn subcategory_to_helix_game(v: &serde_json::Value) -> Option<serde_json::Value>
     }))
 }
 
-/// Kick list payloads arrive either as a bare array or wrapped Laravel-style
-/// ({data: [...]}) - accept both.
+// Kick list payloads arrive either as a bare array or wrapped Laravel-style ({data: [...]}), accept both
 fn items_of(json: &serde_json::Value) -> Vec<serde_json::Value> {
     if let Some(arr) = json.as_array() {
         return arr.clone();
@@ -751,19 +642,14 @@ fn normalize_streams(json: &serde_json::Value) -> Vec<serde_json::Value> {
     items_of(json).iter().filter_map(livestream_to_helix).collect()
 }
 
-/// Top/featured live streams - Kick-mode counterpart of get_top_live_streams
-/// (home carousel/grid + sidebar Top Channels). Same contract: a JSON string of
-/// a plain Helix-shaped stream array.
+// top/featured live streams, Kick-mode counterpart of get_top_live_streams (home carousel/grid + sidebar Top Channels). same contract: a JSON string of a plain Helix-shaped stream array
 #[tauri::command]
 pub async fn kick_top_live_streams() -> Result<String, String> {
-    // Kick has renamed/moved its unofficial endpoints before, and a 404 here
-    // previously became a silent "[]" - which blanked the entire Kick home feed
-    // AND the sidebar's Live Channels list (both fed by this command) while
-    // watch/chat kept working off the still-alive /api/v2/channels. So: try the
-    // known spellings of the featured feed in order, and fall back to the general
-    // live list (the same endpoint Browse pages through, sorted by viewers) -
-    // visually equivalent for a "top live" rail. First candidate that yields any
-    // normalizable streams wins.
+    // Kick has renamed/moved its unofficial endpoints before, and a 404 here previously became a silent
+    // "[]", which blanked the entire Kick home feed AND the sidebar's Live Channels list (both fed by this
+    // command) while watch/chat kept working off the still-alive /api/v2/channels. so: try the known
+    // spellings of the featured feed in order, and fall back to the general live list (the same endpoint
+    // Browse pages through, sorted by viewers), visually equivalent for a "top live" rail. first candidate that yields any normalizable streams wins
     const CANDIDATES: [&str; 3] = [
         "https://kick.com/stream/featured-livestreams/en",
         "https://kick.com/api/v2/featured-livestreams/en?limit=40",
@@ -777,34 +663,23 @@ pub async fn kick_top_live_streams() -> Result<String, String> {
                 if !streams.is_empty() {
                     return serde_json::to_string(&streams).map_err(|e| e.to_string());
                 }
-                // Parsed but empty/unrecognizable - try the next spelling.
+                // parsed but empty/unrecognizable, try the next spelling
             }
-            Ok(None) => {} // 404: endpoint gone - try the next spelling.
+            Ok(None) => {} // 404: endpoint gone, try the next spelling
             Err(e) => last_err = Some(e), // remember, but keep trying
         }
     }
-    // Every candidate came back empty. If any genuinely errored, surface that
-    // (home.js logs it) rather than pretend Kick has zero live channels.
+    // every candidate came back empty. if any genuinely errored, surface that (home.js logs it) rather than pretend Kick has zero live channels
     match last_err {
         Some(e) => Err(e),
         None => Ok("[]".into()),
     }
 }
 
-/// Where /stream/livestreams pagination stops being trusted. The endpoints take
-/// page= but none of this is documented; if a schema change makes Kick ignore
-/// the param, every page returns page 1's content and infinite scroll appends
-/// the same cards forever. Capping bounds that worst case at a few duplicate
-/// screens while leaving normal browsing untouched.
+// where /stream/livestreams pagination stops being trusted. the endpoints take page= but none of this is documented; if a schema change makes Kick ignore the param, every page returns page 1's content and infinite scroll appends the same cards forever. capping bounds that worst case at a few duplicate screens while leaving normal browsing untouched
 const MAX_KICK_PAGES: u32 = 8;
 
-/// Separate (much higher) cap for the CATEGORIES grid, which pages the full
-/// subcategories listing rather than a live-streams feed: Kick has hundreds of
-/// categories and "expand fully" is the whole point of that grid, so 8 pages
-/// (256 items) would cut it short. The duplicate-loop worst case is additionally
-/// bounded on the frontend now - browse.js dedupes appended pages by id and
-/// stops after several consecutive pages that added nothing - so a big cap here
-/// no longer risks a long visible dupe crawl.
+// separate (much higher) cap for the CATEGORIES grid, which pages the full subcategories listing rather than a live-streams feed: Kick has hundreds of categories and "expand fully" is the whole point of that grid, so 8 pages (256 items) would cut it short. the duplicate-loop worst case is additionally bounded on the frontend now (browse.js dedupes appended pages by id and stops after several consecutive empty pages), so a big cap here no longer risks a long visible dupe crawl
 const MAX_KICK_CATEGORY_PAGES: u32 = 64;
 
 fn page_from_cursor(cursor: &Option<String>) -> u32 {
@@ -815,9 +690,7 @@ fn page_from_cursor(cursor: &Option<String>) -> u32 {
         .unwrap_or(1)
 }
 
-/// Whether a page-numbered listing should advertise another page: a full page
-/// suggests more; a short one is the end. next_page_url is checked first when
-/// present (Laravel paginators state it outright).
+// whether a page-numbered listing should advertise another page: a full page suggests more; a short one is the end. next_page_url is checked first when present (Laravel paginators state it outright)
 fn next_cursor(
     json: &serde_json::Value,
     got: usize,
@@ -836,9 +709,7 @@ fn next_cursor(
     }
 }
 
-/// Paged live-streams list - Kick-mode counterpart of get_live_streams_page
-/// (Browse's Live Channels tab). Cursor is just a stringified page number,
-/// opaque to the frontend either way.
+// paged live-streams list, Kick-mode counterpart of get_live_streams_page (Browse's Live Channels tab). cursor is just a stringified page number, opaque to the frontend either way
 #[tauri::command]
 pub async fn kick_live_streams_page(cursor: Option<String>) -> Result<String, String> {
     let page = page_from_cursor(&cursor);
@@ -853,10 +724,7 @@ pub async fn kick_live_streams_page(cursor: Option<String>) -> Result<String, St
         .map_err(|e| e.to_string())
 }
 
-/// Appends `list` into `games`, skipping any whose id is already in `seen`
-/// (empty ids are always kept - they can't be deduped and dropping them would
-/// silently lose categories). Merges the ranked top list and the first
-/// subcategories page without showing the overlap twice. See kick_top_games.
+// appends list into games, skipping any whose id is already in seen (empty ids are always kept, they can't be deduped and dropping them would silently lose categories). merges the ranked top list and the first subcategories page without showing the overlap twice. see kick_top_games
 fn push_unique_games(
     list: Vec<serde_json::Value>,
     games: &mut Vec<serde_json::Value>,
@@ -870,29 +738,22 @@ fn push_unique_games(
     }
 }
 
-/// Top categories - Kick-mode counterpart of get_top_games (Browse's Categories
-/// grid). Same envelope: {games: [...], cursor}.
-///
-/// TWO listings stitched into one cursor walk, because neither alone gives what
-/// the grid needs:
-///
-///   * categories/top is viewer-ranked (the right FIRST screen) but serves only
-///     a short fixed list and doesn't genuinely paginate - which is exactly why
-///     the grid used to stop after ~2 rows: its short first page read as "end of
-///     list" under the full-page-means-more heuristic, so no cursor was handed
-///     back and infinite scroll had nothing to walk.
-///   * the plain subcategories listing DOES paginate through every category, but
-///     isn't viewer-ranked, so it makes a poor first screen alone.
-///
-/// So: page 1 (cursor null) serves categories/top asking for as much as it gives,
-/// then hands back the cursor "sub:1" - every later page walks the full
-/// subcategories listing ("sub:N"). The top categories inevitably appear AGAIN
-/// in that walk; browse.js dedupes by game id, so the overlap is invisible.
-/// Bare-numeric cursors are still accepted (treated as sub-listing page numbers)
-/// so any in-flight cursor from before this change keeps working.
+// top categories, Kick-mode counterpart of get_top_games (Browse's Categories grid). same envelope:
+// {games: [...], cursor}. TWO listings stitched into one cursor walk, because neither alone gives what
+// the grid needs:
+//   * categories/top is viewer-ranked (the right FIRST screen) but serves only a short fixed list and
+//     doesn't genuinely paginate, which is exactly why the grid used to stop after ~2 rows: its short
+//     first page read as "end of list" under the full-page-means-more heuristic, so no cursor was
+//     handed back and infinite scroll had nothing to walk.
+//   * the plain subcategories listing DOES paginate through every category, but isn't viewer-ranked, so
+//     it makes a poor first screen alone.
+// so: page 1 (cursor null) serves categories/top asking for as much as it gives, then hands back the
+// cursor "sub:1", every later page walks the full subcategories listing ("sub:N"). the top categories
+// inevitably appear AGAIN in that walk; browse.js dedupes by game id, so the overlap is invisible.
+// bare-numeric cursors are still accepted (treated as sub-listing page numbers) so any in-flight cursor from before this change keeps working
 #[tauri::command]
 pub async fn kick_top_games(cursor: Option<String>) -> Result<String, String> {
-    // --- Pages 2+ : the full subcategories listing ("sub:N") ---
+    // pages 2+: the full subcategories listing ("sub:N")
     if let Some(cur) = cursor.as_deref() {
         let page = cur
             .strip_prefix("sub:")
@@ -904,15 +765,11 @@ pub async fn kick_top_games(cursor: Option<String>) -> Result<String, String> {
         return kick_subcategories_page(page, None).await;
     }
 
-    // --- Page 1: the viewer-ranked top list, PLUS the first subcategories page
-    //    merged in ---
-    // categories/top caps server-side at ~13 no matter the limit asked for, so on
-    // its own it makes a sparse first screen (the "browse only shows 13
-    // categories" report). The full walk below has hundreds more, but they used
-    // to appear only once the user scrolled. Merge the first subcategories page
-    // into page 1 so the initial grid is full immediately; dedupe by id so ranked
-    // entries that also appear in the sub-listing aren't shown twice. The cursor
-    // still hands off to "sub:2", so infinite scroll continues seamlessly.
+    // page 1: the viewer-ranked top list, PLUS the first subcategories page merged in. categories/top
+    // caps server-side at ~13 no matter the limit asked for, so on its own it makes a sparse first screen
+    // (the "browse only shows 13 categories" report). the full walk below has hundreds more, but they used
+    // to appear only once the user scrolled. merge the first subcategories page into page 1 so the initial
+    // grid is full immediately; dedupe by id so ranked entries that also appear in the sub-listing aren't shown twice. the cursor still hands off to "sub:2", so infinite scroll continues seamlessly
     let mut games: Vec<serde_json::Value> = Vec::new();
     let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -925,11 +782,11 @@ pub async fn kick_top_games(cursor: Option<String>) -> Result<String, String> {
                 .collect();
             push_unique_games(ranked, &mut games, &mut seen_ids);
         }
-        Ok(None) => {} // 404: endpoint gone - fall through to sub-listing only
+        Ok(None) => {} // 404: endpoint gone, fall through to sub-listing only
         Err(e) => last_err = Some(e),
     }
 
-    // First subcategories page, merged in behind the ranked entries.
+    // first subcategories page, merged in behind the ranked entries
     if let Ok(Some(json)) = fetch_kick_json(
         "https://kick.com/api/v1/subcategories?limit=32&page=1",
     ).await {
@@ -941,21 +798,17 @@ pub async fn kick_top_games(cursor: Option<String>) -> Result<String, String> {
     }
 
     if !games.is_empty() {
-        // Continue the walk from sub:2 (page 1 is already folded in above).
+        // continue the walk from sub:2 (page 1 is already folded in above)
         return serde_json::to_string(
             &serde_json::json!({ "games": games, "cursor": "sub:2" }),
         )
         .map_err(|e| e.to_string());
     }
-    // Nothing from either source - fall through to the error-surfacing sub-listing
-    // path (page 1), same insurance as before.
+    // nothing from either source, fall through to the error-surfacing sub-listing path (page 1), same insurance as before
     kick_subcategories_page(1, last_err).await
 }
 
-/// One page of the full subcategories listing, in kick_top_games' response
-/// envelope. `carried_err` is a categories/top failure to surface if THIS
-/// listing also yields nothing (mirrors kick_top_live_streams'
-/// don't-pretend-Kick-is-empty error handling).
+// one page of the full subcategories listing, in kick_top_games' response envelope. carried_err is a categories/top failure to surface if THIS listing also yields nothing (mirrors kick_top_live_streams' don't-pretend-Kick-is-empty error handling)
 async fn kick_subcategories_page(
     page: u32,
     carried_err: Option<String>,
@@ -981,10 +834,7 @@ async fn kick_subcategories_page(
         .map_err(|e| e.to_string())
 }
 
-/// Live streams for one category - Kick-mode counterpart of
-/// get_streams_for_game_id. `game_id` is the Kick subcategory SLUG, because
-/// that's what kick_top_games/kick_search_categories put in the game objects'
-/// `id` (see subcategory_to_helix_game).
+// live streams for one category, Kick-mode counterpart of get_streams_for_game_id. game_id is the Kick subcategory SLUG, because that's what kick_top_games/kick_search_categories put in the game objects' id (see subcategory_to_helix_game)
 #[tauri::command]
 pub async fn kick_streams_for_category(game_id: String) -> Result<String, String> {
     let slug = game_id.trim().to_lowercase();
@@ -1004,22 +854,17 @@ pub async fn kick_streams_for_category(game_id: String) -> Result<String, String
     serde_json::to_string(&normalize_streams(&json)).map_err(|e| e.to_string())
 }
 
-/// Category-by-NAME lookup - Kick-mode counterpart of get_streams_for_game_names,
-/// which the frontend uses for two things: the Browse pills (IRL / Music / Talk
-/// Shows & Podcasts) and the home feed's hand-picked RPGs row. The pill names map
-/// onto Kick's own top-level category groups (the `category=` filter); anything
-/// else - including the entire RPG list, which is Twitch-category-name-specific -
-/// resolves to no group and contributes nothing, which the frontend already
-/// handles (home.js hides an empty RPGs row; a pill shows "No live channels right
-/// now").
-/// Live status for a list of Kick channels - powers the sidebar's Following
-/// section in Kick mode. Kick's real followed-channels endpoint authenticates
-/// with the SITE session cookie, which an OAuth app token can't produce - so
-/// follows are kept locally (kick-follows.js) and this just answers "which of
-/// these are live right now" by fetching each channel payload. Chunked so a long
-/// list doesn't spawn dozens of curl processes at once; a slug whose lookup fails
-/// is omitted (the frontend falls back to its stored name/avatar and renders the
-/// row offline).
+// category-by-NAME lookup, Kick-mode counterpart of get_streams_for_game_names, which the frontend
+// uses for two things: the Browse pills (IRL / Music / Talk Shows & Podcasts) and the home feed's
+// hand-picked RPGs row. the pill names map onto Kick's own top-level category groups (the category=
+// filter); anything else, including the entire RPG list (Twitch-category-name-specific), resolves to no
+// group and contributes nothing, which the frontend already handles (home.js hides an empty RPGs row; a pill shows "No live channels right now").
+//
+// live status for a list of Kick channels, powers the sidebar's Following section in Kick mode. Kick's
+// real followed-channels endpoint authenticates with the SITE session cookie, which an OAuth app token
+// can't produce, so follows are kept locally (kick-follows.js) and this just answers "which of these
+// are live right now" by fetching each channel payload. chunked so a long list doesn't spawn dozens of
+// curl processes at once; a slug whose lookup fails is omitted (the frontend falls back to its stored name/avatar and renders the row offline)
 #[tauri::command]
 pub async fn kick_followed_status(slugs: Vec<String>) -> Result<String, String> {
     const MAX_SLUGS: usize = 30;
@@ -1041,7 +886,7 @@ pub async fn kick_followed_status(slugs: Vec<String>) -> Result<String, String> 
             let url = format!("https://kick.com/api/v2/channels/{slug}");
             match fetch_kick_json(&url).await {
                 Ok(Some(json)) => Some(channel_json_to_status(slug, &json)),
-                _ => None, // 404 / network / Cloudflare - omit, don't fail the batch
+                _ => None, // 404 / network / Cloudflare, omit, don't fail the batch
             }
         });
         for item in futures_util::future::join_all(futs).await.into_iter().flatten() {
@@ -1082,9 +927,7 @@ pub async fn kick_streams_for_game_names(game_names: Vec<String>) -> Result<Stri
     let group = game_names.iter().find_map(|n| match n.as_str() {
         "IRL" => Some("irl"),
         "Music" => Some("music"),
-        // Twitch's pill name and Kick's own label both accepted, plus the plain group
-        // word - the frontend's per-platform pill bars (browse.js) send the human
-        // labels, not the filter values.
+        // Twitch's pill name and Kick's own label both accepted, plus the plain group word, the frontend's per-platform pill bars (browse.js) send the human labels, not the filter values
         "Talk Shows & Podcasts" | "Creative" => Some("creative"),
         "Gambling" | "Slots & Casino" => Some("gambling"),
         _ => None,
@@ -1101,9 +944,7 @@ pub async fn kick_streams_for_game_names(game_names: Vec<String>) -> Result<Stri
     serde_json::to_string(&normalize_streams(&json)).map_err(|e| e.to_string())
 }
 
-/// Category search - Kick-mode counterpart of search_categories (the Browse
-/// search box). Kick's site search returns several result kinds in one payload;
-/// only the categories are wanted here.
+// category search, Kick-mode counterpart of search_categories (the Browse search box). Kick's site search returns several result kinds in one payload; only the categories are wanted here
 #[tauri::command]
 pub async fn kick_search_categories(query: String) -> Result<String, String> {
     let q = query.trim();
@@ -1117,8 +958,7 @@ pub async fn kick_search_categories(query: String) -> Result<String, String> {
     let Some(json) = fetch_kick_json(&url).await? else {
         return Ok("[]".into());
     };
-    // Categories have been seen at /categories and (search-engine era) under a
-    // hits wrapper - try the known spots.
+    // categories have been seen at /categories and (search-engine era) under a hits wrapper, try the known spots
     let cats = json
         .pointer("/categories")
         .or_else(|| json.pointer("/categories/hits"))
@@ -1130,17 +970,12 @@ pub async fn kick_search_categories(query: String) -> Result<String, String> {
     serde_json::to_string(&games).map_err(|e| e.to_string())
 }
 
-/// The channel's native Kick emotes (its own subscriber/channel emotes PLUS
-/// Kick's site-wide "Global" and "Emoji" sets, which this endpoint bundles in).
-/// Used by chat: kick_chat.rs flattens inline `[emote:id:name]` tokens to their
-/// bare names, and the frontend resolves those back into images through its
-/// third-party-emote map - but only if the name->image entries exist. This
-/// supplies them: a flat [{id, name, global}] list the frontend turns into
-/// files.kick.com CDN URLs (the id alone determines the image:
-/// https://files.kick.com/emotes/{id}/fullsize).
-///
-/// Same unofficial-endpoint caveats as everything here; any failure degrades to
-/// "native emotes render as text", never an error dialog.
+// the channel's native Kick emotes (its own subscriber/channel emotes PLUS Kick's site-wide "Global"
+// and "Emoji" sets, which this endpoint bundles in). used by chat: kick_chat.rs flattens inline
+// [emote:id:name] tokens to their bare names, and the frontend resolves those back into images through
+// its third-party-emote map, but only if the name->image entries exist. this supplies them: a flat
+// [{id, name, global}] list the frontend turns into files.kick.com CDN URLs (the id alone determines
+// the image). same unofficial-endpoint caveats as everything here; any failure degrades to "native emotes render as text", never an error dialog
 #[tauri::command]
 pub async fn kick_channel_emotes(slug: String) -> Result<String, String> {
     let slug = slug.trim().to_lowercase();
@@ -1155,10 +990,7 @@ pub async fn kick_channel_emotes(slug: String) -> Result<String, String> {
     let Some(json) = fetch_kick_json(&url).await? else {
         return Ok("[]".into());
     };
-    // Payload is an array of emote SETS: the channel's own (id = numeric channel
-    // id) plus "Global" and "Emoji"/"Emojis". Flatten them, tagging which are
-    // site-wide vs channel-specific so the frontend can apply its
-    // channel-beats-global precedence.
+    // payload is an array of emote SETS: the channel's own (id = numeric channel id) plus "Global" and "Emoji"/"Emojis". flatten them, tagging which are site-wide vs channel-specific so the frontend can apply its channel-beats-global precedence
     let mut out: Vec<serde_json::Value> = Vec::new();
     for set in items_of(&json) {
         let is_global = set
@@ -1182,11 +1014,7 @@ pub async fn kick_channel_emotes(slug: String) -> Result<String, String> {
     serde_json::to_string(&out).map_err(|e| e.to_string())
 }
 
-/// Category viewer counts - Kick-mode counterpart of get_category_viewer_counts.
-/// Helix needs a 1000-stream sampling pass; Kick's top-categories payload states
-/// `viewers` outright, so this just reshapes it into the same {game_id:
-/// {viewer_count, channel_count}} map browse.js consumes (channel_count isn't in
-/// Kick's payload - 0 means "unknown" and the card omits it).
+// category viewer counts, Kick-mode counterpart of get_category_viewer_counts. Helix needs a 1000-stream sampling pass; Kick's top-categories payload states viewers outright, so this just reshapes it into the same {game_id: {viewer_count, channel_count}} map browse.js consumes (channel_count isn't in Kick's payload, 0 means "unknown" and the card omits it)
 #[tauri::command]
 pub async fn kick_category_viewer_counts() -> Result<String, String> {
     let url = "https://kick.com/api/v1/categories/top?limit=60";
@@ -1211,14 +1039,12 @@ pub async fn kick_category_viewer_counts() -> Result<String, String> {
 mod discovery_tests {
     use super::*;
 
-    // Livestream shape as documented for /api/v1/channels and shared by the
-    // listing endpoints (channel embedded, space-separated timestamp, thumbnail
-    // as object).
+    // livestream shape as documented for /api/v1/channels and shared by the listing endpoints (channel embedded, space-separated timestamp, thumbnail as object)
     #[test]
     fn normalizes_documented_livestream_shape() {
         let v: serde_json::Value = serde_json::json!({
             "id": 202501,
-            "slug": "1b5ac-building-a-kick-bot", // STREAM slug - must NOT become the login
+            "slug": "1b5ac-building-a-kick-bot", // STREAM slug, must NOT become the login
             "session_title": "Building a KICK bot",
             "created_at": "2023-02-26 01:27:10",
             "is_live": true,
@@ -1250,8 +1076,7 @@ mod discovery_tests {
         assert!(livestream_to_helix(&v).is_none());
     }
 
-    // Subcategory shape as documented for categories/top (banner object, viewers
-    // stated outright).
+    // subcategory shape as documented for categories/top (banner object, viewers stated outright)
     #[test]
     fn normalizes_documented_subcategory_shape() {
         let v = serde_json::json!({
@@ -1286,13 +1111,12 @@ mod discovery_tests {
         assert_eq!(next_cursor(&bare, 32, 32, 3, MAX_KICK_PAGES), Some("4".into())); // full page implies more
         assert_eq!(next_cursor(&bare, 10, 32, 3, MAX_KICK_PAGES), None); // short page = the end
         assert_eq!(next_cursor(&laravel_more, 32, 32, MAX_KICK_PAGES, MAX_KICK_PAGES), None); // hard cap
-        // The categories walk keeps going well past the live-streams cap (that's the
-        // point of its separate, higher limit)...
+        // the categories walk keeps going well past the live-streams cap (that's the point of its separate, higher limit)...
         assert_eq!(
             next_cursor(&laravel_more, 32, 32, MAX_KICK_PAGES, MAX_KICK_CATEGORY_PAGES),
             Some((MAX_KICK_PAGES + 1).to_string())
         );
-        // ...but still has its own ceiling.
+        // ...but still has its own ceiling
         assert_eq!(
             next_cursor(&laravel_more, 32, 32, MAX_KICK_CATEGORY_PAGES, MAX_KICK_CATEGORY_PAGES),
             None
@@ -1310,9 +1134,7 @@ mod discovery_tests {
 
     #[test]
     fn normalizes_channel_video_entry() {
-        // The documented /api/v2/channels/{slug}/videos entry shape: a livestream
-        // object with the recording embedded as {video:{uuid}}, duration in
-        // milliseconds, and a space-separated start_time.
+        // the documented /api/v2/channels/{slug}/videos entry shape: a livestream object with the recording embedded as {video:{uuid}}, duration in milliseconds, and a space-separated start_time
         let v = serde_json::json!({
             "id": 555,
             "session_title": "late night grind",
@@ -1335,15 +1157,14 @@ mod discovery_tests {
 
     #[test]
     fn channel_video_entry_skips_live_and_uuidless() {
-        // The currently-live session's in-progress recording is listed too - a
-        // past-broadcasts page must not show it.
+        // the currently-live session's in-progress recording is listed too, a past-broadcasts page must not show it
         let live = serde_json::json!({
             "session_title": "LIVE now",
             "is_live": true,
             "video": { "uuid": "live-uuid" }
         });
         assert!(video_entry_to_helix_vod(&live).is_none());
-        // No recording uuid = nothing playable to offer.
+        // no recording uuid = nothing playable to offer
         let no_uuid = serde_json::json!({ "session_title": "broken", "is_live": false });
         assert!(video_entry_to_helix_vod(&no_uuid).is_none());
     }

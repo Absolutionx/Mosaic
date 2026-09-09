@@ -1,13 +1,12 @@
-// Part of TwitchChat (see ../chat.js): badge and cheermote loading/rendering (global + per-channel). Mixin merged onto
-// TwitchChat.prototype, so `this` is the chat instance; split by feature for readability.
+// badge and cheermote loading/rendering (global + per-channel). mixed onto TwitchChat (see ../chat.js)
 
 import { invoke } from "@tauri-apps/api/core";
 import { kickBadgeElement } from "./kick-badges.js";
 export const chatBadgesMixin = {
-  /** Parses the IRC `badges` tag ("broadcaster/1,subscriber/12") and renders an <img> per
-   * badge in badgeMap; unknown badges are skipped, not shown broken. Kick "kick/{type}/{count}"
-   * entries route to kick-badges.js, subscriber ones months-matched against the channel's
-   * tiers. One entry point, so chat lines and the user card both get Kick badges. */
+  // parse the IRC `badges` tag ("broadcaster/1,subscriber/12") into one <img> per known badge;
+  // unknown ones are skipped, not shown broken. Kick "kick/{type}/{count}" entries route to
+  // kick-badges.js, subscriber ones months-matched against the channel's tiers. one entry point,
+  // so chat lines and the user card both get Kick badges
   renderBadges(badgesTag) {
     if (!badgesTag) return null;
 
@@ -40,27 +39,25 @@ export const chatBadgesMixin = {
     return foundAny ? fragment : null;
   },
 
-  /** Twitch sometimes sends colors too dark to read on the dark background. Like official
-   * Twitch, LIGHTEN (hue-preserving) until readable: to HSL, raise only lightness until WCAG
-   * contrast vs the chat bg clears ~4.5:1, back to RGB. Already-readable colors pass through. */
+  // Twitch sometimes sends colors too dark to read on the dark bg. like official Twitch,
+  // LIGHTEN hue-preserving until readable: to HSL, raise only lightness until WCAG contrast vs
+  // the chat bg clears ~4.5:1, back to RGB. already-readable colors pass through
   normalizeColor(hex) {
     if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return "#9147ff";
     const r = parseInt(hex.slice(1, 3), 16) / 255;
     const g = parseInt(hex.slice(3, 5), 16) / 255;
     const b = parseInt(hex.slice(5, 7), 16) / 255;
 
-    // WCAG relative luminance (gamma-corrected, not the 0.299/0.587/0.114 video-luma
-    // formula, which under-weights dark saturated blues).
+    // WCAG relative luminance (gamma-corrected, not the 0.299/0.587/0.114 video-luma formula,
+    // which under-weights dark saturated blues)
     const relLum = (rr, gg, bb) => {
       const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
       return 0.2126 * lin(rr) + 0.7152 * lin(gg) + 0.0722 * lin(bb);
     };
-    // Contrast vs the chat bg (~#0e0e10, lum ~0.004) at 4.5:1 needs lum >= this
-    // ((L + 0.05)/(0.004 + 0.05) = 4.5 -> L ~= 0.193).
+    // contrast vs the chat bg (~#0e0e10, lum ~0.004) at 4.5:1 needs lum >= this ((L+0.05)/(0.004+0.05)=4.5 -> L ~= 0.193)
     const MIN_LUM = 0.193;
     if (relLum(r, g, b) >= MIN_LUM) return hex;
 
-    // RGB -> HSL
     const max = Math.max(r, g, b), min = Math.min(r, g, b);
     let h = 0, s = 0;
     let l = (max + min) / 2;
@@ -72,7 +69,6 @@ export const chatBadgesMixin = {
       else h = ((r - g) / d + 4) / 6;
     }
 
-    // HSL -> RGB
     const hslToRgb = (hh, ss, ll) => {
       if (ss === 0) return [ll, ll, ll];
       const q = ll < 0.5 ? ll * (1 + ss) : ll + ss - ll * ss;
@@ -88,8 +84,7 @@ export const chatBadgesMixin = {
       return [chan(hh + 1 / 3), chan(hh), chan(hh - 1 / 3)];
     };
 
-    // Walk lightness up until readable. 0.02 steps; can't loop forever since l clamps to 1
-    // (white), above any floor.
+    // walk lightness up until readable. 0.02 steps, can't loop forever since l clamps to 1 (white)
     let [nr, ng, nb] = [r, g, b];
     while (relLum(nr, ng, nb) < MIN_LUM && l < 1) {
       l = Math.min(1, l + 0.02);
@@ -99,8 +94,7 @@ export const chatBadgesMixin = {
     return `#${toHex(nr)}${toHex(ng)}${toHex(nb)}`;
   },
 
-  /** Re-renders badges into any empty .chat-badges-slot that has a non-empty badgesTag -
-   * lines that rendered before badgeMap had the entries. Scoped to all lines. */
+  // re-render badges into any empty slot that has a non-empty badgesTag, for lines that rendered before badgeMap had the entries
   _backfillBadges() {
     const slots = this.container.querySelectorAll(".chat-badges-slot:empty[data-badges-tag]");
     for (const slot of slots) {
@@ -112,16 +106,14 @@ export const chatBadgesMixin = {
   },
 
   async loadGlobalBadges() {
-    // badges.twitch.tv fails with ERR_NAME_NOT_RESOLVED inside WebView2 (the
-    // tracking-prevention issue that drove IRC to Rust). The Rust command hits Helix - see
-    // ingestBadgeSets.
+    // badges.twitch.tv fails with ERR_NAME_NOT_RESOLVED inside WebView2 (the tracking-prevention
+    // issue that drove IRC to Rust), so the Rust command hits Helix instead, see ingestBadgeSets
     try {
       const json = await invoke("fetch_global_badges");
       this.ingestBadgeSets(JSON.parse(json));
-      // Re-render the input badge AND backfill rendered lines now that badgeMap has entries:
-      // USERSTATE and PRIVMSG badges arrive independently of this fetch, so messages landing
-      // first (common on a fresh connect) previously rendered against an empty map with no
-      // retry - reported as badges not showing.
+      // USERSTATE and PRIVMSG badges arrive independently of this fetch, so messages landing first
+      // (common on a fresh connect) rendered against an empty map with no retry, which showed as
+      // badges not appearing. re-render the input badge and backfill rendered lines now
       if (this._ownBadgesTag) this._renderInputBadges(this._ownBadgesTag);
       this._backfillBadges();
     } catch (err) {
@@ -130,13 +122,12 @@ export const chatBadgesMixin = {
   },
 
   async loadChannelBadges(twitchUserId) {
-    // Same WebView2 issue as loadGlobalBadges - routed through Rust. Helix returns
-    // {"data":[]} with 200 for channels with no custom badges. Channel entries OVERWRITE the
-    // global keys, matching Twitch.
+    // same WebView2 issue as loadGlobalBadges, routed through Rust. Helix returns {"data":[]} with
+    // 200 for channels with no custom badges. channel entries OVERWRITE the global keys, like Twitch
     try {
       const json = await invoke("fetch_channel_badges", { broadcasterId: twitchUserId });
       this.ingestBadgeSets(JSON.parse(json));
-      // Same re-render-after-load reasoning as loadGlobalBadges.
+      // same re-render-after-load reasoning as loadGlobalBadges
       if (this._ownBadgesTag) this._renderInputBadges(this._ownBadgesTag);
       this._backfillBadges();
     } catch (err) {
@@ -144,22 +135,20 @@ export const chatBadgesMixin = {
     }
   },
 
-  /** Fetches cheermotes for this channel via Rust (WebView2 can't reach api.twitch.tv). */
+  // via Rust, WebView2 can't reach api.twitch.tv
   async loadCheermotes(broadcasterId) {
     try {
       const json = await invoke("fetch_cheermotes", { broadcasterId });
       this.ingestCheermotes(JSON.parse(json));
     } catch (err) {
-      // Silently ignore - user may not be logged in; cheermotes degrade to plain text (the
-      // bits total badge still shows).
+      // user may not be logged in, cheermotes just degrade to plain text (the bits total badge still shows)
       console.warn("Cheermotes unavailable:", err);
     }
   },
 
-  /** Normalizes the Helix badge response into flat "set_id/version" -> {url, title} in
-   * this.badgeMap, matching the IRC `badges` tag so renderBadges is a plain Map.get. Helix
-   * shape: { data: [{ set_id, versions: [{ id, image_url_2x, title }] }] } - top-level "data",
-   * version keyed by "id". */
+  // flatten the Helix badge response into "set_id/version" -> {url, title}, matching the IRC
+  // `badges` tag so renderBadges is a plain Map.get. Helix shape: { data: [{ set_id, versions:
+  // [{ id, image_url_2x, title }] }] }, version keyed by "id"
   ingestBadgeSets(data) {
     if (!Array.isArray(data?.data)) return;
 
@@ -177,8 +166,7 @@ export const chatBadgesMixin = {
     }
   },
 
-  /** Renders the user's own badges into #chat-input-badge, left of the input. Called
-   * whenever USERSTATE arrives. */
+  // the user's own badges into #chat-input-badge, left of the input. called whenever USERSTATE arrives
   _renderInputBadges(badgesTag) {
     const container = this._inputBadgeEl;
     if (!container) return;

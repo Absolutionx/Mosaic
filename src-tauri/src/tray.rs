@@ -1,12 +1,8 @@
-// System tray icon and menu: restore (double-click / Open) and Quit. Also the
-// path the single-instance plugin routes a second launch through (see main.rs).
+// system tray icon and menu: restore (double-click / Open) and Quit. also the path the
+// single-instance plugin routes a second launch through (see main.rs)
 
 use tauri::{AppHandle, Manager};
 
-// --- Tray icon setup ---
-
-/// Builds and registers the system tray icon with its context menu. Called
-/// once from main()'s `.setup()` closure.
 pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
@@ -27,7 +23,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // Left double-click restores the window (single click opens the menu).
+            // left double-click restores the window (single click opens the menu)
             if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
                 restore_window(tray.app_handle());
             }
@@ -37,10 +33,7 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// --- Helpers ---
-
-/// Shows and focuses the main window. Used by the tray menu, tray
-/// double-click, and the single-instance second-launch callback.
+// used by the tray menu, tray double-click, and the single-instance second-launch callback
 pub fn restore_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
@@ -48,9 +41,8 @@ pub fn restore_window(app: &AppHandle) {
     }
 }
 
-/// Exits the process. Previously also killed a running streamlink/mpv child so
-/// it wouldn't orphan - unneeded now that playback runs entirely in the webview
-/// via hls.js.
+// previously also killed a running streamlink/mpv child so it wouldn't orphan, unneeded now
+// that playback runs entirely in the webview via hls.js
 pub fn do_quit(app: &AppHandle) {
     app.exit(0);
 }

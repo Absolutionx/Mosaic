@@ -1,11 +1,10 @@
-// Renders Kick chat badges ("kick/{type}/{count}", see kick_badges_tag in kick_chat.rs).
-// No per-badge endpoint, so these are inline-SVG recreations; subscriber badges are real
-// images (months-matched, star fallback). Unknown types render nothing.
+// Kick chat badges ("kick/{type}/{count}", see kick_badges_tag in kick_chat.rs). no
+// per-badge endpoint, so these are inline-SVG recreations; subscriber badges are real
+// images (months-matched, star fallback). unknown types render nothing
 
 const KICK_GREEN = "#53fc18";
 
-/** type -> {title, svg builder}. Builders take the count so tiered art and count titles
- *  can use it. */
+// builders take the count so tiered art and count titles can use it
 const KICK_BADGES = {
   broadcaster: {
     title: () => "Broadcaster",
@@ -64,7 +63,6 @@ const KICK_BADGES = {
     svg: () =>
       `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">` +
       `<rect x="1.2" y="1.2" width="13.6" height="13.6" rx="3" fill="${KICK_GREEN}"/>` +
-      // Blocky Kick-logo "K".
       `<path fill="#000" d="M4.4 3.4h2.8v3.2h1.6V5h1.6V3.4h2.8v3.2h-1.6v1.6h1.6v3.2h-2.8V9.8H8.8V8.2H7.2v4.4H4.4z"/>` +
       `</svg>`,
   },
@@ -86,7 +84,7 @@ const KICK_BADGES = {
   subscriber: {
     title: (count) =>
       count > 1 ? `Subscriber (${count} months)` : "Subscriber",
-    // Generic fallback star - used only when the channel has no custom subscriber art.
+    // only used when the channel has no custom subscriber art
     svg: () =>
       `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">` +
       `<path fill="${KICK_GREEN}" d="M8 .9l2.2 4.4 4.9.7-3.6 3.5.9 4.9L8 12.1l-4.4 2.3.9-4.9L.9 6l4.9-.7z"/>` +
@@ -95,7 +93,7 @@ const KICK_BADGES = {
   sub_gifter: {
     title: (count) => (count > 1 ? `Sub Gifter (${count})` : "Sub Gifter"),
     svg: (count) => {
-      // Tiered gift colors, roughly tracking kick.com's escalation.
+      // tiered gift colors, roughly tracking kick.com's escalation
       const color =
         count >= 200 ? KICK_GREEN
         : count >= 100 ? "#ffc107"
@@ -114,17 +112,9 @@ const KICK_BADGES = {
   },
 };
 
-/**
- * Builds the badge element for one kick/{type}/{count}, or null for an unknown type.
- * @param {string} type
- * @param {number} count - sub months / gift totals; 1 if none.
- * @param {Array<{months, src}>} [subscriberBadges] - custom subscriber tiers, for
- *   type === "subscriber".
- * @returns {HTMLElement|null}
- */
 export function kickBadgeElement(type, count, subscriberBadges) {
-  // Channel-custom subscriber art: highest tier the sender's months reach (a 9-month sub
-  // with {1,3,6,12} wears the 6-month art), like kick.com.
+  // highest tier the sender's months reach (a 9-month sub with {1,3,6,12} wears the 6-month
+  // art), like kick.com
   if (type === "subscriber" && Array.isArray(subscriberBadges)) {
     let best = null;
     for (const b of subscriberBadges) {
@@ -140,7 +130,7 @@ export function kickBadgeElement(type, count, subscriberBadges) {
       img.loading = "lazy";
       return img;
     }
-    // No tier reached / no custom art -> generic star below.
+    // no tier reached / no custom art -> generic star below
   }
 
   const def = KICK_BADGES[type];

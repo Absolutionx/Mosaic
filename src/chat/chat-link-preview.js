@@ -1,15 +1,12 @@
-// Part of TwitchChat (see ../chat.js): chat link handling - URL detection/normalization and the hover preview popup. Mixin merged onto
-// TwitchChat.prototype, so `this` is the chat instance; split by feature for readability.
-// Hovering waits LINK_PREVIEW_HOVER_DELAY_MS before fetching (chat scrolls fast; firing on
-// every mouseenter would be wasteful and flickery).
+// chat link handling: URL detection + the hover preview popup. mixed onto TwitchChat
+// (see ../chat.js). hovering waits before fetching, since chat scrolls fast and firing on
+// every mouseenter would be wasteful and flickery
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { normalizeUrl, LINK_PREVIEW_HOVER_DELAY_MS } from "./shared.js";
 
 export const chatLinkPreviewMixin = {
-  /** Builds a clickable <a> for a chat URL, wired the "real href, intercept the click for
-   * openUrl()" way (target="_blank" does nothing in a Tauri webview). Also attaches the
-   * hover-preview handlers. */
+  // real href but intercept the click for openUrl(), target="_blank" does nothing in a Tauri webview
   _createChatLink(word) {
     const url = normalizeUrl(word);
     const a = document.createElement("a");
@@ -29,16 +26,14 @@ export const chatLinkPreviewMixin = {
     return a;
   },
 
-  /** Begins (or restarts) the hover-preview flow, cancelling any in-flight timer/request
-   * first so moving across links only fetches the one settled on. */
+  // cancel any in-flight timer/request first, so moving across links only fetches the one settled on
   _scheduleLinkPreview(linkEl, url) {
     this._cancelLinkPreview();
     const myToken = ++this._linkPreviewToken;
 
     const cached = this._linkPreviewCache.get(url);
     if (cached !== undefined) {
-      // Respect the hover delay even on a cache hit - an instant popup reads as jumpy while
-      // skimming.
+      // respect the hover delay even on a cache hit, an instant popup reads as jumpy while skimming
       this._linkPreviewTimer = setTimeout(() => {
         if (myToken !== this._linkPreviewToken) return; // moved on already
         if (cached) this._showLinkPreviewPopup(linkEl, cached);
@@ -55,8 +50,7 @@ export const chatLinkPreviewMixin = {
         console.error("Link preview fetch failed:", url, err);
         preview = null;
       }
-      // A preview with no title/description/image isn't worth a popup - cache null so an
-      // empty/errored link isn't refetched on every hover.
+      // nothing worth a popup, cache null so an empty/errored link isn't refetched on every hover
       const hasContent = preview && (preview.title || preview.description || preview.image);
       this._linkPreviewCache.set(url, hasContent ? preview : null);
       if (myToken !== this._linkPreviewToken) return; // moved on while fetching
@@ -64,8 +58,7 @@ export const chatLinkPreviewMixin = {
     }, LINK_PREVIEW_HOVER_DELAY_MS);
   },
 
-  /** Cancels any pending timer and hides the popup. Called on mouseleave and at each new
-   * hover, so a stale timer can't pop it open after the cursor moved. */
+  // called on mouseleave and at each new hover, so a stale timer can't pop it open after the cursor moved
   _cancelLinkPreview() {
     ++this._linkPreviewToken;
     if (this._linkPreviewTimer) {
@@ -85,7 +78,7 @@ export const chatLinkPreviewMixin = {
       img.src = preview.image;
       img.alt = "";
       img.loading = "lazy";
-      // If the image fails, drop just it rather than leaving a broken-image icon.
+      // if the image fails, drop just it rather than leaving a broken-image icon
       img.addEventListener("error", () => img.remove());
       popup.appendChild(img);
     }
@@ -121,8 +114,7 @@ export const chatLinkPreviewMixin = {
     this._linkPreviewPopup.style.display = "none";
   },
 
-  /** Positions the popup above the hovered link (same fixed-from-a-rect approach as the
-   * emote popup), clamped horizontally so it can't run off the right edge. */
+  // same fixed-from-a-rect approach as the emote popup, clamped so it can't run off the right edge
   _positionLinkPreviewPopup(linkEl) {
     const rect = linkEl.getBoundingClientRect();
     const popup = this._linkPreviewPopup;
@@ -134,8 +126,7 @@ export const chatLinkPreviewMixin = {
     if (left > maxLeft) left = Math.max(8, maxLeft);
 
     popup.style.left = `${left}px`;
-    // Prefer above the link; fall back to below if there's no room (a link in the first
-    // lines).
+    // prefer above the link, fall back to below if there's no room (a link in the first lines)
     if (rect.top - popupHeight - 8 >= 0) {
       popup.style.top = `${rect.top - popupHeight - 8}px`;
     } else {

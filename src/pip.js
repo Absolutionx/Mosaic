@@ -1,6 +1,6 @@
-// Controller for pip.html, the always-on-top PiP window. A separate webview, so everything
+// controller for pip.html, the always-on-top PiP window. a separate webview, so everything
 // arrives via query params from enterNativePip() (mode, src, pos, volume, muted, channel).
-// Self-sufficient - the main window mutes while it exists and restores on close.
+// self-sufficient; the main window mutes while it exists and restores on close
 
 import { getCurrentWindow, currentMonitor, availableMonitors, primaryMonitor, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
@@ -8,8 +8,8 @@ import { attachMseStream } from "./stream-player.js";
 import { attachHlsVod } from "./vod-player.js";
 
 const params  = new URLSearchParams(location.search);
-// Platform theming: body.kick-mode flips --accent to Kick green (the volume slider uses
-// it). Applied at parse time so the slider never flashes purple.
+// body.kick-mode flips --accent to Kick green (the slider uses it). applied at parse time
+// so the slider never flashes purple
 if (params.get("kick") === "1") document.body.classList.add("kick-mode");
 const mode    = params.get("mode") || "live";
 const src     = params.get("src") || "";
@@ -40,10 +40,9 @@ videoEl.volume = volume;
 videoEl.muted = muted;
 volSlider.value = String(volume);
 
-// Window placement: reopen where last closed, else bottom-right of the current monitor.
-// Created hidden (see enterNativePip) so this runs before anything shows. Position/size
-// persist via localStorage (shared same-origin with the main window), saved from move/resize
-// events, so no close-time hook is needed.
+// reopen where last closed, else bottom-right of the current monitor. created hidden (see
+// enterNativePip) so this runs before anything shows. position/size persist via localStorage
+// (shared same-origin with the main window), saved from move/resize, so no close-time hook
 
 const pipWin = getCurrentWindow();
 
@@ -57,8 +56,8 @@ async function placeWindow() {
     const saved = JSON.parse(localStorage.getItem("pipWinPos") || "null");
     let placed = false;
     if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
-      // Only restore a position still on SOME monitor - a spot on an unplugged display would be
-      // unreachable. 50px of the top-left visible is enough to grab it.
+      // only restore a position still on SOME monitor, a spot on an unplugged display would be
+      // unreachable. 50px of the top-left visible is enough to grab it
       const monitors = await availableMonitors().catch(() => []);
       const onScreen = monitors.some((m) =>
         saved.x >= m.position.x - 50 && saved.x < m.position.x + m.size.width - 50 &&
@@ -82,8 +81,7 @@ async function placeWindow() {
   } catch (err) {
     console.warn("[pip] window placement failed (showing at default position):", err);
   } finally {
-    // The finally is load-bearing: the window was created invisible, so failing to reach show()
-    // leaves a playing-but-unseeable zombie.
+    // load-bearing finally: the window was created invisible, so bailing before show() leaves a playing-but-invisible zombie
     await pipWin.show().catch(() => {});
   }
 }
@@ -93,11 +91,11 @@ pipWin.onMoved(({ payload }) => {
   try { localStorage.setItem("pipWinPos", JSON.stringify({ x: payload.x, y: payload.y })); } catch (_) {}
 });
 
-// Off-screen watchdog. placeWindow's check only runs at open; if the monitor goes away
-// while open (dock unplugged), this frameless/always-on-top/skip-taskbar window is stranded.
-// Tauri has no hotplug event, so poll: if the top-left isn't on any monitor, hop to the
-// primary's bottom-right (heals the persisted position via onMoved). Can't detect an
-// input-switched-but-connected display - the main window's rescue button covers that.
+// off-screen watchdog. placeWindow only checks at open; if the monitor goes away while open
+// (dock unplugged) this frameless always-on-top skip-taskbar window is stranded. Tauri has no
+// hotplug event, so poll: if the top-left isn't on any monitor, hop to the primary's
+// bottom-right (heals the persisted position via onMoved). can't catch an input-switched but
+// still-connected display, the main window's rescue button covers that
 
 const OFFSCREEN_POLL_MS = 5000;
 let offscreenRescueBusy = false;
@@ -110,8 +108,7 @@ setInterval(async () => {
       pipWin.outerSize().catch(() => null),
       availableMonitors().catch(() => []),
     ]);
-    // No monitors reported reads as a transient enumeration failure, not "all displays gone" -
-    // don't move on it.
+    // no monitors reported reads as a transient enumeration failure, not "all displays gone", don't move on it
     if (!pos || !size?.width || !monitors.length) return;
     const onScreen = monitors.some((m) =>
       pos.x >= m.position.x - 50 && pos.x < m.position.x + m.size.width - 50 &&
@@ -126,24 +123,24 @@ setInterval(async () => {
     ));
     await pipWin.show().catch(() => {}); // in case the OS hid us with the display
   } catch (_) {
-    // Transient failure - the next tick tries again.
+    // transient failure, next tick tries again
   } finally {
     offscreenRescueBusy = false;
   }
 }, OFFSCREEN_POLL_MS);
 
-// Aspect-ratio snap. The video is object-fit:contain, so a mismatched window shows black
-// bars. Correcting during a drag fights the user (shudders), so snap ONCE after the last
-// resize event: keep whichever dimension changed proportionally more, recompute the other
-// from the video's real aspect (from loadedmetadata, so vertical VODs snap vertical). Also
-// runs on metadata arrival, squaring up a stale saved size.
+// aspect-ratio snap. the video is object-fit:contain, so a mismatched window shows black
+// bars. correcting mid-drag fights the user (shudders), so snap ONCE after the last resize:
+// keep whichever dimension changed proportionally more, recompute the other from the video's
+// real aspect (from loadedmetadata, so vertical VODs snap vertical). also runs on metadata
+// arrival to square up a stale saved size
 
-const SNAP_MIN_WIDTH = 192;   // ~192x108 at 16:9; matches the window's minWidth
+const SNAP_MIN_WIDTH = 192;   // ~192x108 at 16:9, matches the window's minWidth
 let videoAspect = 16 / 9;     // assumed until loadedmetadata reports the truth
 let lastSize = null;          // most recent onResized payload (physical px)
 let preDragSize = null;       // size when the current resize burst began
 let snapTimer = null;
-let suppressSnapUntil = 0;    // our own setSize fires onResized too - ignore it
+let suppressSnapUntil = 0;    // our own setSize fires onResized too, ignore it
 
 async function snapToAspect(keepAxis) {
   const size = lastSize || (await pipWin.innerSize().catch(() => null));
@@ -152,13 +149,13 @@ async function snapToAspect(keepAxis) {
   if (keepAxis === "height") w = Math.round(h * videoAspect);
   else h = Math.round(w / videoAspect);
   if (w < SNAP_MIN_WIDTH) { w = SNAP_MIN_WIDTH; h = Math.round(w / videoAspect); }
-  // Within a pixel already - not worth a nudge (and rounding must not become a snap loop).
+  // within a pixel already, not worth a nudge (and rounding mustn't become a snap loop)
   if (Math.abs(w - size.width) <= 1 && Math.abs(h - size.height) <= 1) return;
   suppressSnapUntil = Date.now() + 300;
   lastSize = { width: w, height: h };
   try {
-    // If the snap grows the window past the screen edge (setSize anchors the top-left, so
-    // growth is down/right), shift it back on-screen.
+    // setSize anchors the top-left so growth goes down/right; if the snap grows past the screen
+    // edge, shift it back on-screen
     const [pos, mon] = await Promise.all([pipWin.outerPosition(), currentMonitor()]);
     if (pos && mon) {
       const maxX = mon.position.x + mon.size.width;
@@ -181,8 +178,8 @@ pipWin.onResized(({ payload }) => {
   snapTimer = setTimeout(() => {
     const from = preDragSize;
     preDragSize = null;
-    // Which axis did the user drag? Compare proportional deltas so 40px on a wide window
-    // doesn't outvote 40px on a short one. Corner drags land where they pulled hardest.
+    // which axis did the user drag? compare proportional deltas so 40px on a wide window doesn't
+    // outvote 40px on a short one. corner drags land where they pulled hardest
     const dw = Math.abs(lastSize.width - from.width) / Math.max(1, from.width);
     const dh = Math.abs(lastSize.height - from.height) / Math.max(1, from.height);
     snapToAspect(dh > dw ? "height" : "width");
@@ -193,16 +190,15 @@ videoEl.addEventListener("loadedmetadata", () => {
   if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
     videoAspect = videoEl.videoWidth / videoEl.videoHeight;
   }
-  // Square up whatever placeWindow restored (saved sizes can predate this or be a
-  // different-aspect video) - keep the width, recompute the height.
+  // square up whatever placeWindow restored (saved sizes can predate this), keep width, recompute height
   snapToAspect("width");
 });
 
 let feeder = null;
-// Live-relay self-healing: the relay deliberately CLOSES a lagging subscriber (see
-// stream_relay.rs; closing beats splicing a byte gap), and a fresh PiP is the likeliest to
-// lag. So dying is expected - reattach, and the relay's fragment-aligned late-join hands each
-// reconnect a clean stream. Budgeted so a genuinely-gone relay doesn't retry forever.
+// live-relay self-healing: the relay deliberately CLOSES a lagging subscriber (see
+// stream_relay.rs, closing beats splicing a byte gap), and a fresh PiP is the likeliest to
+// lag. so dying is expected: reattach, and the relay's fragment-aligned late-join hands each
+// reconnect a clean stream. budgeted so a genuinely-gone relay doesn't retry forever
 let deadRetries = 0;
 let lastDeadAt = 0;
 function attachLiveFeeder() {
@@ -214,7 +210,7 @@ function attachLiveFeeder() {
 }
 
 // MultiView PiP: resolve the live HLS m3u8 ourselves (channel/quality come as params, the
-// URL is too big to pass), then play via attachHlsVod like MultiView tiles.
+// URL is too big to pass), then play via attachHlsVod like MultiView tiles
 async function attachMvLiveFeeder() {
   let url;
   try {
@@ -249,8 +245,8 @@ function attachVodFeeder(url, isLowQuality) {
     startPosition: mode === "vod" && videoEl.currentTime > 0 ? videoEl.currentTime : pos,
     onFatalError: (data) => {
       if (isLowQuality) {
-        // The pre-resolved low-quality URL can outlive its token or 404 in ways the main-quality
-        // URL can't - fall back to that known-good URL once rather than dying.
+        // the pre-resolved low-quality URL can outlive its token or 404 in ways the main-quality
+        // URL can't, so fall back to that known-good URL once rather than dying
         console.warn("[pip] low-quality playlist failed - falling back to main-quality URL:", data?.details);
         try { feeder?.destroy?.(); } catch (_) {}
         attachVodFeeder(src, false);
@@ -263,29 +259,26 @@ function attachVodFeeder(url, isLowQuality) {
   });
 }
 if (mode === "mv") {
-  // mv resolves its own URL from mvchannel/mvquality (no src param).
+  // mv resolves its own URL from mvchannel/mvquality (no src param)
   try { attachMvLiveFeeder(); }
   catch (err) { console.error("[pip] mv feeder attach failed:", err); }
 } else if (src) {
   try {
     if (mode === "vod") {
-      // Prefer the pre-resolved low-quality playlist (right-sized segments for a small window -
-      // see resolvePipVodUrl); src is the fallback.
+      // prefer the pre-resolved low-quality playlist (right-sized segments for a small window), src is the fallback
       attachVodFeeder(lowSrc || src, Boolean(lowSrc));
     } else {
       attachLiveFeeder();
     }
   } catch (err) {
-    // A feeder failure must not skip the control wiring below, or the window becomes
-    // uncloseable.
+    // a feeder failure mustn't skip the control wiring below, or the window becomes uncloseable
     console.error("[pip] feeder attach failed:", err);
   }
 } else {
   console.error("[pip] opened without a src param - nothing to play.");
 }
 
-// controls (mirrors enterDocPip's controls bar, minus the parts that only make sense
-// sharing the main window's video element)
+// mirrors enterDocPip's controls bar, minus the bits that only make sense sharing the main video element
 
 function syncPlayIcon() {
   pauseIcon.style.display = videoEl.paused ? "none" : "";
@@ -307,11 +300,10 @@ function togglePlayPause() {
 }
 playBtn.addEventListener("click", togglePlayPause);
 
-// Double-click the stage = play/pause, NOT maximize. The stage is a drag-region, and
-// Tauri maps a double-click on one to toggle_maximize - nonsense here (the restore resize
-// collides with the aspect-snap). A CAPTURE listener runs before Tauri's bubble one;
-// stopImmediatePropagation blocks it. Matches Tauri's condition exactly so the control
-// buttons (no drag-region attr) are untouched.
+// double-click the stage = play/pause, NOT maximize. the stage is a drag-region and Tauri
+// maps a double-click on one to toggle_maximize, nonsense here (the restore resize fights the
+// aspect-snap). a CAPTURE listener runs before Tauri's bubble one and stopImmediatePropagation
+// blocks it. matches Tauri's condition exactly so the control buttons stay untouched
 document.addEventListener("mousedown", (e) => {
   if (e.detail === 2 && e.button === 0 && e.target?.hasAttribute?.("data-tauri-drag-region")) {
     e.preventDefault();
@@ -331,8 +323,7 @@ function showVolBubble(fraction, pct) {
 volSlider.addEventListener("input", () => {
   videoEl.volume = parseFloat(volSlider.value);
   if (videoEl.volume > 0) videoEl.muted = false;
-  // While dragging, the bubble tracks the THUMB (the value being set), not the raw pointer
-  // x - identical mid-bar, but stays correct when the pointer overshoots.
+  // while dragging, track the THUMB (the value being set), not the raw pointer x, so overshoot stays correct
   const v = parseFloat(volSlider.value);
   showVolBubble(v, Math.round(v * 100));
 });
@@ -346,8 +337,8 @@ closeBtn.addEventListener("click", () => {
   getCurrentWindow().close().catch(() => {});
 });
 
-// Tear the feeder down on pagehide so the relay subscription / hls.js instance doesn't
-// linger between the page dying and the process exiting.
+// tear the feeder down on pagehide so the relay subscription / hls.js instance doesn't
+// linger between the page dying and the process exiting
 window.addEventListener("pagehide", () => {
   try { feeder?.stop?.(); feeder?.destroy?.(); } catch (_) {}
 });

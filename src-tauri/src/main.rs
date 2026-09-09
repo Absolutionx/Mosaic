@@ -1,10 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-// Mosaic - Rust backend.
+// Mosaic, Rust backend.
 //
-// Playback (streamlink -> local HTTP relay -> MSE in the webview) lives in
-// stream_relay.rs, including why it's built that way. This file wires up Tauri:
-// app state, command registration, and the Helix commands that don't yet
-// warrant their own module (see README's project-structure note).
+// playback (streamlink -> local HTTP relay -> MSE in the webview) lives in stream_relay.rs,
+// including why it's built that way. this file wires up Tauri: app state, command registration,
+// and the Helix commands that don't yet warrant their own module
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -23,13 +22,15 @@ mod notify_prefs;
 mod oauth;
 mod stream_relay;
 mod seventv_events;
+mod song_id;
+mod track_id;
 mod tray;
+mod twitch_device_auth;
 mod vod_progress;
 
-/// State for the active chat session: the oneshot sender that signals the
-/// running chat task to disconnect, the mpsc sender that pushes outgoing
-/// PRIVMSGs into it, and the logged-in user's credentials (if any) so the UI
-/// can tell whether sending is even possible.
+// state for the active chat session: the oneshot sender that signals the running chat task to
+// disconnect, the mpsc sender that pushes outgoing PRIVMSGs into it, and the logged-in user's
+// credentials (if any) so the UI can tell whether sending is even possible
 pub(crate) struct ChatState {
     pub(crate) stop_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     pub(crate) outgoing_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<chat::OutgoingMessage>>>,
@@ -46,8 +47,7 @@ impl Default for ChatState {
     }
 }
 
-/// Manages the EventSub WebSocket lifecycle. One connection per watched
-/// channel; torn down on Stop.
+// one connection per watched channel; torn down on Stop
 pub(crate) struct EventSubState {
     pub(crate) stop_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -58,9 +58,7 @@ impl Default for EventSubState {
     }
 }
 
-/// Manages the 7TV EventAPI WebSocket lifecycle (seventv_events.rs). One
-/// connection per watched channel's emote set; torn down on Stop/switch, same
-/// pattern as EventSubState for a separate service.
+// one connection per watched channel's emote set; torn down on Stop/switch, same pattern as EventSubState for a separate service
 pub(crate) struct SevenTvEventsState {
     pub(crate) stop_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
@@ -71,16 +69,11 @@ impl Default for SevenTvEventsState {
     }
 }
 
-
-/// True until the first time the frontend asks. Distinguishes a real process
-/// launch from an in-process webview reload (F5): a reload hits the SAME host,
-/// so it sees the flag already cleared, while a fresh launch is a new process
-/// with a fresh `true`. This is what lets F5 resume the stream while a cold
-/// start correctly lands on Home instead of a now-offline stream.
-///
-/// Backend-side rather than sessionStorage on purpose: it keys off real process
-/// identity, so no webview storage-lifetime quirk (WebView2 vs WebKit) can fool
-/// it.
+// true until the first time the frontend asks. distinguishes a real process launch from an
+// in-process webview reload (F5): a reload hits the SAME host, so it sees the flag already cleared,
+// while a fresh launch is a new process with a fresh `true`. this is what lets F5 resume the stream
+// while a cold start correctly lands on Home. backend-side rather than sessionStorage on purpose: it
+// keys off real process identity, so no webview storage-lifetime quirk (WebView2 vs WebKit) can fool it
 struct LaunchState {
     fresh: AtomicBool,
 }
@@ -91,47 +84,54 @@ impl Default for LaunchState {
     }
 }
 
-/// Whether THIS call is the first since the process started; clears the flag so
-/// every later call (i.e. every reload) returns false.
+// whether THIS call is the first since the process started; clears the flag so every later call (i.e. every reload) returns false
 #[tauri::command]
 fn take_is_fresh_launch(state: State<LaunchState>) -> bool {
     state.fresh.swap(false, Ordering::SeqCst)
 }
 
 fn main() {
-    // Must happen before any TLS connection (before the chat WebSocket connects) -
-    // rustls 0.23+ panics on first use with no CryptoProvider installed. A
-    // process-wide, one-time setup call, unrelated to Tauri.
+    // kill the WebView2 white flash on startup (Windows): its surface renders white underneath web
+    // content until the first paint, visible for a frame or two when the maximized window appears. the
+    // native window backgroundColor doesn't cover this surface, and the WebView2 API path can still
+    // flicker; Microsoft documents this env var (read before the webview is created) as the reliable fix.
+    // format is AARRGGBB, must be 8 digits or it's treated as transparent. harmless on non-Windows
+    std::env::set_var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "FF0E0E10");
+
+    // must happen before any TLS connection (before the chat WebSocket connects), rustls 0.23+ panics
+    // on first use with no CryptoProvider installed. a process-wide, one-time setup call, unrelated to Tauri
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let builder = tauri::Builder::default()
-        // Must be the FIRST plugin registered (per its docs) so it runs before
-        // anything spawns windows/tray icons for what would be a second, separate
-        // process. On a second launch this callback runs INSIDE the
-        // already-running instance (the new process's main() never proceeds - the
-        // plugin exits it), so restore_window brings the existing window forward
-        // instead of a second one appearing. Same restore_window() the tray menu
-        // and tray double-click use, for one consistent "bring the app forward"
-        // everywhere.
+        // must be the FIRST plugin registered (per its docs) so it runs before anything spawns windows/tray
+        // icons for what would be a second, separate process. on a second launch this callback runs INSIDE
+        // the already-running instance (the new process's main() never proceeds, the plugin exits it), so
+        // restore_window brings the existing window forward instead of a second one appearing
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::restore_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
-        // process (relaunch after update) and os (platform() gate in the updater
-        // banner). Cross-platform, so registered unconditionally.
+        // process (relaunch after update) and os (platform() gate in the updater banner). cross-platform, so registered unconditionally
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_os::init());
 
-    // Auto-updater: Windows only. macOS/Linux ship via the GitHub Actions .dmg and
-    // don't self-update, so the plugin isn't registered there - keeps the
-    // update-check path off platforms with no update endpoint.
+    // auto-updater: Windows only. macOS/Linux ship via the GitHub Actions .dmg and don't self-update,
+    // so the plugin isn't registered there, keeps the update-check path off platforms with no update endpoint
     #[cfg(windows)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
         .setup(|app| {
             tray::setup_tray(app).map_err(|e| e.to_string())?;
+
+            // maximize the still-hidden main window before its first paint, so the webview paints at final size
+            // and there's no resize when the frontend reveals it. the window is created hidden (visible:false)
+            // and shown from JS only after the dark UI has painted; that, not a background color, is what actually
+            // prevents the WebView2 white-surface flash that launching maximized otherwise causes (see tauri#14068)
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.maximize();
+            }
             Ok(())
         })
         .manage(LaunchState::default())
@@ -142,6 +142,7 @@ fn main() {
         .manage(std::sync::Arc::new(stream_relay::StreamRelayState::default()))
         .invoke_handler(tauri::generate_handler![
             take_is_fresh_launch,
+            track_id::identify_song,
             stream_relay::start_stream,
             kick::get_kick_stream,
             kick::get_kick_channel_chat_info,
@@ -200,6 +201,14 @@ fn main() {
             chat_commands::send_chat_message,
             chat_commands::set_oauth_credentials,
             helix::get_followed_channels,
+            helix::get_pinned_chat_messages,
+            helix::get_hype_train,
+            helix::get_channel_prediction,
+            helix::create_clip,
+            twitch_device_auth::twitch_device_start,
+            twitch_device_auth::twitch_device_poll,
+            twitch_device_auth::twitch_device_connected,
+            twitch_device_auth::twitch_device_logout,
             chat_commands::get_chatters,
             helix::get_streams_for_users,
             helix::get_stream_for_login,
@@ -221,24 +230,18 @@ fn main() {
             if window.label() != "main" { return; }
             match event {
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed => {
-                    // Close every PiP window (labels "pip" and "pip-*") when the main window
-                    // dies. The PiP is an independent OS window with its own copy of
-                    // the stream, fed by the in-process relay - Tauri exits only when
-                    // ALL windows are gone, and a PiP counts, so without this closing
-                    // the main window leaves the app running headless with the PiP as
-                    // its only window. Covers every route the main window can die,
-                    // including ones the main webview's JS never sees. Both events are
-                    // belt-and-braces: CloseRequested for the user's X, Destroyed for
-                    // programmatic teardown (the second close of an already-closing
-                    // window is a no-op).
+                    // close every PiP window (labels "pip" and "pip-*") when the main window dies. the PiP is an
+                    // independent OS window with its own copy of the stream, fed by the in-process relay, and Tauri exits
+                    // only when ALL windows are gone, so without this closing the main window leaves the app running
+                    // headless with the PiP as its only window. both events are belt-and-braces: CloseRequested for the
+                    // user's X, Destroyed for programmatic teardown
                     for (label, w) in window.app_handle().webview_windows() {
                         if label == "pip" || label.starts_with("pip-") {
                             let _ = w.close();
                         }
                     }
-                    // (The old streamlink/mpv child-process cleanup that lived here is
-                    // gone - playback runs inside the webview and tears down with the
-                    // window.)
+                    // (the old streamlink/mpv child-process cleanup that lived here is gone, playback runs inside the
+                    // webview and tears down with the window)
                 }
                 _ => {}
             }

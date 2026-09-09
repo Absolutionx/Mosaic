@@ -1,10 +1,10 @@
-// Rich Twitch event rendering: subs, gifts, raids, bits, Hype Train, Predictions. Rides
+// rich Twitch event rendering: subs, gifts, raids, bits, Hype Train, Predictions, riding
 // the chat/EventSub pipeline in Rust. USERNOTICE covers subs/gifts/raids/announce on any
-// channel; Hype Train + Predictions need broadcaster scopes (own channel only). Most render
-// as a .chat-line; Hype Train/Predictions use a pinned overlay.
+// channel; Hype Train + Predictions need broadcaster scopes (own channel only). most render
+// as a .chat-line, Hype Train/Predictions use a pinned overlay
 
 export const chatEventsMixin = {
-  // Wires up the USERNOTICE + EventSub listeners; call once from connect.
+  // call once from connect
   async _initEventListeners(listen) {
     this.unlisteners.push(
       await listen("chat-usernotice", (e) => this.renderUsernotice(e.payload)),
@@ -16,8 +16,6 @@ export const chatEventsMixin = {
       await listen("eventsub-prediction", (e) => this.renderPrediction(e.payload)),
     );
   },
-
-  // --- USERNOTICE (subs / resubs / gifts / raids / announcements) ---
 
   renderUsernotice(p) {
     switch (p.msg_id) {
@@ -37,14 +35,14 @@ export const chatEventsMixin = {
       case "announcement":
         this._renderAnnouncement(p);
         break;
-      // Anything else: fall back to Twitch's system-msg.
+      // anything else falls back to Twitch's system-msg
       default:
         if (p.system_msg) this._renderGenericEvent(p.system_msg);
     }
   },
 
   _planLabel(plan) {
-    // sub-plan values: "Prime", "1000", "2000", "3000".
+    // sub-plan values: "Prime", "1000", "2000", "3000"
     if (!plan) return "";
     if (plan === "Prime") return "Prime";
     return { "1000": "Tier 1", "2000": "Tier 2", "3000": "Tier 3" }[plan] || "";
@@ -69,7 +67,6 @@ export const chatEventsMixin = {
 
     line.appendChild(info);
 
-    // The user's attached resub message, rendered with emote support.
     if (p.user_message) {
       const msg = document.createElement("div");
       msg.className = "chat-event-message";
@@ -125,7 +122,7 @@ export const chatEventsMixin = {
 
   _renderAnnouncement(p) {
     const line = this._eventLine("chat-event announcement-event");
-    // Announcements carry a color band (PRIMARY/BLUE/GREEN/ORANGE/PURPLE).
+    // announcements carry a color band (PRIMARY/BLUE/GREEN/ORANGE/PURPLE)
     const color = (p.announcement_color || "PRIMARY").toLowerCase();
     line.classList.add(`announcement-${color}`);
     const info = document.createElement("span");
@@ -150,10 +147,7 @@ export const chatEventsMixin = {
     this._appendEvent(line);
   },
 
-  // --- Bits / cheers ---
-  // Bits render inline in chat.js renderMessage (see the `has-bits` block).
-
-  // --- Hype Train overlay ---
+  // bits render inline in chat.js renderMessage (see the has-bits block)
 
   renderHypeTrain(p) {
     const ev = p.event || {};
@@ -181,12 +175,10 @@ export const chatEventsMixin = {
     this._startCountdown(overlay);
   },
 
-  // --- Predictions overlay ---
-
   renderPrediction(p) {
     const ev = p.event || {};
     if (p.phase === "end") {
-      // Resolve: highlight the winning outcome, then dismiss.
+      // highlight the winning outcome, then dismiss
       const overlay = this._ensureOverlay("prediction-overlay");
       const winId = ev.winning_outcome_id;
       overlay.querySelectorAll(".prediction-outcome").forEach((el) => {
@@ -231,8 +223,6 @@ export const chatEventsMixin = {
     if (!locked) this._startCountdown(overlay);
   },
 
-  // --- Shared helpers ---
-
   _eventLine(cls) {
     const line = document.createElement("div");
     line.className = `chat-line ${cls}`;
@@ -264,13 +254,12 @@ export const chatEventsMixin = {
     return d.innerHTML;
   },
 
-  // Get-or-create a persistent overlay pinned above chat (they stack).
+  // persistent overlay pinned above chat, they stack
   _ensureOverlay(id) {
     let host = document.getElementById("chat-event-overlays");
     if (!host) {
       host = document.createElement("div");
       host.id = "chat-event-overlays";
-      // Pin at the top of the chat pane.
       const pane = this.container.closest("#chat-pane") || this.container.parentElement;
       if (pane) pane.insertBefore(host, pane.firstChild);
     }
@@ -292,7 +281,6 @@ export const chatEventsMixin = {
     setTimeout(() => el.remove(), delayMs);
   },
 
-  // Drive the live "Xs left" countdown from a .*-countdown element's data-expires.
   _startCountdown(overlay) {
     if (overlay._countdownTimer) clearInterval(overlay._countdownTimer);
     const tick = () => {

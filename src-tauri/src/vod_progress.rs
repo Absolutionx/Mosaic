@@ -1,6 +1,5 @@
-// Persists per-VOD playback position so the app can resume where the user left
-// off. Single JSON file in app_local_data_dir (whole-file load/save), same
-// pattern as notify_prefs.rs.
+// persists per-VOD playback position so the app can resume where the user left off. single
+// JSON file in app_local_data_dir (whole-file load/save), same pattern as notify_prefs.rs
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -8,23 +7,21 @@ use tauri::{AppHandle, Manager};
 
 const PROGRESS_FILE: &str = "vod_progress.json";
 
-// Caps how many VODs' progress we keep. Heavy VOD watching would otherwise grow
-// this file forever; evicting the least-recently-updated entries at the cap
-// keeps it bounded with no user involvement.
+// heavy VOD watching would otherwise grow this file forever; evicting the least-recently-updated
+// entries at the cap keeps it bounded with no user involvement
 const MAX_ENTRIES: usize = 300;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ProgressEntry {
     pub position_secs: f64,
     pub total_secs: f64,
-    /// Unix millis - only used to pick eviction victims (oldest-updated first) once
-    /// MAX_ENTRIES is exceeded, never shown to the user.
+    // unix millis, only used to pick eviction victims (oldest-updated first) once MAX_ENTRIES is exceeded, never shown to the user
     pub updated_at: u64,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct PersistedProgress {
-    /// Keyed by VOD id (Helix video id, as a string).
+    // keyed by VOD id (Helix video id, as a string)
     #[serde(default)]
     vods: HashMap<String, ProgressEntry>,
 }
@@ -56,24 +53,21 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// Saved progress for a single VOD, if any - used when opening a VOD to decide
-/// whether to resume. See get_all_vod_progress for the bulk version.
+// used when opening a VOD to decide whether to resume. see get_all_vod_progress for the bulk version
 #[tauri::command]
 pub fn get_vod_progress(app: AppHandle, video_id: String) -> Option<ProgressEntry> {
     load_progress(&app).vods.get(&video_id).cloned()
 }
 
-/// Every VOD with saved progress (id -> entry). Fetched once per VOD-list render
-/// (vods.js), so N resume indicators cost one call, not N.
+// every VOD with saved progress (id -> entry). fetched once per VOD-list render (vods.js), so
+// N resume indicators cost one call, not N
 #[tauri::command]
 pub fn get_all_vod_progress(app: AppHandle) -> HashMap<String, ProgressEntry> {
     load_progress(&app).vods
 }
 
-/// Upserts progress for one VOD. Called periodically while watching (main.js)
-/// and on stop/switch-away, not every position-poll tick - a write every few
-/// seconds is plenty for "resume roughly where you left off" and avoids
-/// hammering disk.
+// called periodically while watching (main.js) and on stop/switch-away, not every position-poll
+// tick, a write every few seconds is plenty for "resume roughly where you left off" and avoids hammering disk
 #[tauri::command]
 pub fn save_vod_progress(
     app: AppHandle,
@@ -88,8 +82,7 @@ pub fn save_vod_progress(
     );
 
     if progress.vods.len() > MAX_ENTRIES {
-        // Evict oldest-updated first, down to the cap - keeps what's most likely to
-        // still matter (recently watched).
+        // evict oldest-updated first, down to the cap, keeps what's most likely to still matter (recently watched)
         let mut by_age: Vec<(String, u64)> = progress
             .vods
             .iter()

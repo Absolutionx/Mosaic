@@ -1,21 +1,16 @@
-// Twitch OAuth - browser-based implicit grant (RFC 8252 native-app flow).
+// Twitch OAuth, browser-based implicit grant (RFC 8252 native-app flow).
 //
-// A webview login popup doesn't work: the app CSP blocks Twitch's login CDNs,
-// and the global prevent_close handler breaks the popup's close button. Instead
-// we open the auth URL in the system browser and catch the redirect on a local
-// tokio server (127.0.0.1:17543). The token comes back in the URL #fragment
-// (never sent to the server), so the server serves a one-shot bridge page whose
-// JS reads the fragment and GETs /token?t=<token>; we then emit "oauth-token"
-// to the main window and shut down.
-//
-// Port 17543 must match the redirect URI registered at dev.twitch.tv.
+// a webview login popup doesn't work: the app CSP blocks Twitch's login CDNs, and the global
+// prevent_close handler breaks the popup's close button. instead we open the auth URL in the system
+// browser and catch the redirect on a local tokio server (127.0.0.1:17543). the token comes back in
+// the URL #fragment (never sent to the server), so the server serves a one-shot bridge page whose JS
+// reads the fragment and GETs /token?t=<token>; we then emit "oauth-token" to the main window and
+// shut down. port 17543 must match the redirect URI registered at dev.twitch.tv
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-
-// --- Token persistence ---
 
 const TOKEN_FILE: &str = "oauth_token.json";
 
@@ -47,13 +42,10 @@ pub fn clear_token(app: &AppHandle) {
     let _ = std::fs::remove_file(dir.join(TOKEN_FILE));
 }
 
-// --- OAuth constants ---
-
-// This app's Client-ID, registered at dev.twitch.tv. OAuth client IDs (unlike
-// client secrets) are public identifiers by design in the native-app/implicit
-// flow used here - there is no client secret anywhere in this codebase, on
-// purpose, since one embedded in a distributed binary couldn't stay secret.
-// Safe in source control; see the flow description above.
+// this app's Client-ID, registered at dev.twitch.tv. OAuth client IDs (unlike client secrets) are
+// public identifiers by design in the native-app/implicit flow used here, there is no client secret
+// anywhere in this codebase, on purpose, since one embedded in a distributed binary couldn't stay
+// secret. safe in source control; see the flow description above
 pub const CLIENT_ID: &str = "i2tkeryeipoljcoh8sjtxtcfd43guv";
 const REDIRECT_URI: &str = "http://localhost:17543";
 const REDIRECT_PORT: &str = "17543";
@@ -71,11 +63,7 @@ struct ValidateResponse {
     scopes: Vec<String>,
 }
 
-// --- Login command ---
-
-/// Opens the Twitch login page in the default browser and starts a local HTTP
-/// server to catch the OAuth redirect. On success it emits "oauth-token" to the
-/// main window and shuts down.
+// opens the Twitch login page in the default browser and starts a local HTTP server to catch the OAuth redirect. on success it emits "oauth-token" to the main window and shuts down
 #[tauri::command]
 pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
     let scope = [
@@ -87,6 +75,7 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
         "moderator:manage:chat_messages",
         "moderator:manage:automod",
         "moderator:read:chatters",
+        "clips:edit",
     ]
     .join(" ");
 
@@ -101,23 +90,20 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
         urlencoding_lite(&scope),
     );
 
-    // Try to bind the port before opening the browser. If it's already in use a
-    // previous login attempt is still running - just open the URL again so the
-    // user can retry without restarting the app.
+    // try to bind the port before opening the browser. if it's already in use a previous login attempt is still running, just open the URL again so the user can retry without restarting the app
     let listener = match TcpListener::bind(format!("127.0.0.1:{REDIRECT_PORT}")).await {
         Ok(l) => l,
         Err(_) => {
-            // Port busy - open the URL anyway so the user sees the prompt, but don't
-            // spawn a second server.
+            // port busy, open the URL anyway so the user sees the prompt, but don't spawn a second server
             open_browser(&app, &auth_url)?;
             return Ok(());
         }
     };
 
-    // Spawn the redirect-catcher; open the browser in parallel.
+    // spawn the redirect-catcher; open the browser in parallel
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
-        // 5-minute timeout in case the user abandons the flow.
+        // 5-minute timeout in case the user abandons the flow
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(300),
             run_redirect_server(listener, app2),
@@ -136,13 +122,9 @@ fn open_browser(app: &AppHandle, url: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to open browser: {e}"))
 }
 
-// --- Local redirect server ---
-
-/// Bridge HTML served when the browser reaches http://localhost:17543. Its JS
-/// reads location.hash (fragments aren't sent to the server, which is why the
-/// implicit grant needs this extra hop), pulls out the access_token, and GETs
-/// /token?t=<token> so the server can pick it up. Styled to match the app's
-/// dark theme.
+// bridge HTML served when the browser reaches http://localhost:17543. its JS reads location.hash
+// (fragments aren't sent to the server, which is why the implicit grant needs this extra hop), pulls
+// out the access_token, and GETs /token?t=<token> so the server can pick it up. styled to match the app's dark theme
 const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -220,7 +202,7 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
             Err(_) => break,
         };
 
-        // Read enough of the request to identify it.
+        // read enough of the request to identify it
         let mut buf = vec![0u8; 4096];
         let n = socket.read(&mut buf).await.unwrap_or(0);
         if n == 0 {
@@ -230,16 +212,15 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
         let first_line = request.lines().next().unwrap_or("");
 
         if first_line.contains("GET /token?") {
-            // Bridge page is handing us the token.
+            // bridge page is handing us the token
             if let Some(token) = extract_token_from_line(first_line) {
                 let _ = app.emit("oauth-token", OAuthTokenEvent { access_token: token });
             }
             let resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
             let _ = socket.write_all(resp).await;
-            break; // Done - shut down the server.
+            break; // done, shut down the server
         } else if first_line.starts_with("GET /") {
-            // Probably the initial Twitch redirect - serve the bridge page. (Ignore
-            // favicon.ico, etc.)
+            // probably the initial Twitch redirect, serve the bridge page (ignore favicon.ico, etc.)
             if !first_line.contains("favicon") {
                 let body = BRIDGE_HTML.as_bytes();
                 let header = format!(
@@ -253,12 +234,11 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
                 let _ = socket.write_all(body).await;
             }
         }
-        // Any other request (favicon, etc.) just drops the connection.
+        // any other request (favicon, etc.) just drops the connection
     }
 }
 
-/// Extracts the token from a GET request line like
-/// `GET /token?t=abc123&... HTTP/1.1`.
+// extracts the token from a GET request line like `GET /token?t=abc123&... HTTP/1.1`
 fn extract_token_from_line(line: &str) -> Option<String> {
     let path = line.split_whitespace().nth(1)?;
     let query = path.split('?').nth(1)?;
@@ -270,7 +250,7 @@ fn extract_token_from_line(line: &str) -> Option<String> {
     None
 }
 
-/// Percent-decodes a URL-encoded string (the token passed from the bridge).
+// percent-decodes a URL-encoded string (the token passed from the bridge)
 fn url_decode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -295,16 +275,12 @@ fn url_decode(s: &str) -> String {
     out
 }
 
-// --- Minimal URL encoding ---
-
 fn urlencoding_lite(input: &str) -> String {
     input
         .replace(' ', "%20")
         .replace(':', "%3A")
         .replace('/', "%2F")
 }
-
-// --- Token validation & session restore ---
 
 #[tauri::command]
 pub async fn validate_oauth_token(

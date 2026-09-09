@@ -1,19 +1,16 @@
-// VODs page - a channel's past broadcasts in a grid, playable via the streamlink relay.
-// Triggered by the info bar's "Videos" button; fetches via get_videos_for_login (which
-// resolves login -> user_id internally). Helix thumbnail URLs use %{width}x%{height}
-// placeholders, substituted before use.
+// a channel's past broadcasts in a grid, played via the streamlink relay. get_videos_for_login
+// resolves login -> user_id internally; Helix thumbnail URLs use %{width}x%{height}
+// placeholders we substitute before use
 
 import { invoke } from "@tauri-apps/api/core";
 import { fetchVodChapters } from "./chapters.js";
 
-/** Replace Helix's %{width}x%{height} thumbnail placeholders. */
 function resolveThumbnailUrl(url, width = 440, height = 248) {
   return url
     .replace("%{width}", String(width))
     .replace("%{height}", String(height));
 }
 
-/** Parse Helix's duration ("3h8m33s") into a label ("3:08:33"). */
 function parseDuration(dur) {
   const h = (dur.match(/(\d+)h/) || [])[1] | 0;
   const m = (dur.match(/(\d+)m/) || [])[1] | 0;
@@ -24,7 +21,6 @@ function parseDuration(dur) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Convert Helix's duration string to total seconds ("6h35m5s" -> 23705). */
 function parseDurationToSeconds(dur) {
   const h = (dur.match(/(\d+)h/) || [])[1] | 0;
   const m = (dur.match(/(\d+)m/) || [])[1] | 0;
@@ -32,7 +28,6 @@ function parseDurationToSeconds(dur) {
   return h * 3600 + m * 60 + s;
 }
 
-/** Format a Helix ISO date as a relative label ("3 days ago"). */
 function relativeDate(isoString) {
   const diff = Date.now() - new Date(isoString).getTime();
   const mins = Math.floor(diff / 60_000);
@@ -46,29 +41,16 @@ function relativeDate(isoString) {
 }
 
 export class VodsPage {
-  /**
-   * @param {object} opts
-   * @param {HTMLElement} opts.containerEl - #vods-page
-   * @param {HTMLElement} opts.videoFrameEl - #video-frame (hidden while shown)
-   * @param {(videoId: string) => void} opts.onVodSelect
-   */
   constructor({ containerEl, videoFrameEl, onVodSelect }) {
     this.containerEl = containerEl;
     this.videoFrameEl = videoFrameEl;
     this.onVodSelect = onVodSelect || (() => {});
     this.currentChannel = null;
-    /** True while showing a Kick channel's videos - see show()'s kick param. */
     this.isKick = false;
   }
 
-  /**
-   * Show the VODs page for `channel`, fetching fresh. Safe to call while showing (switches).
-   * @param {string} channel
-   * @param {object} [opts]
-   * @param {boolean} [opts.kick] - Kick slug: fetch via kick_channel_videos and skip the
-   *   chapter pass (Twitch GQL only). Everything else renders identically (kick.rs normalizes
-   *   to the Helix video shape).
-   */
+  // kick=true fetches via kick_channel_videos and skips the chapter pass (Twitch GQL only);
+  // everything else renders the same
   async show(channel, { kick = false } = {}) {
     this.currentChannel = channel;
     this.isKick = kick;
@@ -108,7 +90,7 @@ export class VodsPage {
       return;
     }
 
-    // Guard: user navigated away while the fetch was in flight
+    // user navigated away while the fetch was in flight
     if (this.currentChannel !== channel) return;
 
     this.containerEl.innerHTML = "";
@@ -130,7 +112,7 @@ export class VodsPage {
 
     const grid = document.createElement("div");
     grid.className = "home-grid vods-grid";
-    const cardRefs = []; // {vodId, totalSeconds, card} for chapter badge injection
+    const cardRefs = [];
     for (const vod of vods) {
       const card = this._buildVodCard(vod, progressByVodId[vod.id]);
       grid.appendChild(card);
@@ -139,8 +121,8 @@ export class VodsPage {
     }
     this.containerEl.appendChild(grid);
 
-    // Fire chapter fetches for every VOD in parallel; badges appear as responses arrive, so
-    // the grid is usable immediately. Twitch-only (GQL).
+    // fire chapter fetches for every VOD in parallel, badges land as they resolve so the grid
+    // is usable immediately. Twitch-only
     if (!kick) {
       this._injectChapterBadges(cardRefs, channel);
     }
@@ -158,7 +140,6 @@ export class VodsPage {
     const totalSeconds = vod.duration ? parseDurationToSeconds(vod.duration) : 0;
     card.addEventListener("click", () => this.onVodSelect(vod.id, totalSeconds, this.currentChannel));
 
-    // Thumbnail
     const thumbWrap = document.createElement("div");
     thumbWrap.className = "home-grid-thumb-wrap";
 
@@ -166,8 +147,8 @@ export class VodsPage {
     thumb.className = "home-grid-thumb";
     thumb.alt = "";
     const thumbUrl = vod.thumbnail_url || "";
-    // Helix returns a "_404_processing" URL for VODs still transcoding - treat as no
-    // thumbnail rather than firing a 403.
+    // Helix hands back a "_404_processing" URL for VODs still transcoding, treat as no
+    // thumbnail rather than firing a 403
     const isProcessing = thumbUrl.includes("404_processing") || !thumbUrl;
     if (isProcessing) {
       thumb.style.background = "#1a1a1d";
@@ -177,7 +158,6 @@ export class VodsPage {
     }
     thumbWrap.appendChild(thumb);
 
-    // Duration badge (bottom-left, like viewer count on live cards)
     if (vod.duration) {
       const dur = document.createElement("span");
       dur.className = "home-grid-viewers vod-duration";
@@ -185,7 +165,6 @@ export class VodsPage {
       thumbWrap.appendChild(dur);
     }
 
-    // Views badge (bottom-right)
     if (typeof vod.view_count === "number") {
       const views = document.createElement("span");
       views.className = "vod-views-badge";
@@ -193,8 +172,8 @@ export class VodsPage {
       thumbWrap.appendChild(views);
     }
 
-    // Resume indicator - same "essentially finished" threshold as main.js's resume logic, so
-    // a card never shows a resume bar for a VOD that would restart from 0.
+    // same "essentially finished" threshold as main.js's resume logic, so a card never shows
+    // a resume bar for a VOD that would restart from 0
     if (
       progress &&
       progress.total_secs > 0 &&
@@ -212,7 +191,7 @@ export class VodsPage {
 
     card.appendChild(thumbWrap);
 
-    // Meta row (no avatar - all VODs are the same channel)
+    // no avatar, every VOD here is the same channel
     const meta = document.createElement("div");
     meta.className = "home-grid-meta vods-meta";
 
@@ -225,7 +204,7 @@ export class VodsPage {
     title.title = vod.title || "";
 
     const date = document.createElement("div");
-    date.className = "home-grid-game"; // reuse muted subtitle style
+    date.className = "home-grid-game"; // reuse the muted subtitle style
     date.textContent = vod.created_at ? relativeDate(vod.created_at) : "";
 
     text.appendChild(title);
@@ -236,12 +215,8 @@ export class VodsPage {
     return card;
   }
 
-  /**
-   * Fires one fetchVodChapters() per card in parallel; stamps a "Chapters N" pill on each
-   * card's meta row when chapters arrive, matching Twitch's VOD-list badge.
-   */
   async _injectChapterBadges(cardRefs, channel) {
-    // One active popup at a time.
+    // one active popup at a time
     let activePopup = null;
     const closePopup = () => { activePopup?.remove(); activePopup = null; };
     document.addEventListener("click", closePopup, { capture: true, once: false });
@@ -294,12 +269,11 @@ export class VodsPage {
           document.body.appendChild(popup);
           activePopup = popup;
 
-          // Position above the badge, right-aligned to it.
           const r = badge.getBoundingClientRect();
           popup.style.left   = `${r.left}px`;
           popup.style.bottom = `${window.innerHeight - r.top + 6}px`;
           popup.style.top    = "";
-          // If it would go off-screen right, shift left.
+          // if it would run off the right edge, shift left
           const pw = popup.getBoundingClientRect().width;
           if (r.left + pw > window.innerWidth - 8) {
             popup.style.left = `${window.innerWidth - pw - 8}px`;
@@ -313,7 +287,6 @@ export class VodsPage {
     }));
   }
 
-  /** Minimal HTML-escape for channel names in error messages. */
   _esc(str) {
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }

@@ -1,15 +1,13 @@
-// Twitch Helix REST API, proxied through Rust because api.twitch.tv fails inside
-// WebView2. Token comes from ChatState (where OAuth parks it); commands that
-// require login go through require_auth(), the rest send whatever token is
-// available and let the JS side handle a 401.
+// Twitch Helix REST API, proxied through Rust because api.twitch.tv fails inside WebView2. token
+// comes from ChatState (where OAuth parks it); commands that require login go through require_auth(),
+// the rest send whatever token is available and let the JS side handle a 401
 
 use tauri::State;
 
 use crate::oauth;
 use crate::ChatState;
 
-/// Shared HTTP fetch for both badge endpoints. Always attaches Client-ID, and
-/// Authorization when a token is available.
+// shared HTTP fetch for both badge endpoints. always attaches Client-ID, and Authorization when a token is available
 pub(crate) async fn helix_get(url: &str, access_token: Option<String>) -> Result<String, String> {
     let client = reqwest::Client::new();
     let mut req = client
@@ -25,9 +23,6 @@ pub(crate) async fn helix_get(url: &str, access_token: Option<String>) -> Result
     response.text().await.map_err(|e| e.to_string())
 }
 
-// --- Sidebar data: followed channels + live status ---
-// Mirrors the left-hand "For You" sidebar on the official site.
-
 pub(crate) fn require_auth(state: &State<'_, ChatState>) -> Result<(String, String), String> {
     let guard = state.auth.lock().map_err(|e| e.to_string())?;
     let creds = guard
@@ -36,8 +31,7 @@ pub(crate) fn require_auth(state: &State<'_, ChatState>) -> Result<(String, Stri
     Ok((creds.access_token.clone(), creds.user_id.clone()))
 }
 
-/// Every followed channel for the logged-in user, paging through
-/// /helix/channels/followed until the cursor runs out.
+// every followed channel for the logged-in user, paging through /helix/channels/followed until the cursor runs out
 #[tauri::command]
 pub async fn get_followed_channels(state: State<'_, ChatState>) -> Result<String, String> {
     let (token, user_id) = require_auth(&state)?;
@@ -77,9 +71,7 @@ pub async fn get_followed_channels(state: State<'_, ChatState>) -> Result<String
     serde_json::to_string(&all).map_err(|e| e.to_string())
 }
 
-/// Given broadcaster IDs, returns the subset currently live (with
-/// viewer_count/game_name/title/etc) via /helix/streams, chunked at 100 user_id
-/// params per request (Helix's max).
+// given broadcaster IDs, returns the subset currently live (with viewer_count/game_name/title/etc) via /helix/streams, chunked at 100 user_id params per request (Helix's max)
 #[tauri::command]
 pub async fn get_streams_for_users(
     state: State<'_, ChatState>,
@@ -118,12 +110,10 @@ pub async fn get_streams_for_users(
     serde_json::to_string(&all).map_err(|e| e.to_string())
 }
 
-/// Looks up the live-stream record (if any) for a single channel login via
-/// /helix/streams?user_login= - used by the manual "Watch" button, which
-/// (unlike the sidebar/home feed/browse page) starts with only a typed name and
-/// no stream object, so it has no `tags` array for the drops banner (drops.js)
-/// without a fresh lookup. Returns "null" (not an error) if the channel isn't
-/// live, a normal case - main.js just skips the drops banner then.
+// looks up the live-stream record (if any) for a single channel login via /helix/streams?user_login=,
+// used by the manual "Watch" button, which (unlike the sidebar/home feed/browse page) starts with only
+// a typed name and no stream object, so it has no tags array for the drops banner without a fresh
+// lookup. returns "null" (not an error) if the channel isn't live, a normal case
 #[tauri::command]
 pub async fn get_stream_for_login(
     state: State<'_, ChatState>,
@@ -146,10 +136,7 @@ pub async fn get_stream_for_login(
     serde_json::to_string(&first).map_err(|e| e.to_string())
 }
 
-/// Single user lookup by login, used when a channel is offline and we have no
-/// stream object (hence no user_id) for get_users_info. Returns the first user
-/// from /helix/users?login=<login>, or an error if the request fails or the
-/// login isn't found.
+// single user lookup by login, used when a channel is offline and we have no stream object (hence no user_id) for get_users_info. returns the first user from /helix/users?login=, or an error if the request fails or the login isn't found
 #[tauri::command]
 pub async fn get_user_by_login(
     state: State<'_, ChatState>,
@@ -172,8 +159,7 @@ pub async fn get_user_by_login(
     serde_json::to_string(&user).map_err(|e| e.to_string())
 }
 
-/// Batched profile lookup (avatars + display names) via /helix/users, chunked
-/// at 100 ids/request.
+// batched profile lookup (avatars + display names) via /helix/users, chunked at 100 ids/request
 #[tauri::command]
 pub async fn get_users_info(
     state: State<'_, ChatState>,
@@ -212,9 +198,7 @@ pub async fn get_users_info(
     serde_json::to_string(&all).map_err(|e| e.to_string())
 }
 
-/// Fetches a channel's past broadcasts (VODs) from /helix/videos. Resolves login
-/// -> user_id first (one extra Helix call) so the frontend passes only the login
-/// it already knows.
+// fetches a channel's past broadcasts (VODs) from /helix/videos. resolves login -> user_id first (one extra Helix call) so the frontend passes only the login it already knows
 #[tauri::command]
 pub async fn get_videos_for_login(
     state: State<'_, ChatState>,
@@ -222,7 +206,7 @@ pub async fn get_videos_for_login(
 ) -> Result<String, String> {
     let (token, _) = require_auth(&state)?;
 
-    // Step 1: resolve login -> user_id via /helix/users.
+    // resolve login -> user_id via /helix/users
     let users_url = format!(
         "https://api.twitch.tv/helix/users?login={}",
         urlencoding_encode(&login)
@@ -239,7 +223,7 @@ pub async fn get_videos_for_login(
         .ok_or_else(|| format!("No user found for login: {login}"))?
         .to_string();
 
-    // Step 2: fetch VODs for that user_id (archives only, most recent 20).
+    // fetch VODs for that user_id (archives only, most recent 20)
     let vods_url = format!(
         "https://api.twitch.tv/helix/videos?user_id={}&type=archive&first=20",
         user_id
@@ -255,17 +239,12 @@ pub async fn get_videos_for_login(
     serde_json::to_string(&data).map_err(|e| e.to_string())
 }
 
-/// Fetches the muted (DMCA/copyright) segment ranges for one VOD via
-/// /helix/videos?id=. Each segment is {duration, offset} in seconds - Twitch
-/// mutes the audio (not video) for that range rather than removing the VOD,
-/// usually after an automated copyright match.
-///
-/// IMPORTANT: per a confirmed Twitch bug (twitchdev/issues#501), muted_segments
-/// is only populated with a USER access token - an app token gets `null` even
-/// for VODs that visibly have muted segments. require_auth only succeeds with a
-/// real user token, so this avoids that trap naturally. Still returns an empty
-/// list (not an error) if the caller isn't logged in - so a logged-out viewer
-/// just gets no markers rather than a broken player.
+// fetches the muted (DMCA/copyright) segment ranges for one VOD via /helix/videos?id=. each segment
+// is {duration, offset} in seconds, Twitch mutes the audio (not video) for that range rather than
+// removing the VOD. per a confirmed Twitch bug (twitchdev/issues#501), muted_segments is only
+// populated with a USER access token, an app token gets null even for VODs that visibly have muted
+// segments; require_auth only succeeds with a real user token, so this avoids that trap naturally.
+// still returns an empty list (not an error) if the caller isn't logged in
 #[tauri::command]
 pub async fn get_vod_muted_segments(
     state: State<'_, ChatState>,
@@ -290,18 +269,11 @@ pub async fn get_vod_muted_segments(
     serde_json::to_string(&segments).map_err(|e| e.to_string())
 }
 
-
-/// Returns the id and creation timestamp of the currently-recording VOD for a
-/// live channel, enabling live-DVR: seeking past the MSE relay's buffer by
-/// switching to HLS.js on the in-progress VOD.
-///
-/// Twitch creates the VOD at stream start. It appears in /helix/videos as the
-/// most recent archive, distinguished from finished VODs by its thumbnail_url
-/// still containing the "%{width}x%{height}" template placeholder rather than a
-/// resolved URL.
-///
-/// Returns { "video_id": "...", "created_at": "..." }, or an error if the
-/// channel has no live VOD (VODs disabled, not live, or not created yet).
+// returns the id and creation timestamp of the currently-recording VOD for a live channel, enabling
+// live-DVR: seeking past the MSE relay's buffer by switching to HLS.js on the in-progress VOD. Twitch
+// creates the VOD at stream start; it appears in /helix/videos as the most recent archive,
+// distinguished from finished VODs by its thumbnail_url still containing the "%{width}x%{height}"
+// template placeholder rather than a resolved URL. errors if the channel has no live VOD (VODs disabled, not live, or not created yet)
 #[tauri::command]
 pub async fn get_live_vod_info(
     state: State<'_, ChatState>,
@@ -309,7 +281,7 @@ pub async fn get_live_vod_info(
 ) -> Result<String, String> {
     let (token, _) = require_auth(&state)?;
 
-    // Resolve login -> user_id.
+    // resolve login -> user_id
     let users_url = format!(
         "https://api.twitch.tv/helix/users?login={}",
         urlencoding_encode(&login)
@@ -323,7 +295,7 @@ pub async fn get_live_vod_info(
         .ok_or_else(|| format!("No user found for login: {login}"))?
         .to_string();
 
-    // Fetch the most recent archive VOD - the in-progress one is always first.
+    // fetch the most recent archive VOD, the in-progress one is always first
     let vods_url = format!(
         "https://api.twitch.tv/helix/videos?user_id={}&type=archive&first=1",
         user_id
@@ -336,9 +308,7 @@ pub async fn get_live_vod_info(
         .get("data").and_then(|d| d.as_array()).and_then(|a| a.first())
         .ok_or_else(|| "No VOD found - channel may have VODs disabled or not be live".to_string())?;
 
-    // A currently-recording VOD has a template thumbnail URL, not a real one -
-    // distinguishes it from a finished stream's VOD that happens to be the most
-    // recent archive.
+    // a currently-recording VOD has a template thumbnail URL, not a real one, which distinguishes it from a finished stream's VOD that happens to be the most recent archive
     let thumb = video.get("thumbnail_url").and_then(|t| t.as_str()).unwrap_or("");
     if !thumb.contains("%{width}") {
         return Err("Most recent VOD is not currently recording (stream may be offline or VODs disabled)".to_string());
@@ -355,11 +325,9 @@ pub async fn get_live_vod_info(
     }).to_string())
 }
 
-/// Fetches a page of VOD chat replay from the (deprecated but still functional)
-/// Kraken v5 comments endpoint. Returns the raw JSON so JS can render messages
-/// at the right timestamps. `cursor` is the pagination token from the previous
-/// call (empty for the first page); `offset_seconds` is where in the VOD to
-/// start (ignored after the first page - the cursor takes over).
+// fetches a page of VOD chat replay from the (deprecated but still functional) Kraken v5 comments
+// endpoint. returns the raw JSON so JS can render messages at the right timestamps. cursor is the
+// pagination token from the previous call (empty for the first page); offset_seconds is where in the VOD to start (ignored after the first page, the cursor takes over)
 #[tauri::command]
 pub async fn get_vod_chat(
     _state: State<'_, ChatState>,
@@ -367,13 +335,10 @@ pub async fn get_vod_chat(
     offset_seconds: f64,
     cursor: String,
 ) -> Result<String, String> {
-    // Twitch's Kraken v5 API was shut down in Feb 2023. VOD chat is now only
-    // available via Twitch's internal GQL endpoint. We use the same public
-    // Client-ID the twitch.tv web app uses, with the
-    // VideoCommentsByOffsetOrCursor persisted query that's been stable since
-    // mid-2021. No user token needed for public VODs.
-    //
-    // GQL persisted query hash for VideoCommentsByOffsetOrCursor:
+    // Twitch's Kraken v5 API was shut down in Feb 2023. VOD chat is now only available via Twitch's
+    // internal GQL endpoint. we use the same public Client-ID the twitch.tv web app uses, with the
+    // VideoCommentsByOffsetOrCursor persisted query that's been stable since mid-2021. no user token
+    // needed for public VODs. GQL persisted query hash for VideoCommentsByOffsetOrCursor:
     const GQL_URL: &str = "https://gql.twitch.tv/gql";
     const GQL_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
     const QUERY_HASH: &str =
@@ -425,20 +390,15 @@ pub async fn get_vod_chat(
     response.text().await.map_err(|e| e.to_string())
 }
 
-/// How many live streams to sample when approximating per-category viewer counts
-/// (see get_category_viewer_counts). Larger = more accurate for lower-ranked
-/// categories at the cost of more Helix requests (paged at 100) and a slower
-/// Browse load; 1000 covers every category visible before "Show more", since
-/// lower-ranked ones have fewer viewers and matter less to this approximation.
+// how many live streams to sample when approximating per-category viewer counts (see
+// get_category_viewer_counts). larger = more accurate for lower-ranked categories at the cost of more
+// Helix requests (paged at 100) and a slower Browse load; 1000 covers every category visible before "Show more"
 const CATEGORY_VIEWER_SAMPLE_SIZE: usize = 1000;
 
-/// Approximates live viewer and channel count per category by aggregating a
-/// sample of top streams - NOT exhaustive, and NOT the number twitch.tv shows
-/// (that comes from an internal service Helix doesn't expose; the Twitch dev
-/// forums confirm this has never been in the public API). The closest honest
-/// substitute: real currently-live counts, only as complete as the sample. Good
-/// enough to rank and size the Browse cards; not guaranteed to match twitch.tv
-/// exactly, especially for less-popular categories under-sampled here.
+// approximates live viewer and channel count per category by aggregating a sample of top streams,
+// NOT exhaustive, and NOT the number twitch.tv shows (that comes from an internal service Helix doesn't
+// expose; the Twitch dev forums confirm this has never been in the public API). the closest honest
+// substitute: real currently-live counts, only as complete as the sample. good enough to rank and size the Browse cards
 #[tauri::command]
 pub async fn get_category_viewer_counts(state: State<'_, ChatState>) -> Result<String, String> {
     let token = state
@@ -483,9 +443,7 @@ pub async fn get_category_viewer_counts(state: State<'_, ChatState>) -> Result<S
         if cursor.is_none() { break; }
     }
 
-    // {game_id: {viewer_count, channel_count}} - aggregated server-side so the
-    // frontend never parses the ~1000 stream objects itself, just looks up its
-    // game_id.
+    // {game_id: {viewer_count, channel_count}}, aggregated server-side so the frontend never parses the ~1000 stream objects itself, just looks up its game_id
     let out: serde_json::Map<String, serde_json::Value> = by_game
         .into_iter()
         .map(|(game_id, (viewers, channels))| {
@@ -495,11 +453,9 @@ pub async fn get_category_viewer_counts(state: State<'_, ChatState>) -> Result<S
     serde_json::to_string(&out).map_err(|e| e.to_string())
 }
 
-/// Top live channels overall, sorted by viewer count - the closest PUBLIC
-/// equivalent to the official site's personalized "Live Channels" rail. There's
-/// no public Helix endpoint for personalized recommendations (the real site's is
-/// an internal GraphQL service), so this substitutes general top-viewed live
-/// channels, needing only Client-ID.
+// top live channels overall, sorted by viewer count, the closest PUBLIC equivalent to the official
+// site's personalized "Live Channels" rail. there's no public Helix endpoint for personalized
+// recommendations (the real site's is an internal GraphQL service), so this substitutes general top-viewed live channels, needing only Client-ID
 #[tauri::command]
 pub async fn get_top_live_streams(state: State<'_, ChatState>) -> Result<String, String> {
     let token = state
@@ -518,12 +474,10 @@ pub async fn get_top_live_streams(state: State<'_, ChatState>) -> Result<String,
     serde_json::to_string(&data).map_err(|e| e.to_string())
 }
 
-/// Cursor-paginated sibling of get_top_live_streams, for the Browse page's Live
-/// Channels tab, which infinite-scrolls through every live channel like the
-/// Categories grid. Kept separate rather than adding a cursor param to
-/// get_top_live_streams, which home.js and sidebar.js also call expecting a flat
-/// array; changing its shape would break them. Returns `{"streams": [...],
-/// "cursor": "..." | null}`, same envelope as get_top_games.
+// cursor-paginated sibling of get_top_live_streams, for the Browse page's Live Channels tab, which
+// infinite-scrolls through every live channel like the Categories grid. kept separate rather than
+// adding a cursor param to get_top_live_streams, which home.js and sidebar.js also call expecting a
+// flat array; changing its shape would break them. same {"streams": [...], "cursor": ...} envelope as get_top_games
 #[tauri::command]
 pub async fn get_live_streams_page(
     state: State<'_, ChatState>,
@@ -561,11 +515,9 @@ pub async fn get_live_streams_page(
     .map_err(|e| e.to_string())
 }
 
-/// Live streams for a hand-picked set of games, for home-feed rows like "RPGs".
-/// Twitch's directory groups by genre via an internal service not in public
-/// Helix, so the closest public equivalent is resolving a few representative
-/// names to game_ids (one request; Helix accepts multiple `name` params) and
-/// pulling /helix/streams for them together, sorted by viewer count.
+// live streams for a hand-picked set of games, for home-feed rows like "RPGs". Twitch's directory
+// groups by genre via an internal service not in public Helix, so the closest public equivalent is
+// resolving a few representative names to game_ids (one request; Helix accepts multiple name params) and pulling /helix/streams for them together, sorted by viewer count
 #[tauri::command]
 pub async fn get_streams_for_game_names(
     state: State<'_, ChatState>,
@@ -620,9 +572,7 @@ pub async fn get_streams_for_game_names(
         .cloned()
         .unwrap_or_default();
 
-    // Helix returns each game_id's results in its own block, not merged by viewer
-    // count - re-sort across the combined set so the row reads highest-first like
-    // a real category page.
+    // Helix returns each game_id's results in its own block, not merged by viewer count, re-sort across the combined set so the row reads highest-first like a real category page
     data.sort_by_key(|s| {
         std::cmp::Reverse(s.get("viewer_count").and_then(|v| v.as_i64()).unwrap_or(0))
     });
@@ -630,11 +580,9 @@ pub async fn get_streams_for_game_names(
     serde_json::to_string(&data).map_err(|e| e.to_string())
 }
 
-/// Fuzzy category search, backing the Browse page's "Search Category Tags" box -
-/// matches by partial name, unlike get_streams_for_game_names (and
-/// /helix/games?name=) which resolve an EXACT name to its id. Returns the same
-/// shape as get_top_games's cards (id/name/box_art_url) so the frontend reuses
-/// its card renderer.
+// fuzzy category search, backing the Browse page's "Search Category Tags" box, matches by partial
+// name, unlike get_streams_for_game_names (and /helix/games?name=) which resolve an EXACT name to its
+// id. returns the same shape as get_top_games's cards (id/name/box_art_url) so the frontend reuses its card renderer
 #[tauri::command]
 pub async fn search_categories(
     state: State<'_, ChatState>,
@@ -665,21 +613,11 @@ pub async fn search_categories(
     serde_json::to_string(&data).map_err(|e| e.to_string())
 }
 
-/// Fetches one page of the top games/categories by current viewer count - the
-/// category-cards grid for the Browse page, equivalent to
-/// twitch.tv/directory's top-level view.
-///
-/// `cursor` is the pagination token from the previous call (None for the first).
-/// Returns `{"games": [...], "cursor": "..." | null}` - browse.js's "Show more"
-/// calls again with the returned cursor, like get_vod_chat's pagination. A null
-/// cursor means Twitch has no more categories with a live viewer right now, the
-/// real end of the list.
-///
-/// Previously this returned a single fixed batch (200 items), so "Show more"
-/// could only reveal what was already fetched - once past 200 there was nothing
-/// more, even though Twitch's directory keeps going for thousands. That was why
-/// Browse didn't show every category the website does; this makes each page a
-/// fresh on-demand request, removing the cap.
+// fetches one page of the top games/categories by current viewer count, the category-cards grid for
+// the Browse page. cursor is the pagination token from the previous call (None for the first); a null
+// cursor means Twitch has no more categories with a live viewer right now, the real end of the list.
+// previously this returned a single fixed batch (200 items), so "Show more" could only reveal what was
+// already fetched, even though Twitch's directory keeps going for thousands. this makes each page a fresh on-demand request, removing the cap
 const GAMES_PAGE_SIZE: &str = "100"; // Helix's own max page size for this endpoint
 
 #[tauri::command]
@@ -719,10 +657,8 @@ pub async fn get_top_games(
     .map_err(|e| e.to_string())
 }
 
-/// Live streams for a single game_id, sorted by viewer count - the streams grid
-/// after drilling into one category on Browse. Separate from
-/// get_streams_for_game_names (which resolves names to ids first for the home
-/// feed's RPG list); here we already have the id from a get_top_games card.
+// live streams for a single game_id, sorted by viewer count, the streams grid after drilling into
+// one category on Browse. separate from get_streams_for_game_names (which resolves names to ids first for the home feed's RPG list); here we already have the id from a get_top_games card
 #[tauri::command]
 pub async fn get_streams_for_game_id(
     state: State<'_, ChatState>,
@@ -745,8 +681,7 @@ pub async fn get_streams_for_game_id(
     serde_json::to_string(&data).map_err(|e| e.to_string())
 }
 
-/// Minimal percent-encoding for game names in query params (spaces, etc.) -
-/// avoids pulling in a full urlencoding/url crate for this one narrow use.
+// minimal percent-encoding for game names in query params (spaces, etc.), avoids pulling in a full urlencoding/url crate for this one narrow use
 pub(crate) fn urlencoding_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for byte in s.as_bytes() {
@@ -758,4 +693,304 @@ pub(crate) fn urlencoding_encode(s: &str) -> String {
         }
     }
     out
+}
+
+// pinned chat messages via Twitch's private GQL (GetPinnedChat). the official Helix pinned-message
+// endpoint is moderator-only, so for a regular viewer this GQL op is the only way to read pins.
+// PROBE: uses the Twitch Android client id (kd1unb4b3q4t58fwlpcbzcbnm76a8fp, which is integrity-free
+// for this op) together with the logged-in user's existing OAuth token. that token was minted for a
+// different client id, so Twitch may reject the pairing; if so we surface the exact error rather than
+// failing silently, so we can decide whether an Android device-login flow is worth adding.
+// hash captured by the StreamNook project (2026-03-25); response shape mirrors theirs.
+#[tauri::command]
+pub async fn get_pinned_chat_messages(
+    channel_id: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    // uses the Android device-login token (see twitch_device_auth); the web-login token is rejected by
+    // this GQL op. not connected -> no pins (not an error)
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::json!([])),
+    };
+
+    const GQL_URL: &str = "https://gql.twitch.tv/gql";
+    const ANDROID_CLIENT_ID: &str = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp";
+    const HASH: &str = "2d099d4c9b6af80a07d8440140c4f3dbb04d516b35c401aab7ce8f60765308d5";
+
+    let body = serde_json::json!({
+        "operationName": "GetPinnedChat",
+        "variables": { "channelID": channel_id, "count": 10 },
+        "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(GQL_URL)
+        .header("Client-Id", ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .header("Accept", "*/*")
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("pinned request failed: {e}"))?;
+
+    let status = response.status();
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("GetPinnedChat HTTP {status}: {text}"));
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("GetPinnedChat parse error: {e}"))?;
+    if let Some(errors) = json.get("errors") {
+        return Err(format!("GetPinnedChat GQL errors: {errors}"));
+    }
+
+    let mut pins = Vec::new();
+    if let Some(edges) = json
+        .pointer("/data/channel/pinnedChatMessages/edges")
+        .and_then(|v| v.as_array())
+    {
+        for edge in edges {
+            let node = match edge.get("node") {
+                Some(n) => n,
+                None => continue,
+            };
+            let msg = node
+                .pointer("/pinnedMessage/content/text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if msg.is_empty() {
+                continue;
+            }
+            pins.push(serde_json::json!({
+                "message_id": node.pointer("/pinnedMessage/id").and_then(|v| v.as_str()).unwrap_or(""),
+                "text": msg,
+                "sender_name": node.pointer("/pinnedMessage/sender/displayName").and_then(|v| v.as_str()).unwrap_or(""),
+                "sender_color": node.pointer("/pinnedMessage/sender/chatColor").and_then(|v| v.as_str()).unwrap_or(""),
+                "pinned_by": node.pointer("/pinnedBy/displayName").and_then(|v| v.as_str()).unwrap_or(""),
+            }));
+        }
+    }
+    Ok(serde_json::json!(pins))
+}
+
+// live hype train for a channel via GQL (GetHypeTrainExecution). web client id, read-only (NO auth
+// token, unlike pins), so it works for ANY channel you watch, unlike EventSub channel.hype_train which
+// needs broadcaster scope. returns {active, level, progress, goal, total, is_golden, expires_at}.
+// operation hash from the StreamNook project.
+#[tauri::command]
+pub async fn get_hype_train(channel_login: String) -> Result<serde_json::Value, String> {
+    const GQL_URL: &str = "https://gql.twitch.tv/gql";
+    const WEB_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+    const HASH: &str = "8a39e843c94c5109a4cfb9badc641733e2205c60f5ee30e9b55edf0ad9db870a";
+
+    // random device/session ids like the web client sends (StreamNook includes these; harmless if optional)
+    let mut rnd = [0u8; 16];
+    let _ = getrandom::getrandom(&mut rnd);
+    let device_id: String = rnd.iter().map(|b| format!("{b:02x}")).collect();
+
+    let body = serde_json::json!({
+        "operationName": "GetHypeTrainExecution",
+        "variables": { "userLogin": channel_login },
+        "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(GQL_URL)
+        .header("Client-ID", WEB_CLIENT_ID)
+        .header("Content-Type", "application/json")
+        .header("Accept", "*/*")
+        .header("X-Device-Id", device_id.as_str())
+        .header("Client-Session-Id", device_id.as_str())
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("GetHypeTrainExecution HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let exec = match json.pointer("/data/user/channel/hypeTrain/execution") {
+        Some(e) if !e.is_null() => e.clone(),
+        _ => return Ok(serde_json::json!({ "active": false })),
+    };
+    let prog = exec.pointer("/progress");
+    let geti = |p: Option<&serde_json::Value>, key: &str| {
+        p.and_then(|v| v.get(key)).and_then(|v| v.as_i64()).unwrap_or(0)
+    };
+    let level = prog
+        .and_then(|p| p.pointer("/level/value"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let progress = geti(prog, "progression");
+    let goal = geti(prog, "goal");
+    let total = geti(prog, "total");
+    let expires_at = exec.get("expiresAt").and_then(|v| v.as_str()).unwrap_or("");
+    let is_golden = exec
+        .get("isGoldenKappaTrain")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "active": true,
+        "level": level,
+        "progress": progress,
+        "goal": goal,
+        "total": total,
+        "is_golden": is_golden,
+        "expires_at": expires_at,
+    }))
+}
+
+// active channel prediction via GQL (raw GetChannelPrediction query, no persisted hash). uses the
+// Android device-login token (same one pins use), so it works for any channel you watch. returns the
+// prediction (title/status/outcomes with point+user totals/timing) or null when there's none / not
+// device-connected. query + shape from the StreamNook project.
+#[tauri::command]
+pub async fn get_channel_prediction(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::Value::Null),
+    };
+
+    const QUERY: &str = "query GetChannelPrediction($login: String!) { channel(name: $login) { id activePredictionEvent { id status title predictionWindowSeconds createdAt lockedAt endedAt winningOutcome { id } outcomes { id title color totalPoints totalUsers } } } }";
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "GetChannelPrediction",
+            "query": QUERY,
+            "variables": { "login": channel_login.to_lowercase() }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("GetChannelPrediction HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let pred = match json.pointer("/data/channel/activePredictionEvent") {
+        Some(p) if !p.is_null() => p.clone(),
+        _ => return Ok(serde_json::Value::Null),
+    };
+
+    let mut outcomes = Vec::new();
+    if let Some(arr) = pred.get("outcomes").and_then(|v| v.as_array()) {
+        for o in arr {
+            outcomes.push(serde_json::json!({
+                "id": o.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                "title": o.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                "color": o.get("color").and_then(|v| v.as_str()).unwrap_or("BLUE"),
+                "total_points": o.get("totalPoints").and_then(|v| v.as_i64()).unwrap_or(0),
+                "total_users": o.get("totalUsers").and_then(|v| v.as_i64()).unwrap_or(0),
+            }));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "id": pred.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": pred.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "status": pred.get("status").and_then(|v| v.as_str()).unwrap_or("ACTIVE"),
+        "window_seconds": pred.get("predictionWindowSeconds").and_then(|v| v.as_i64()).unwrap_or(60),
+        "created_at": pred.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "winning_outcome_id": pred.pointer("/winningOutcome/id").and_then(|v| v.as_str()),
+        "outcomes": outcomes,
+    }))
+}
+
+#[derive(serde::Serialize)]
+pub struct ClipResult {
+    id: String,
+    edit_url: String,
+    ready: bool,
+}
+
+// creates a clip of the live stream via Helix (captures ~last 30s server-side). needs the web login
+// token with the clips:edit scope (added to oauth.rs; requires a re-login to take effect). returns the
+// clip id + edit_url (Twitch's trim/publish page). errors are made human-readable for a toast.
+#[tauri::command]
+pub async fn create_clip(
+    broadcaster_id: String,
+    state: State<'_, ChatState>,
+) -> Result<ClipResult, String> {
+    let token = {
+        let guard = state.auth.lock().map_err(|e| e.to_string())?;
+        match guard.as_ref() {
+            Some(c) => c.access_token.clone(),
+            None => return Err("Log in to Twitch to create clips.".into()),
+        }
+    };
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.twitch.tv/helix/clips")
+        .query(&[("broadcaster_id", broadcaster_id.as_str())])
+        .header("Client-Id", oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err("Clip permission missing — log out and back in to Twitch to grant it.".into());
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err("Couldn't create a clip — the stream may be offline or have clips disabled.".into());
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let d = json
+        .pointer("/data/0")
+        .ok_or_else(|| "Twitch returned no clip.".to_string())?;
+    let id = d.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let edit_url = d.get("edit_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if id.is_empty() {
+        return Err("Twitch returned no clip.".into());
+    }
+
+    // Create Clip is ASYNC: the edit_url is valid immediately but the clip's video isn't rendered yet,
+    // so opening it right away shows a black/empty frame. poll Get Clips until the thumbnail is a real
+    // one (Twitch serves a "...processing..." placeholder until the render finishes), up to ~24s.
+    let mut ready = false;
+    for _ in 0..12 {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let g = client
+            .get("https://api.twitch.tv/helix/clips")
+            .query(&[("id", id.as_str())])
+            .header("Client-Id", oauth::CLIENT_ID)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+            .await;
+        if let Ok(r) = g {
+            if let Ok(t) = r.text().await {
+                if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t) {
+                    if let Some(thumb) = j
+                        .pointer("/data/0/thumbnail_url")
+                        .and_then(|v| v.as_str())
+                    {
+                        if !thumb.is_empty() && !thumb.contains("processing") {
+                            ready = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(ClipResult { id, edit_url, ready })
 }

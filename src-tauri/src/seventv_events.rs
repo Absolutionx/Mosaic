@@ -1,12 +1,10 @@
-// 7TV EventAPI WebSocket client - subscribes to a channel's emote set for
-// real-time add/remove/rename, since chat.js only fetches the set once at join.
-// Push-based, like eventsub.rs but against 7TV's unauthenticated EventAPI.
+// 7TV EventAPI WebSocket client: subscribes to a channel's emote set for real-time
+// add/remove/rename, since chat.js only fetches the set once at join. push-based, like eventsub.rs
+// but against 7TV's unauthenticated EventAPI.
 //
-// Protocol (github.com/SevenTV/EventAPI): connect wss://events.7tv.io/v3; Hello
-// (op 1) gives heartbeat_interval; Subscribe (op 35) to "emote_set.update"
-// keyed on the set's object_id; Dispatch (op 0) carries pushed/pulled/updated;
-// reconnect on Reconnect (op 4) or 3 missed heartbeats. We re-subscribe from
-// scratch rather than Resume.
+// protocol (github.com/SevenTV/EventAPI): connect wss://events.7tv.io/v3; Hello (op 1) gives
+// heartbeat_interval; Subscribe (op 35) to "emote_set.update" keyed on the set's object_id; Dispatch
+// (op 0) carries pushed/pulled/updated; reconnect on Reconnect (op 4) or 3 missed heartbeats. we re-subscribe from scratch rather than Resume
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -15,8 +13,6 @@ use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::tungstenite::Message;
 
 const EVENTAPI_WS: &str = "wss://events.7tv.io/v3";
-
-// --- Wire types ---
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -34,12 +30,7 @@ const OP_ERROR: u8 = 6;
 const OP_END_OF_STREAM: u8 = 7;
 const OP_SUBSCRIBE: u8 = 35;
 
-// --- Public entry point ---
-
-/// Runs the 7TV EventAPI WebSocket loop in a background Tokio task, subscribed
-/// to one emote set's changes. Exits when stop_rx fires. Unlike eventsub::run,
-/// needs no access token - the EventAPI is public for this kind of
-/// subscription.
+// runs the 7TV EventAPI WebSocket loop in a background Tokio task, subscribed to one emote set's changes. exits when stop_rx fires. unlike eventsub::run, needs no access token, the EventAPI is public for this kind of subscription
 pub async fn run(
     app: AppHandle,
     emote_set_id: String,
@@ -56,9 +47,8 @@ pub async fn run(
 
         let (mut write, mut read) = ws.split();
 
-        // Set once Hello arrives; None beforehand means "use a generous default
-        // while we wait", since the spec doesn't guarantee Hello is the very first
-        // byte on the wire.
+        // set once Hello arrives; None beforehand means "use a generous default while we wait", since the
+        // spec doesn't guarantee Hello is the very first byte on the wire
         let mut heartbeat_interval_ms: u64 = 30_000;
         let mut missed_heartbeats: u32 = 0;
 
@@ -75,8 +65,7 @@ pub async fn run(
                     let msg = match msg {
                         Ok(m) => m,
                         Err(_) => {
-                            // No traffic at all within one full interval - per spec, 3 missed
-                            // heartbeats means the connection is dead.
+                            // no traffic at all within one full interval, per spec 3 missed heartbeats means the connection is dead
                             missed_heartbeats += 1;
                             if missed_heartbeats >= 3 {
                                 eprintln!(
@@ -116,12 +105,11 @@ pub async fn run(
                                     }
                                 }
                                 OP_HEARTBEAT => {
-                                    // Just resets missed_heartbeats above.
                                 }
                                 OP_DISPATCH => {
-                                    // The 7TV Dispatch envelope is:
+                                    // the 7TV Dispatch envelope is:
                                     //   { "op": 0, "d": { "type": "emote_set.update", "body": { "pushed": [...], ... } } }
-                                    // pushed/pulled/updated live in d.body, not d itself.
+                                    // pushed/pulled/updated live in d.body, not d itself
                                     if let Some(inner_body) = env.d.get("body") {
                                         dispatch_event(&app, inner_body);
                                     }
@@ -132,18 +120,15 @@ pub async fn run(
                                     continue 'reconnect;
                                 }
                                 OP_ACK => {
-                                    // Confirms our Subscribe was accepted - nothing to act on, just useful
-                                    // in logs.
+                                    // confirms our Subscribe was accepted, nothing to act on, just useful in logs
                                 }
                                 OP_ERROR => {
                                     eprintln!("[seventv-events] server error: {}", env.d);
                                 }
                                 OP_END_OF_STREAM => {
-                                    // Server is about to close on its own terms - d.code says whether/how to
-                                    // reconnect (see EventAPI's close-codes table), but reconnecting
-                                    // after a short pause is a fine default for the cases this app cares
-                                    // about (restarts, maintenance); it'll fail fast and retry if the
-                                    // server really isn't coming back.
+                                    // server is about to close on its own terms, d.code says whether/how to reconnect (see EventAPI's
+                                    // close-codes table), but reconnecting after a short pause is a fine default for the cases this app
+                                    // cares about (restarts, maintenance); it'll fail fast and retry if the server really isn't coming back
                                     eprintln!("[seventv-events] end of stream: {}", env.d);
                                     let _ = write.send(Message::Close(None)).await;
                                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -170,17 +155,12 @@ pub async fn run(
     }
 }
 
-// --- Dispatch handling ---
-
-/// Extracts emote add/remove/update entries from an emote_set.update Dispatch's
-/// INNER body (d.body from the wire envelope, not d itself - the caller drills
-/// to the right level first). Emits them to the frontend as
-/// seventv-emote-set-update; chat.js merges pushed+updated into its emote map
-/// and removes pulled entries.
+// extracts emote add/remove/update entries from an emote_set.update Dispatch's INNER body (d.body
+// from the wire envelope, not d itself, the caller drills to the right level first). emits them to
+// the frontend as seventv-emote-set-update; chat.js merges pushed+updated into its emote map and removes pulled entries
 fn dispatch_event(app: &AppHandle, body: &Value) {
-    // body.id is the emote SET's id (what we subscribed with); not forwarded,
-    // since the frontend only ever has one channel's set active and doesn't need
-    // to re-check which set this was for.
+    // body.id is the emote SET's id (what we subscribed with); not forwarded, since the frontend only
+    // ever has one channel's set active and doesn't need to re-check which set this was for
     let extract_emotes = |field: &str| -> Vec<Value> {
         body.get(field)
             .and_then(|v| v.as_array())

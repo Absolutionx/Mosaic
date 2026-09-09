@@ -1,10 +1,9 @@
-// Pure, dependency-free emote parsing - the testable core of chat-emotes.js and
-// chat-vod-replay.js (no DOM, tauri, fetch, or `this`). Kept here so
-// tests/emote-parsing.test.js runs under plain `node --test`; regressions here (native
-// offsets, cheermote tiers) have bitten before.
+// pure, dependency-free emote parsing: the testable core of chat-emotes.js and
+// chat-vod-replay.js (no DOM, tauri, fetch, or `this`). kept separate so
+// tests/emote-parsing.test.js runs under plain `node --test`, since regressions here
+// (native offsets, cheermote tiers) have bitten before
 
-/** Parses the IRC @emotes tag into a Map<charStart, {id, word}>.
- *  Format: "id:start-end,start-end/id2:start-end" (character offsets). */
+// IRC @emotes tag format: "id:start-end,start-end/id2:start-end" (character offsets)
 export function parseTwitchEmotesTag(message, emotesTag) {
   const map = new Map();
   if (!emotesTag) return map;
@@ -25,8 +24,7 @@ export function parseTwitchEmotesTag(message, emotesTag) {
   return map;
 }
 
-/** Parses a word as a cheermote ("Cheer100") against a prepared map (prefix -> tiers desc
- *  by minBits). Returns { amount, tier } or null; descending order yields the highest tier. */
+// map is prefix -> tiers descending by minBits, so the first match is the highest tier
 export function parseCheermoteWord(word, cheermoteMap) {
   const lower = word.toLowerCase();
   for (const [prefix, tiers] of cheermoteMap) {
@@ -41,10 +39,9 @@ export function parseCheermoteWord(word, cheermoteMap) {
   return null;
 }
 
-/** Parses one word as a Kick native-emote marker from flatten_emote_tokens:
- *  `\x01{id}\x01{name}\x01` (\x01 can't appear in a name or be typed). Returns { id, name }
- *  or null. The id is carried so a subscriber's cross-channel emote still renders (the local
- *  map only holds the watched channel's set). */
+// Kick native-emote marker from flatten_emote_tokens: `\x01{id}\x01{name}\x01` (\x01 can't
+// appear in a name or be typed). the id is carried so a subscriber's cross-channel emote
+// still renders, since the local map only holds the watched channel's set
 export function parseKickEmoteMarker(word) {
   const SEP = "\u0001";
   if (!word.startsWith(SEP) || !word.endsWith(SEP) || word.length < 3) return null;
@@ -57,7 +54,6 @@ export function parseKickEmoteMarker(word) {
   return { id, name };
 }
 
-/** Picks the best available CDN file from a 7TV emote's host.files list. */
 export function pickEmoteUrl(host) {
   if (!host || !host.url) return null;
   const base = host.url.startsWith("http") ? host.url : `https:${host.url}`;
@@ -71,9 +67,8 @@ export function pickEmoteUrl(host) {
   return `${base}/2x.webp`;
 }
 
-/** Reconstructs the plain-text body AND a Twitch emotes tag from a VOD GQL comment's
- *  fragments. Returns { body, emotesTag }, emotesTag null when there are no emotes, so
- *  renderMessageBody consumes it like live chat's IRC tag. */
+// emotesTag comes back null when there are no emotes, so renderMessageBody can consume it
+// exactly like live chat's IRC tag
 export function reconstructVodMessage(fragments) {
   let body = "";
   const emoteParts = [];
@@ -88,12 +83,11 @@ export function reconstructVodMessage(fragments) {
   return { body, emotesTag: emoteParts.length > 0 ? emoteParts.join("/") : null };
 }
 
-/** Third-party emote provider precedence, highest first. Channel emotes beat globals, and
- *  within a level the order mirrors mainstream clients (7TV > BTTV > FFZ). Makes collisions
- *  deterministic instead of last-fetch-wins. */
+// third-party provider precedence, highest first. channel emotes beat globals, and within
+// a level the order mirrors mainstream clients (7TV > BTTV > FFZ). makes name collisions
+// deterministic instead of last-fetch-wins
 export const EMOTE_PROVIDER_PRIORITY = {
-  // Kick-native channel emotes outrank all: a flattened token WAS that emote when the sender
-  // picked it. Only populated in Kick chat.
+  // a flattened token WAS that emote when the sender picked it. only populated in Kick chat
   "kick-channel":    7,
   "seventv-channel": 6,
   "bttv-channel":    5,
@@ -101,11 +95,10 @@ export const EMOTE_PROVIDER_PRIORITY = {
   "seventv-global":  3,
   "bttv-global":     2,
   "ffz-global":      1,
-  // Kick's site-wide Global/Emoji sets rank last - baseline any override should beat.
+  // Kick's site-wide Global/Emoji sets rank last, the baseline any override should beat
   "kick-global":     0,
 };
 
-/** True when `provider` names a channel-level (not global) emote source. */
 export function isChannelProvider(provider) {
   return provider === "seventv-channel"
       || provider === "bttv-channel"

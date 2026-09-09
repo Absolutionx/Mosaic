@@ -1,6 +1,5 @@
-// Persists go-live notification opt-ins to notify_channels.json in
-// app_local_data_dir. Old files may carry a stale close_pref key; serde ignores
-// unknown fields, so they still load.
+// persists go-live notification opt-ins to notify_channels.json in app_local_data_dir. old
+// files may carry a stale close_pref key; serde ignores unknown fields, so they still load
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -9,7 +8,7 @@ const PREFS_FILE: &str = "notify_channels.json";
 
 #[derive(Serialize, Deserialize, Default)]
 struct PersistedPrefs {
-    /// Lowercase channel logins the user wants go-live notifications for.
+    // lowercase channel logins the user wants go-live notifications for
     channels: Vec<String>,
 }
 
@@ -32,8 +31,6 @@ fn save_prefs(app: &AppHandle, prefs: &PersistedPrefs) -> Result<(), String> {
     }
     std::fs::write(&path, json).map_err(|e| e.to_string())
 }
-
-// --- Notification channels ---
 
 #[tauri::command]
 pub fn get_notify_channels(app: AppHandle) -> Vec<String> {

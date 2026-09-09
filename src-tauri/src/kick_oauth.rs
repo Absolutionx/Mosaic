@@ -1,10 +1,8 @@
-// Kick OAuth 2.1 (Authorization Code + PKCE) and authenticated chat send.
-// Kick's counterpart to oauth.rs; see that file for the local-redirect-server
-// strategy. Differences: authorization-code + PKCE (not implicit), requires a
-// client secret even for PKCE, separate hosts (id.kick.com for auth,
-// api.kick.com for REST, neither behind Cloudflare so plain reqwest works), and
-// ~1h tokens refreshed on demand. Redirect port 17544 (Twitch uses 17543);
-// register http://localhost:17544/ at kick.com/settings/developer.
+// Kick OAuth 2.1 (Authorization Code + PKCE) and authenticated chat send. Kick's counterpart to
+// oauth.rs; see that file for the local-redirect-server strategy. differences: authorization-code +
+// PKCE (not implicit), requires a client secret even for PKCE, separate hosts (id.kick.com for auth,
+// api.kick.com for REST, neither behind Cloudflare so plain reqwest works), and ~1h tokens refreshed
+// on demand. redirect port 17544 (Twitch uses 17543); register http://localhost:17544/ at kick.com/settings/developer
 
 use std::sync::Mutex;
 
@@ -13,21 +11,16 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-// --- App credentials (registered at kick.com/settings/developer) ---
-
-// Public identifier, safe in source (same reasoning as oauth.rs's CLIENT_ID).
-// Both credentials can also come from BUILD-time env vars (KICK_CLIENT_ID /
-// KICK_CLIENT_SECRET) so a real secret never has to be committed: set them
-// before running the build and option_env! bakes them in.
+// public identifier, safe in source (same reasoning as oauth.rs's CLIENT_ID). both credentials can
+// also come from BUILD-time env vars (KICK_CLIENT_ID / KICK_CLIENT_SECRET) so a real secret never has
+// to be committed: set them before running the build and option_env! bakes them in
 pub const CLIENT_ID: &str = match option_env!("KICK_CLIENT_ID") {
     Some(v) => v,
     None => "01KXA9BRSGK8QWV8G2F3RB46PZ",
 };
 
-// Kick demands this on the PKCE token exchange (see header). NOT a real secret
-// once shipped in a binary - treat it as a semi-public app identifier, and if
-// abused, rotate it in the Kick dev console (a build-time KICK_CLIENT_SECRET
-// still overrides this).
+// Kick demands this on the PKCE token exchange (see header). NOT a real secret once shipped in a
+// binary, treat it as a semi-public app identifier, and if abused, rotate it in the Kick dev console (a build-time KICK_CLIENT_SECRET still overrides this)
 pub const CLIENT_SECRET: &str = match option_env!("KICK_CLIENT_SECRET") {
     Some(v) => v,
     None => "3eb07b640555e7aab2a115040c79733e68aba3b424fc42a54a0858411a12282c",
@@ -41,22 +34,17 @@ const TOKEN_URL: &str = "https://id.kick.com/oauth/token";
 const USERS_URL: &str = "https://api.kick.com/public/v1/users";
 const CHAT_URL: &str = "https://api.kick.com/public/v1/chat";
 
-// Scopes: user:read to identify the account (get_me for the local echo's
-// display name), chat:write to send. Nothing else - this app doesn't moderate
-// or manage the channel on Kick's side.
+// scopes: user:read to identify the account (get_me for the local echo's display name), chat:write to
+// send. nothing else, this app doesn't moderate or manage the channel on Kick's side
 const SCOPES: &str = "user:read chat:write";
 
-/// True once a real client secret has been filled in. The frontend hides the
-/// Kick "Log in" button (with a short explainer) while false, so a placeholder
-/// build doesn't offer a login that could only fail at the token exchange.
+// true once a real client secret has been filled in. the frontend hides the Kick "Log in" button (with a short explainer) while false, so a placeholder build doesn't offer a login that could only fail at the token exchange
 #[tauri::command]
 pub fn kick_oauth_configured() -> bool {
     CLIENT_SECRET != "REPLACE_WITH_KICK_CLIENT_SECRET" && !CLIENT_ID.is_empty()
 }
 
-// --- Token persistence ---
-// Mirrors oauth.rs; separate file so the two providers never clobber each
-// other's stored token.
+// mirrors oauth.rs; separate file so the two providers never clobber each other's stored token
 
 const TOKEN_FILE: &str = "kick_oauth_token.json";
 
@@ -86,27 +74,19 @@ fn clear_token_file(app: &AppHandle) {
     }
 }
 
-// --- In-flight PKCE state (between authorize redirect and token exchange) ---
-
 #[derive(Default)]
 struct PendingAuth {
     verifier: String,
     state: String,
 }
 
-// One login at a time; a new start_kick_oauth_login overwrites any abandoned
-// prior attempt. Global rather than per-call because the redirect arrives on a
-// separate connection to the local server, with no handle back to the command
-// that started the flow.
+// one login at a time; a new start_kick_oauth_login overwrites any abandoned prior attempt. global
+// rather than per-call because the redirect arrives on a separate connection to the local server, with no handle back to the command that started the flow
 static PENDING: Mutex<Option<PendingAuth>> = Mutex::new(None);
 
-// --- PKCE + random helpers ---
-
-/// Self-contained SHA-256 (FIPS 180-4). Inlined rather than pulling in `sha2`:
-/// PKCE needs one hash of one short string per login, so a ~40-line
-/// dependency-free implementation is the right trade and keeps the transitive
-/// tree (and its toolchain requirements) smaller. Verified against the RFC 7636
-/// test vector in this module's tests.
+// self-contained SHA-256 (FIPS 180-4). inlined rather than pulling in sha2: PKCE needs one hash of one
+// short string per login, so a ~40-line dependency-free implementation is the right trade and keeps
+// the transitive tree (and its toolchain requirements) smaller. verified against the RFC 7636 test vector in this module's tests
 fn sha256(data: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
@@ -125,7 +105,7 @@ fn sha256(data: &[u8]) -> [u8; 32] {
         0x5be0cd19,
     ];
 
-    // Pad: append 0x80, then zeros, then 64-bit big-endian bit length.
+    // pad: append 0x80, then zeros, then 64-bit big-endian bit length
     let bitlen = (data.len() as u64) * 8;
     let mut msg = data.to_vec();
     msg.push(0x80);
@@ -183,7 +163,7 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-/// URL-safe base64 without padding (RFC 7636 code_challenge encoding).
+// URL-safe base64 without padding (RFC 7636 code_challenge encoding)
 fn b64url_nopad(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -207,9 +187,7 @@ fn b64url_nopad(bytes: &[u8]) -> String {
     out
 }
 
-/// A high-entropy random token, base64url-encoded. Used for both the PKCE
-/// code_verifier and the CSRF state. From the OS RNG via getrandom (already
-/// transitive; added explicitly in Cargo.toml).
+// a high-entropy random token, base64url-encoded. used for both the PKCE code_verifier and the CSRF state. from the OS RNG via getrandom (already transitive; added explicitly in Cargo.toml)
 fn random_token(nbytes: usize) -> String {
     let mut buf = vec![0u8; nbytes];
     getrandom::getrandom(&mut buf).expect("OS RNG unavailable");
@@ -229,22 +207,18 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-// --- Login: open browser + catch the ?code= redirect ---
-
 #[derive(Serialize, Clone)]
 struct KickAuthResultEvent {
     ok: bool,
-    /// Logged-in account's Kick username (for the local echo), when ok.
+    // logged-in account's Kick username (for the local echo), when ok
     login: Option<String>,
-    /// Present when !ok - a short reason for the status line.
+    // present when !ok, a short reason for the status line
     error: Option<String>,
 }
 
-/// Opens Kick's authorize page in the default browser and starts the local
-/// redirect server. On success emits "kick-oauth-result" with {ok:true, login};
-/// on failure the same event with {ok:false, error}. (oauth.rs emits a bare
-/// token and lets the frontend validate; here the exchange is server-side, so
-/// this reports the final outcome directly.)
+// opens Kick's authorize page in the default browser and starts the local redirect server. on success
+// emits "kick-oauth-result" with {ok:true, login}; on failure the same event with {ok:false, error}.
+// (oauth.rs emits a bare token and lets the frontend validate; here the exchange is server-side, so this reports the final outcome directly.)
 #[tauri::command]
 pub async fn start_kick_oauth_login(app: AppHandle) -> Result<(), String> {
     if !kick_oauth_configured() {
@@ -273,8 +247,7 @@ pub async fn start_kick_oauth_login(app: AppHandle) -> Result<(), String> {
     let listener = match TcpListener::bind(format!("127.0.0.1:{REDIRECT_PORT}")).await {
         Ok(l) => l,
         Err(_) => {
-            // Port busy: a prior attempt's server is still up. Reopen the URL so the
-            // user can complete it against that server.
+            // port busy: a prior attempt's server is still up. reopen the URL so the user can complete it against that server
             open_browser(&app, &auth_url)?;
             return Ok(());
         }
@@ -315,9 +288,7 @@ const DONE_HTML_ERR: &str =
      <p style='color:#adadb8'>Please close this tab and try again.</p></div>";
 
 async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
-    // Only one meaningful request: the browser hitting the redirect URI with
-    // ?code&state. Loop so a stray favicon/preflight before it doesn't end the
-    // server early.
+    // only one meaningful request: the browser hitting the redirect URI with ?code&state. loop so a stray favicon/preflight before it doesn't end the server early
     loop {
         let Ok((mut socket, _)) = listener.accept().await else {
             break;
@@ -381,8 +352,7 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
     }
 }
 
-/// Validates state, exchanges the code, persists tokens, fetches the username.
-/// Returns the login on success.
+// validates state, exchanges the code, persists tokens, fetches the username. returns the login on success
 async fn finish_login(
     app: &AppHandle,
     code: Option<String>,
@@ -393,20 +363,17 @@ async fn finish_login(
         return Err("no login in progress".into());
     };
     let code = code.ok_or("authorization was denied or cancelled")?;
-    // CSRF: the state we get back must equal the one we sent.
+    // CSRF: the state we get back must equal the one we sent
     if state.as_deref() != Some(pending.state.as_str()) {
         return Err("state mismatch (possible CSRF) - login aborted".into());
     }
 
     let tok = exchange_code(&code, &pending.verifier).await?;
     save_token(app, &tok);
-    // Best-effort username; login still counts as successful if this read fails
-    // (send works off broadcaster_user_id, not our name).
+    // best-effort username; login still counts as successful if this read fails (send works off broadcaster_user_id, not our name)
     let login = fetch_username(&tok.access_token).await.unwrap_or_default();
     Ok(login)
 }
-
-// --- Token exchange / refresh (id.kick.com - NOT Cloudflare-fronted) ---
 
 #[derive(Deserialize)]
 struct TokenResponse {
@@ -466,8 +433,7 @@ async fn refresh(refresh_token: &str) -> Result<PersistedToken, String> {
     .await?;
     Ok(PersistedToken {
         access_token: t.access_token,
-        // Kick rotates the refresh token on use; fall back to the old one only if
-        // the response omitted a new one.
+        // Kick rotates the refresh token on use; fall back to the old one only if the response omitted a new one
         refresh_token: if t.refresh_token.is_empty() {
             refresh_token.to_string()
         } else {
@@ -488,26 +454,21 @@ async fn fetch_username(access_token: &str) -> Result<String, String> {
         return Err(format!("users endpoint returned {}", resp.status()));
     }
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    // Public API wraps results as {data: [...]}. The current user is the sole
-    // entry; name is the display username.
+    // public API wraps results as {data: [...]}. the current user is the sole entry; name is the display username
     json.pointer("/data/0/name")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| "no username in users response".into())
 }
 
-// --- Session commands used by the frontend ---
-
-/// On startup: if a stored Kick token still identifies a user, report the login
-/// so the UI can show logged-in state and enable Kick chat input. A failed read
-/// triggers one refresh attempt before giving up. Returns the login, or Null if
-/// not logged in / unrecoverable.
+// on startup: if a stored Kick token still identifies a user, report the login so the UI can show
+// logged-in state and enable Kick chat input. a failed read triggers one refresh attempt before giving up. returns the login, or Null if not logged in / unrecoverable
 #[tauri::command]
 pub async fn restore_kick_session(app: AppHandle) -> Result<serde_json::Value, String> {
     let Some(mut tok) = load_token(&app) else {
         return Ok(serde_json::Value::Null);
     };
-    // Try the stored access token; on failure, refresh once and retry.
+    // try the stored access token; on failure, refresh once and retry
     if let Ok(login) = fetch_username(&tok.access_token).await {
         return Ok(serde_json::json!({ "login": login }));
     }
@@ -535,15 +496,9 @@ pub fn kick_logout(app: AppHandle) {
     clear_token_file(&app);
 }
 
-// --- Send a chat message (api.kick.com - NOT Cloudflare-fronted) ---
-
-/// POSTs one chat message to `broadcaster_user_id`'s channel as the logged-in
-/// user. On a 401 (expired access token) it refreshes once and retries, so a
-/// stale token after ~1h idle heals silently instead of surfacing as a failed
-/// send.
-///
-/// broadcaster_user_id comes from KickLiveInfo (kick.rs) - the frontend passes
-/// through the value it already has, so this needs no channel lookup.
+// POSTs one chat message to broadcaster_user_id's channel as the logged-in user. on a 401 (expired
+// access token) it refreshes once and retries, so a stale token after ~1h idle heals silently instead
+// of surfacing as a failed send. broadcaster_user_id comes from KickLiveInfo (kick.rs), the frontend passes through the value it already has, so this needs no channel lookup
 #[tauri::command]
 pub async fn kick_send_chat_message(
     app: AppHandle,
@@ -554,8 +509,7 @@ pub async fn kick_send_chat_message(
     if text.is_empty() {
         return Err("empty message".into());
     }
-    // Kick's chat message cap is 500 chars; reject early with a clear reason
-    // rather than let the API 422.
+    // Kick's chat message cap is 500 chars; reject early with a clear reason rather than let the API 422
     if text.chars().count() > 500 {
         return Err("message exceeds Kick's 500-character limit".into());
     }
@@ -565,10 +519,9 @@ pub async fn kick_send_chat_message(
     match post_chat(&tok.access_token, broadcaster_user_id, text).await {
         Ok(()) => Ok(()),
         Err(SendError::Unauthorized) => {
-            // Access token likely expired - refresh and retry once.
+            // access token likely expired, refresh and retry once
             tok = refresh(&tok.refresh_token).await.map_err(|e| {
-                // Refresh failed too: the session is dead. Clear it so the UI drops to
-                // logged-out on its next check.
+                // refresh failed too: the session is dead. clear it so the UI drops to logged-out on its next check
                 clear_token_file(&app);
                 format!("Kick session expired, please log in again ({e})")
             })?;
@@ -605,8 +558,7 @@ async fn post_chat(
         .post(CHAT_URL)
         .bearer_auth(access_token)
         .json(&serde_json::json!({
-            // "user" posts as the authenticated user (vs "bot"). The broadcaster id
-            // targets whose channel to post into.
+            // "user" posts as the authenticated user (vs "bot"). the broadcaster id targets whose channel to post into
             "type": "user",
             "content": content,
             "broadcaster_user_id": broadcaster_user_id,
@@ -626,8 +578,7 @@ async fn post_chat(
     Ok(())
 }
 
-/// Percent-decode (redirect code/state may be URL-encoded). Mirrors oauth.rs's
-/// url_decode.
+// percent-decode (redirect code/state may be URL-encoded). mirrors oauth.rs's url_decode
 fn url_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
@@ -664,10 +615,8 @@ mod tests {
 
     #[test]
     fn pkce_challenge_matches_rfc7636_example() {
-        // The canonical RFC 7636 Appendix B example: this exact verifier must produce
-        // this exact challenge. Proves our SHA-256 + base64url-nopad pipeline is
-        // spec-correct (a wrong challenge means Kick rejects every login at token
-        // exchange).
+        // the canonical RFC 7636 Appendix B example: this exact verifier must produce this exact challenge.
+        // proves our SHA-256 + base64url-nopad pipeline is spec-correct (a wrong challenge means Kick rejects every login at token exchange)
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let challenge = b64url_nopad(&sha256(verifier.as_bytes()));
         assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");

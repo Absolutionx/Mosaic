@@ -1,9 +1,9 @@
-// Fetches Twitch VOD chapter markers from GQL via browser fetch (gql.twitch.tv is in the
-// CSP, so no Rust hop). Public data, no auth needed.
+// Twitch VOD chapter markers straight from GQL via browser fetch (gql.twitch.tv is in
+// the CSP, so no Rust hop needed). public data, no auth
 
 const GQL_URL    = "https://gql.twitch.tv/gql";
-// The public Client-ID the twitch.tv site uses for GQL - not a secret; the same one
-// streamlink/yt-dlp use for public GQL queries.
+// the public Client-ID the twitch.tv site uses for GQL. not a secret, it's the same one
+// streamlink/yt-dlp use for public queries
 const CLIENT_ID  = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const GQL_QUERY  =
   "query GetVideoChapters($videoID: ID!) {" +
@@ -14,11 +14,6 @@ const GQL_QUERY  =
   "  }" +
   "}";
 
-/**
- * Fetch chapter markers for a Twitch VOD. Returns [{ positionSec, title }] (empty if none).
- * @param {string} videoId - numeric Twitch VOD ID
- * @param {string} [token] - optional OAuth token (improves reliability)
- */
 export async function fetchVodChapters(videoId, token = null) {
   const headers = {
     "Client-ID":    CLIENT_ID,
@@ -45,11 +40,11 @@ export async function fetchVodChapters(videoId, token = null) {
   const data    = json[0]?.data;
   const moments = data?.video?.moments;
 
-  // MomentConnection uses Relay-style edges/node pagination.
+  // MomentConnection is Relay-style edges/node pagination
   const edges   = moments?.edges ?? [];
   const nodes   = edges.map(e => e.node).filter(Boolean);
 
-  // Defensive: some schema versions return a flat nodes array.
+  // some schema versions hand back a flat nodes array instead
   const raw     = nodes.length ? nodes : (moments?.nodes ?? []);
 
   return raw.map(n => ({
@@ -67,12 +62,8 @@ const SEEK_PREVIEWS_QUERY =
   "  }" +
   "}";
 
-/**
- * Fetches the storyboard (seek-preview) URL for a Twitch VOD - a JSON describing the
- * sprite-sheet layout, not an image. VOD-only; null if the VOD has none.
- * @param {string} videoId
- * @param {string} [token] - optional OAuth token (improves reliability)
- */
+// returns the storyboard JSON (sprite-sheet layout, not an image). VOD-only, null if
+// the VOD has none
 export async function fetchVodSeekPreviewsUrl(videoId, token = null) {
   const headers = {
     "Client-ID":    CLIENT_ID,

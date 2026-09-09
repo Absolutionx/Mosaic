@@ -1,6 +1,5 @@
-// Twitch OAuth login (frontend). The browser flow is in Rust (oauth.rs); this triggers
-// it, listens for the token event, validates it, and stores the login. restore_session()
-// runs at startup to reuse a saved token.
+// Twitch OAuth, frontend half. the actual browser flow lives in Rust (oauth.rs); this
+// triggers it, waits for the token event, validates, and stores the login
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -11,7 +10,7 @@ export class TwitchAuth {
     this.userMenuEl     = userMenuEl;
     this.userMenuSignout = userMenuSignout;
     this.statusCallback = statusCallback || (() => {});
-    this.login = null; // lowercase Twitch username, once logged in
+    this.login = null;
 
     this.loginBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -27,7 +26,6 @@ export class TwitchAuth {
       this.logout();
     });
 
-    // Close the dropdown when clicking elsewhere.
     document.addEventListener("click", () => this._closeUserMenu());
 
     this.setupListener();
@@ -59,8 +57,6 @@ export class TwitchAuth {
     });
   }
 
-  // Fetches the properly-cased display_name from Helix and updates the button, falling
-  // back to the raw login. Returns the name used.
   async _resolveDisplayName(login, userId) {
     try {
       const users = JSON.parse(await invoke("get_users_info", { userIds: [userId] }));
@@ -70,8 +66,7 @@ export class TwitchAuth {
     }
   }
 
-  // Writes the button text to its label span (so the person icon survives), falling back
-  // to the button itself.
+  // write to the label span, not the button, so the person icon survives
   _setLoginLabel(text) {
     const label = this.loginBtn.querySelector(".login-label");
     if (label) label.textContent = text;

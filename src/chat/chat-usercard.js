@@ -1,22 +1,18 @@
-// Part of TwitchChat (see ../chat.js): the hover/click user-info card - fetching, rendering, positioning, dragging. Mixin merged onto
-// TwitchChat.prototype, so `this` is the chat instance; split by feature for readability.
-// Clicking a username opens it (Twitch's only home for mod tools; see chat-mod-actions.js).
-// Shows avatar/badges/creation date (one cached Helix lookup), this session's message count
-// + a short recent-message log (client-side only), and timeout/ban.
+// hover/click user-info card: fetching, rendering, positioning, dragging. mixed onto
+// TwitchChat (see ../chat.js). clicking a username opens it (Twitch's only home for mod
+// tools, see chat-mod-actions.js). shows avatar/badges/creation date (one cached Helix
+// lookup), this session's message count + a short recent-message log (client-side), timeout/ban
 import { invoke } from "@tauri-apps/api/core";
 import { USER_CARD_HISTORY_LIMIT } from "./shared.js";
 
 export const chatUserCardMixin = {
-  /** Opens the card for `userId`/`username`, anchored below `anchorEl`. `badgesTag` is that
-   * message's raw IRC badges, rendered in the card too. `msgId`/`messageText` scope the Delete
-   * button to THAT message (delete is message-scoped, unlike timeout/ban). */
+  // msgId/messageText scope the Delete button to THAT message, delete is message-scoped unlike timeout/ban
   async _showUserCard(anchorEl, userId, username, badgesTag, msgId, messageText) {
     this._closeUserCard();
 
     const card = document.createElement("div");
     card.className = "user-card";
-    // Close button included even in the loading state - the Helix lookup is usually fast but
-    // the card shouldn't be unclosable while waiting.
+    // close button even in the loading state, the card shouldn't be unclosable while the Helix lookup runs
     card.innerHTML =
       '<button class="user-card-close-btn user-card-loading-close" aria-label="Close">' +
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="none"><path d="M5 5l14 14M19 5L5 19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
@@ -28,8 +24,8 @@ export const chatUserCardMixin = {
     });
     document.body.appendChild(card);
     this._userCardEl = card;
-    // Whether THIS card was manually dragged, so the reposition after the async lookup
-    // doesn't snap a moved card back. On the element so it's scoped per card.
+    // whether THIS card was dragged, so the reposition after the async lookup doesn't snap a
+    // moved card back. on the element so it's scoped per card
     card._dragged = false;
     this._positionUserCard(card, anchorEl);
     this._makeUserCardDraggable(card);
@@ -41,8 +37,7 @@ export const chatUserCardMixin = {
       document.addEventListener("click", this._userCardOutsideHandler, true);
     }, 0);
 
-    // Helix lookup (cached); everything else renders synchronously, so the card shows
-    // immediately with a small loading state only for the networked parts.
+    // Helix lookup is cached; everything else renders synchronously, so the card shows immediately
     let info = this._userInfoCache.get(userId);
     if (info === undefined) {
       try {
@@ -55,13 +50,11 @@ export const chatUserCardMixin = {
       this._userInfoCache.set(userId, info);
     }
 
-    // The card may have closed (or reopened for another user) mid-lookup - don't resurrect
-    // it.
+    // the card may have closed (or reopened for another user) mid-lookup, don't resurrect it
     if (this._userCardEl !== card) return;
 
     this._renderUserCard(card, userId, username, badgesTag, info, msgId, messageText);
-    // Skip repositioning if the user dragged the card during the loading window - re-running
-    // it would snap the card back to the anchor.
+    // skip repositioning if the user dragged during the loading window, it would snap back to the anchor
     if (!card._dragged) this._positionUserCard(card, anchorEl);
   },
 
@@ -91,8 +84,8 @@ export const chatUserCardMixin = {
     }
     header.appendChild(nameBlock);
 
-    // Close button in the header (not the scrollable body) so it's always reachable. mousedown
-    // propagation is stopped so clicking it isn't misread as a drag start.
+    // close button in the header, not the scrollable body, so it's always reachable. mousedown
+    // propagation is stopped so clicking it isn't misread as a drag start
     const closeBtn = document.createElement("button");
     closeBtn.className = "user-card-close-btn";
     closeBtn.setAttribute("aria-label", "Close");
@@ -107,14 +100,11 @@ export const chatUserCardMixin = {
 
     card.appendChild(header);
 
-    // Body below the header is its own scrollable region, so a long history scrolls while the
-    // header (and close button) stays pinned - less fragile than one scrolling region around
-    // a flex header.
+    // own scrollable region, so a long history scrolls while the header (and close button) stays pinned
     const body = document.createElement("div");
     body.className = "user-card-body";
     card.appendChild(body);
 
-    // Badges row - same icons as next to the user's messages, reusing renderBadges().
     const badgeFragment = badgesTag ? this.renderBadges(badgesTag) : null;
     if (badgeFragment) {
       const badgeRow = document.createElement("div");
@@ -125,15 +115,13 @@ export const chatUserCardMixin = {
 
     const created = document.createElement("div");
     created.className = "user-card-created";
-    // Defensive against created_at being absent - Helix has been reported to omit it despite
-    // documenting it as always present.
+    // Helix has been reported to omit created_at despite documenting it as always present
     created.textContent = info?.created_at
       ? `Account created: ${this._formatAccountDate(info.created_at)}`
       : "Account created: unknown";
     body.appendChild(created);
 
-    // Mod actions - same enabled/disabled logic as the old hover row. isSelf/enabled
-    // recomputed each open since isMod can change.
+    // isSelf/enabled recomputed each open since isMod can change
     const isSelf = this._isSelf(username);
     const enabled = this.isMod && Boolean(this.roomId) && !isSelf;
 
@@ -160,8 +148,8 @@ export const chatUserCardMixin = {
     const banRow = document.createElement("div");
     banRow.className = "user-card-ban-row";
 
-    // Delete is message-scoped (unlike timeout/ban): acts on the message whose username
-    // opened this card. Disabled with its own reason when there's no message id.
+    // delete is message-scoped (unlike timeout/ban): acts on the message whose username opened
+    // this card, disabled with its own reason when there's no message id
     const deleteBtn = document.createElement("button");
     deleteBtn.className = "user-card-delete-btn";
     deleteBtn.textContent = "Delete message";
@@ -189,9 +177,8 @@ export const chatUserCardMixin = {
     banRow.appendChild(banBtn);
     body.appendChild(banRow);
 
-    // Stats row - Messages is the only stat this client can populate (tracked in
-    // renderMessage). Warnings/Timeouts/Bans/Comments have no Helix equivalent, so they're
-    // omitted rather than faked.
+    // Messages is the only stat this client can populate; Warnings/Timeouts/Bans/Comments have
+    // no Helix equivalent, so they're omitted rather than faked
     const stats = document.createElement("div");
     stats.className = "user-card-stats";
     const msgCount = this._messageCountByUserId.get(userId) || 0;
@@ -208,9 +195,8 @@ export const chatUserCardMixin = {
     stats.appendChild(statBox);
     body.appendChild(stats);
 
-    // Recent message log - client-tracked, so only since connecting (no Helix history
-    // endpoint), but useful context for a mod. Capped at USER_CARD_HISTORY_LIMIT when recorded;
-    // this renders the already-capped array.
+    // client-tracked, so only since connecting (no Helix history endpoint), but useful context
+    // for a mod. capped at USER_CARD_HISTORY_LIMIT when recorded, this just renders the capped array
     const history = this._messageHistoryByUserId.get(userId) || [];
     if (history.length > 0) {
       const historyEl = document.createElement("div");
@@ -240,8 +226,7 @@ export const chatUserCardMixin = {
     }
   },
 
-  /** Same blank-avatar fallback as sidebar/home/browse - duplicated rather than imported
-   * (those are main.js-side modules with no shared util) for a one-line data URI. */
+  // duplicated rather than imported (those are main.js-side modules with no shared util) for a one-line data URI
   blankAvatarDataUri() {
     return "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
   },
@@ -262,15 +247,13 @@ export const chatUserCardMixin = {
     }
   },
 
-  /** Lets the user drag the card by its header. Attached to `card`, not the header, since
-   * _renderUserCard() rebuilds the header after the async lookup. A .closest() check on
-   * mousedown keeps "only the header starts a drag". */
+  // attached to `card`, not the header, since _renderUserCard() rebuilds the header after the
+  // async lookup. a .closest() check on mousedown keeps "only the header starts a drag"
   _makeUserCardDraggable(card) {
     card.addEventListener("mousedown", (e) => {
       const header = e.target.closest(".user-card-header");
       if (!header || !card.contains(header)) return;
-      // Right/middle-click don't start a drag, and ignore mousedowns on interactive header
-      // elements (none today, but keeps future additions working).
+      // right/middle-click don't start a drag, and ignore mousedowns on interactive header elements
       if (e.button !== 0 || e.target.closest("button, a")) return;
 
       e.preventDefault();
@@ -282,8 +265,7 @@ export const chatUserCardMixin = {
 
       const onMove = (moveEvent) => {
         card._dragged = true;
-        // Clamp so the header (the only grab handle) can't be dragged fully off-screen - same 8px
-        // margin _positionUserCard uses, on all four edges.
+        // clamp so the header (the only grab handle) can't be dragged fully off-screen
         const maxLeft = window.innerWidth - card.offsetWidth - 8;
         const maxTop = window.innerHeight - card.offsetHeight - 8;
         const newLeft = Math.min(
@@ -303,11 +285,9 @@ export const chatUserCardMixin = {
         document.removeEventListener("mouseup", onUp);
         card._dragCleanup = null;
       };
-      // Stored on the element so _closeUserCard() can force-detach these document listeners if
-      // the card is removed mid-drag, which would otherwise leak them.
+      // stored on the element so _closeUserCard() can force-detach these listeners if the card is removed mid-drag, else they leak
       card._dragCleanup = onUp;
-      // On document, not the header, so the drag keeps tracking even if the cursor outruns the
-      // card's bounds.
+      // on document, not the header, so the drag keeps tracking even if the cursor outruns the card
       document.addEventListener("mousemove", onMove);
       document.addEventListener("mouseup", onUp);
     });
@@ -315,8 +295,7 @@ export const chatUserCardMixin = {
 
   _closeUserCard() {
     if (this._userCardEl) {
-      // If the card is removed mid-drag (a scroll-triggered close), its mouseup never fires, so
-      // detach the document listeners here to avoid a leak.
+      // if the card is removed mid-drag (a scroll-triggered close) its mouseup never fires, so detach here to avoid a leak
       this._userCardEl._dragCleanup?.();
       this._userCardEl.remove();
       this._userCardEl = null;
@@ -334,10 +313,8 @@ export const chatUserCardMixin = {
     return `${secs}s`;
   },
 
-  /** Case-insensitive check against this.ownLogin, to disable mod actions on the user's own
-   * messages. By username (what's tracked here), and IRC display-name casing never matches the
-   * lowercase login, so it can't be a plain ===. Not a security boundary - Helix rejects
-   * self-targeting anyway. */
+  // by username (what's tracked here), and IRC display-name casing never matches the lowercase
+  // login so it can't be a plain ===. not a security boundary, Helix rejects self-targeting anyway
   _isSelf(username) {
     return Boolean(this.ownLogin) && Boolean(username) &&
       this.ownLogin.toLowerCase() === username.toLowerCase();

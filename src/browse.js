@@ -1,32 +1,29 @@
-// Browse/directory page (twitch.tv/directory-style): pills, a Categories/Live
-// switcher, search, sort, grid. Routed through Rust like home.js/sidebar.js.
+// browse/directory page (twitch.tv/directory-style): pills, a Categories/Live switcher,
+// search, sort, grid. routed through Rust like home.js/sidebar.js
 
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
 
-// Minimum list length before the "reached the end" note shows (every category is
-// shown now - see get_top_games pagination in main.rs).
+// every category is shown now (see get_top_games pagination in main.rs)
 const CATEGORIES_COLLAPSED_COUNT = 18;
 
-// Category search debounce.
 const SEARCH_DEBOUNCE_MS = 300;
 
-// Distance from the bottom of #browse-page that triggers the next page load.
+// distance from the bottom of #browse-page that triggers the next page load
 const SCROLL_TRIGGER_PX = 600;
 
-// Sub-directory pills, each a real Twitch category. "Games" is omitted (shows the
-// grid); no "Esports" (a tag aggregate with no Helix endpoint). Names must match exactly.
+// sub-directory pills, each a real Twitch category. "Games" is omitted (it shows the grid),
+// and no "Esports" (a tag aggregate with no Helix endpoint). names must match exactly
 const PILL_CATEGORIES = {
   irl: "IRL",
   music: "Music",
   creative: "Talk Shows & Podcasts",
-  // Kick-only pill: Kick's directory has Gambling as a first-class group with no Twitch
-  // equivalent. Resolves via kick_streams_for_game_names (kick.rs).
+  // Kick-only: Kick's directory has Gambling as a first-class group with no Twitch equivalent, resolved via kick_streams_for_game_names
   gambling: "Gambling",
 };
 
-// Inline SVG icons for the pills - simpler than separate files, no asset dependency.
+// inline SVGs, simpler than separate files and no asset dependency
 const PILL_ICONS = {
   games: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 7h2v2h2v2H9v2H7v-2H5v-2h2V7zm9 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm-3 4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM6 3h12a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4h-1.5l-2-3h-9l-2 3H2a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h2z" opacity="0"/><path d="M6.5 4A4.5 4.5 0 0 0 2 8.5v7A4.5 4.5 0 0 0 6.5 20c.97 0 1.86-.33 2.57-.88L11 17h2l1.93 2.12c.71.55 1.6.88 2.57.88A4.5 4.5 0 0 0 22 15.5v-7A4.5 4.5 0 0 0 17.5 4h-11zM8 8v2h2v2H8v2H6v-2H4v-2h2V8h2zm9 .5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM14 12.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/></svg>',
   irl: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2a5 5 0 0 1 5 5v3a5 5 0 0 1-10 0V7a5 5 0 0 1 5-5z"/><path d="M5 11a1 1 0 0 1 2 0 5 5 0 0 0 10 0 1 1 0 0 1 2 0 7 7 0 0 1-6 6.93V21h2a1 1 0 0 1 0 2H9a1 1 0 0 1 0-2h2v-3.07A7 7 0 0 1 5 11z"/></svg>',
@@ -34,8 +31,8 @@ const PILL_ICONS = {
   creative: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 1a3.5 3.5 0 0 0-3.5 3.5v6a3.5 3.5 0 0 0 7 0v-6A3.5 3.5 0 0 0 12 1z"/><path d="M5.5 10a1 1 0 0 1 1 1 5.5 5.5 0 0 0 11 0 1 1 0 1 1 2 0 7.5 7.5 0 0 1-6.5 7.43V21h3a1 1 0 0 1 0 2h-8a1 1 0 0 1 0-2h3v-2.57A7.5 7.5 0 0 1 4.5 11a1 1 0 0 1 1-1z"/></svg>',
 };
 
-// Per-platform pill bars: the two directories differ (Kick has Gambling and labels
-// groups differently), so sharing one bar gave Kick browse Twitch's shape.
+// per-platform pill bars: the two directories differ (Kick has Gambling and labels groups
+// differently), so sharing one bar gave Kick browse Twitch's shape
 PILL_ICONS.gambling = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm3 3.5A1.5 1.5 0 1 0 8 9.5a1.5 1.5 0 0 0 0-3zm8 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm-4 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm-4 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm8 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/></svg>';
 
 const PILL_DEFS_TWITCH = [
@@ -53,53 +50,42 @@ const PILL_DEFS_KICK = [
 ];
 
 export class BrowsePage {
-  /**
-   * @param {object} opts
-   * @param {HTMLElement} opts.containerEl
-   * @param {(channel: string) => void} opts.onChannelSelect
-   */
   constructor({ containerEl, onChannelSelect }) {
     this.containerEl = containerEl;
     this.onChannelSelect = onChannelSelect || (() => {});
-    /** @type {Map<string, string>} user_id -> profile_image_url */
     this.avatars = new Map();
     this.games = [];
-    /** @type {Map<string, {viewer_count, channel_count}>} game_id -> counts */
     this.categoryCounts = new Map();
-    /** Currently drilled-into category, or null at the top-level grid. */
+    // currently drilled-into category, or null at the top-level grid
     this.activeGame = null;
-    /** Active pill - "games" (Categories/Live view) or a PILL_CATEGORIES key. */
+    // "games" (Categories/Live view) or a PILL_CATEGORIES key
     this.activePill = "games";
-    /** "categories" | "live" - active top-level tab. */
     this.activeTab = "categories";
-    /** "recommended" (get_top_games' own order) | "viewers" (re-sorted by count). */
+    // "recommended" (get_top_games' own order) | "viewers" (re-sorted by count)
     this.sortMode = "recommended";
     this.searchQuery = "";
     this._searchDebounceTimer = null;
-    /** @type {Array|null} Live search results, or null when not searching. */
     this.searchResults = null;
     this.topLiveStreams = [];
     this.videoFrameEl = document.getElementById("video-frame");
     this.loaded = false;
-    // get_top_games pagination cursor. null = not loaded yet OR no more categories;
-    // hasMoreGames distinguishes the two.
+    // null = not loaded yet OR no more categories; hasMoreGames distinguishes the two
     this.nextGamesCursor = null;
     this.hasMoreGames = true;
-    // Guards loadMoreGames() against a duplicate request while a page is loading.
+    // guards loadMoreGames() against a duplicate request while a page is loading
     this.loadingMoreGames = false;
-    // Consecutive all-duplicate pages after dedupe. Kick's walk overlaps by design, so a
-    // few are normal; many means the endpoint ignores its page param - stop paging.
+    // consecutive all-duplicate pages after dedupe. Kick's walk overlaps by design, so a few are
+    // normal; many means the endpoint ignores its page param, so stop paging
     this._allDupGamePages = 0;
-    // Same, for the Live Channels tab's own scroll (get_live_streams_page in main.rs).
+    // same, for the Live Channels tab's own scroll (get_live_streams_page)
     this.nextLiveCursor = null;
     this.hasMoreLive = true;
     this.loadingMoreLive = false;
-    // Bound once so the listener is a stable reference; attached in the constructor since
-    // containerEl persists for the page's lifetime.
+    // bound once so the listener is a stable reference; containerEl persists for the page's lifetime
     this._onScroll = () => this._handleScroll();
     this.containerEl.addEventListener("scroll", this._onScroll);
-    // True while the FIRST page load is in flight. Without it, scrollTop = 0 fires a
-    // synchronous 'scroll' that could kick off a second redundant page-1 fetch.
+    // true while the FIRST page load is in flight. without it, scrollTop = 0 fires a synchronous
+    // 'scroll' that could kick off a second redundant page-1 fetch
     this._initialLoadInProgress = false;
   }
 
@@ -119,8 +105,7 @@ export class BrowsePage {
     if (this.videoFrameEl) this.videoFrameEl.style.display = "";
   }
 
-  /** Platform toggled: reset to the top-level Categories view. Reload now if showing,
-   * else mark stale for the next show(). */
+  // reload now if showing, else mark stale for the next show()
   reloadForPlatformChange() {
     this.games = [];
     this.topLiveStreams = [];
@@ -160,13 +145,11 @@ export class BrowsePage {
     this._initialLoadInProgress = false;
     this.activeGame = null;
     this.render();
-    // Viewer counts load in the background and re-render, rather than blocking the grid
-    // paint on a much heavier request (get_category_viewer_counts).
+    // viewer counts load in the background and re-render, rather than blocking the grid paint on the much heavier get_category_viewer_counts
     this.loadCategoryCounts();
   }
 
-  /** Fetches and appends the next categories page - called by _handleScroll() near the
-   * bottom. A real Helix request each time, so scrolling walks every live category. */
+  // a real Helix request each time, so scrolling walks every live category
   async loadMoreGames() {
     if (this.loadingMoreGames || !this.hasMoreGames) return;
     this.loadingMoreGames = true;
@@ -176,16 +159,15 @@ export class BrowsePage {
       const { games, cursor } = JSON.parse(
         await feedInvoke("get_top_games", { cursor: this.nextGamesCursor })
       );
-      // Dedupe by id across pages: Kick's walk overlaps by design and Twitch cursor pages
-      // can overlap at boundaries, so a card could otherwise render twice.
+      // dedupe by id across pages: Kick's walk overlaps by design and Twitch cursor pages can
+      // overlap at boundaries, so a card could otherwise render twice
       const before = this.games.length;
       this.games = dedupeGamesById(this.games.concat(games));
       pageAddedNothing = this.games.length === before;
       this.nextGamesCursor = cursor;
       this.hasMoreGames = Boolean(cursor);
       if (pageAddedNothing) {
-        // Whole page was duplicates. A few in a row are expected; many means the endpoint is
-        // ignoring its page param, so stop (see _allDupGamePages).
+        // a few dup pages in a row are expected; many means the endpoint is ignoring its page param, so stop
         this._allDupGamePages += 1;
         if (this._allDupGamePages >= 5) this.hasMoreGames = false;
       } else {
@@ -193,18 +175,16 @@ export class BrowsePage {
       }
     } catch (err) {
       console.error("Failed to load more categories:", err);
-      // Leave hasMoreGames as-is so a transient failure doesn't permanently stop future
-      // scroll attempts.
+      // leave hasMoreGames as-is so a transient failure doesn't permanently stop future scroll attempts
     }
     this.loadingMoreGames = false;
     this.render();
-    // An all-dup page re-renders identical DOM, so no new 'scroll' fires - chain into the
-    // next page to hop the expected overlap, bounded by the dup-stop and page cap.
+    // an all-dup page re-renders identical DOM, so no new 'scroll' fires, chain into the next page
+    // to hop the expected overlap, bounded by the dup-stop and page cap
     if (pageAddedNothing && this.hasMoreGames) this.loadMoreGames();
   }
 
-  /** Fetches and appends the next live-streams page - the Live tab's loadMoreGames(),
-   * backed by get_live_streams_page. */
+  // the Live tab's loadMoreGames(), backed by get_live_streams_page
   async loadMoreLiveStreams() {
     if (this.loadingMoreLive || !this.hasMoreLive) return;
     this.loadingMoreLive = true;
@@ -224,11 +204,10 @@ export class BrowsePage {
     this.render();
   }
 
-  /** Fired on every #browse-page scroll; loads the next page within SCROLL_TRIGGER_PX of
-   * the bottom for whichever grid is showing. Only the two server-paginated views
-   * (Categories, Live) - search and a drilled-in category are complete one-shot lists. */
+  // loads the next page within SCROLL_TRIGGER_PX of the bottom for whichever grid is showing.
+  // only the two server-paginated views (Categories, Live); search and a drilled-in category are complete one-shot lists
   _handleScroll() {
-    if (this.activeGame) return; // drilled into one category - nothing more to page
+    if (this.activeGame) return; // drilled into one category, nothing more to page
     if (this._initialLoadInProgress) return; // first page still loading
     const el = this.containerEl;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -237,7 +216,7 @@ export class BrowsePage {
     if (this.activeTab === "live") {
       this.loadMoreLiveStreams();
     } else if (this.searchResults === null) {
-      // Search results aren't paginated here - searching doesn't scroll-load more.
+      // search results aren't paginated here, searching doesn't scroll-load more
       this.loadMoreGames();
     }
   }
@@ -251,8 +230,7 @@ export class BrowsePage {
       console.error("Failed to load category viewer counts:", err);
       return;
     }
-    // Only re-render if still on the Categories grid - a re-render while drilled in or on
-    // Live is wasted (counts aren't used there).
+    // a re-render while drilled in or on Live is wasted (counts aren't used there)
     if (!this.activeGame && this.activeTab === "categories" && this.activePill === "games") {
       this.render();
     }
@@ -315,8 +293,7 @@ export class BrowsePage {
     this.containerEl.appendChild(grid);
   }
 
-  /** Opens a single-category pill (IRL/Music/Talk Shows) - like openGame() but resolves
-   * by exact NAME via get_streams_for_game_names, since pills aren't backed by a card. */
+  // like openGame() but resolves by exact NAME via get_streams_for_game_names, since pills aren't backed by a card
   async openPillCategory(pillKey) {
     const categoryName = PILL_CATEGORIES[pillKey];
     this.activePill = pillKey;
@@ -384,8 +361,7 @@ export class BrowsePage {
   }
 
   async hydrateAvatars(streams) {
-    // Same seeding as home.js: Kick streams carry profile_image_url inline; kick:* ids are
-    // excluded from the Twitch batch (Helix would 400).
+    // same seeding as home.js: Kick streams carry profile_image_url inline; kick:* ids are excluded from the Twitch batch (Helix would 400)
     for (const s of streams) {
       if (s.profile_image_url && !this.avatars.has(s.user_id)) {
         this.avatars.set(s.user_id, s.profile_image_url);
@@ -403,7 +379,6 @@ export class BrowsePage {
     }
   }
 
-  // --- Header pieces (title, pills, tabs, search/sort) ---
 
   buildPageTitle() {
     const title = document.createElement("div");
@@ -431,7 +406,7 @@ export class BrowsePage {
       pill.addEventListener("click", () => {
         this.containerEl.scrollTop = 0;
         if (def.key === "games") {
-          // "Games" has no single category - return to this page's Categories grid.
+          // "Games" has no single category, return to this page's Categories grid
           this.activePill = "games";
           this.activeGame = null;
           this.render();
@@ -477,8 +452,7 @@ export class BrowsePage {
     const row = document.createElement("div");
     row.className = "browse-controls-row";
 
-    // Search box - only on the Categories tab (category search on a live-channels list
-    // maps to nothing, same as twitch.tv).
+    // only on the Categories tab, category search on a live-channels list maps to nothing, same as twitch.tv
     if (this.activeTab === "categories") {
       const searchWrap = document.createElement("div");
       searchWrap.className = "browse-search-wrap";
@@ -501,13 +475,12 @@ export class BrowsePage {
       searchWrap.appendChild(input);
       row.appendChild(searchWrap);
     } else {
-      // Keeps the controls row's space-between layout on the Live tab, which has a sort but
-      // no search box.
+      // keep the controls row's space-between layout on the Live tab, which has a sort but no search box
       row.appendChild(document.createElement("div"));
     }
 
-    // Sort by - "Recommended" has no personalization signal, so it keeps the feed's own
-    // order; "Viewer Count" re-sorts by real/approximated numbers.
+    // "Recommended" has no personalization signal so it keeps the feed's own order; "Viewer Count"
+    // re-sorts by real/approximated numbers
     const sortRow = document.createElement("div");
     sortRow.className = "browse-sort-row";
     const sortLabel = document.createElement("span");
@@ -548,17 +521,14 @@ export class BrowsePage {
       console.error("Category search failed:", err);
       this.searchResults = [];
     }
-    // Stale-response guard: render() re-derives from current state, so a quick
-    // clear-then-retype can't show results for a query no longer in the box.
+    // render() re-derives from current state, so a quick clear-then-retype can't show results for a query no longer in the box
     if (this.searchQuery.trim() === query) this.render();
   }
 
-  // --- Main render ---
 
   render() {
     if (this.activeGame) {
-      // openGame()/openPillCategory() manage their own rendering; nothing to do on a plain
-      // re-render while drilled in.
+      // openGame()/openPillCategory() manage their own rendering, nothing to do on a plain re-render while drilled in
       return;
     }
 
@@ -594,8 +564,7 @@ export class BrowsePage {
     }
     this.containerEl.appendChild(grid);
 
-    // Same pagination footer as Categories - hidden while sorting by viewers, so a growing
-    // list doesn't reshuffle cards already seen.
+    // hidden while sorting by viewers, so a growing list doesn't reshuffle cards already seen
     if (this.sortMode !== "viewers") {
       this.containerEl.appendChild(
         this._buildPaginationFooter(this.hasMoreLive, this.loadingMoreLive, this.topLiveStreams.length)
@@ -604,8 +573,7 @@ export class BrowsePage {
   }
 
   renderCategoriesGrid() {
-    // A non-empty search box replaces the grid with live results, like twitch.tv (the
-    // search is server-side across the full catalog, not a client filter).
+    // a non-empty search box replaces the grid with live results (server-side across the full catalog, not a client filter), like twitch.tv
     const usingSearch = this.searchResults !== null;
     const heading = document.createElement("div");
     heading.className = "home-section-title";
@@ -640,8 +608,7 @@ export class BrowsePage {
     }
     this.containerEl.appendChild(grid);
 
-    // Auto-loading footer (spinner/end-of-list), not a button - the next page is
-    // scroll-triggered. Hidden while sorting by viewers, same reason as Live.
+    // the next page is scroll-triggered, not a button. hidden while sorting by viewers, same reason as Live
     if (!usingSearch && this.sortMode !== "viewers") {
       this.containerEl.appendChild(
         this._buildPaginationFooter(this.hasMoreGames, this.loadingMoreGames, this.games.length)
@@ -649,16 +616,14 @@ export class BrowsePage {
     }
   }
 
-  /** Shared footer for both infinite grids: a spinner while loading, nothing while idle,
-   * an end-of-list note once exhausted - never a clickable control. */
+  // spinner while loading, nothing while idle, an end-of-list note once exhausted, never a clickable control
   _buildPaginationFooter(hasMore, isLoading, currentCount) {
     const footer = document.createElement("div");
     footer.className = "browse-pagination-footer";
     if (isLoading) {
       footer.innerHTML = '<span class="browse-pagination-spinner"></span> Loading more…';
     } else if (!hasMore && currentCount > CATEGORIES_COLLAPSED_COUNT) {
-      // Only worth saying after enough scrolling to be a real confirmation, not noise under
-      // a short first page.
+      // only worth saying after enough scrolling to be a real confirmation, not noise under a short first page
       footer.textContent = "You've reached the end of the list.";
     }
     return footer;
@@ -680,8 +645,8 @@ export class BrowsePage {
     name.textContent = game.name;
     card.appendChild(name);
 
-    // Approximated count (get_category_viewer_counts) - omitted rather than "0 viewers"
-    // for an unmeasured category, which would read as "nobody's watching".
+    // approximated count (get_category_viewer_counts), omitted rather than "0 viewers" for an
+    // unmeasured category, which would read as "nobody's watching"
     const counts = this.categoryCounts.get(game.id);
     if (counts && counts.viewer_count > 0) {
       const viewers = document.createElement("div");
@@ -693,7 +658,7 @@ export class BrowsePage {
     return card;
   }
 
-  // Mirrors home.js's buildGridCard for visual consistency across the two grids.
+  // mirrors home.js's buildGridCard for visual consistency across the two grids
   buildStreamCard(s) {
     const card = document.createElement("button");
     card.className = "home-grid-card";
@@ -772,8 +737,7 @@ export class BrowsePage {
   }
 }
 
-/** First occurrence wins, keyed on game id. Entries with no id pass through - better a
- *  rare double card than dropping distinct categories. */
+// first occurrence wins, keyed on game id. entries with no id pass through, better a rare double card than dropping distinct categories
 function dedupeGamesById(list) {
   const seen = new Set();
   return list.filter((g) => {

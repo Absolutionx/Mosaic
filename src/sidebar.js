@@ -1,6 +1,6 @@
-// Channels sidebar: followed channels (live + offline) and a Live Channels list. Data via
+// channels sidebar: followed channels (live + offline) and a Live Channels list. data via
 // Rust-proxied Helix (followed, streams-for-users, users-info, top-live), since api.twitch.tv
-// isn't reachable from WebView2.
+// isn't reachable from WebView2
 
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
@@ -12,14 +12,6 @@ const REFRESH_INTERVAL_MS = 60_000;
 const COLLAPSED_LIVE_COUNT = 8;
 
 export class ChannelsSidebar {
-  /**
-   * @param {object} opts
-   * @param {HTMLElement} opts.followedListEl
-   * @param {HTMLElement} opts.showMoreBtn
-   * @param {HTMLElement} opts.loginPromptEl
-   * @param {HTMLElement} opts.topLiveListEl
-   * @param {(channel: string) => void} opts.onChannelSelect - lowercase login on click.
-   */
   constructor({ followedListEl, showMoreBtn, loginPromptEl, topLiveListEl, onChannelSelect }) {
     this.followedListEl = followedListEl;
     this.showMoreBtn = showMoreBtn;
@@ -29,17 +21,14 @@ export class ChannelsSidebar {
 
     this.loggedIn = false;
     this.expanded = false;
-    /** Merged followed-channel rows: {id, login, name, live, viewers, game} */
+    // {id, login, name, live, viewers, game}
     this.followed = [];
-    /** @type {Map<string, string>} user_id -> profile_image_url */
     this.avatars = new Map();
 
-    /** @type {Set<string>} Logins opted into go-live notifications. Loaded in init()
-     * (notify_prefs.rs), kept in sync on every toggle. */
+    // logins opted into go-live notifications, loaded in init() from notify_prefs.rs
     this.notifyChannels = new Set();
-    /** @type {Map<string, boolean>} login -> live state as of the last refresh, compared next
-     * tick to detect offline->live transitions. Without it, every refresh would re-notify all
-     * already-live channels every 60s. */
+    // login -> live state as of the last refresh, compared next tick to catch offline->live.
+    // without it, every refresh would re-notify all already-live channels every 60s
     this._lastLiveState = new Map();
 
     this.refreshTimer = null;
@@ -49,14 +38,12 @@ export class ChannelsSidebar {
       this.renderFollowed();
     });
 
-    // Follow toggled from the info bar (kick-follows.js) - reflect it without waiting for the
-    // 60s refresh.
+    // follow toggled from the info bar (kick-follows.js), reflect it without waiting for the 60s refresh
     onKickFollowsChange(() => {
       if (isKick()) this.refreshKickFollowing();
     });
   }
 
-  /** Call once login succeeds (or has already happened on startup). */
   onLogin() {
     this.loggedIn = true;
     this.loginPromptEl.style.display = "none";
@@ -66,8 +53,7 @@ export class ChannelsSidebar {
     }
   }
 
-  /** Loads the public Live Channels rail (no login needed) - call unconditionally at startup.
-   * Also restores the notification opt-in set (a local file, independent of login). */
+  // call unconditionally at startup. also restores the notification opt-in set (a local file, independent of login)
   async init() {
     try {
       const channels = await invoke("get_notify_channels");
@@ -79,12 +65,17 @@ export class ChannelsSidebar {
   }
 
   async refresh() {
-    await Promise.all([this.refreshFollowed(), this.refreshTopLive()]);
+    // go-live detection runs independently of which platform the sidebar is showing (see
+    // _pollTwitchGoLive): notifications must keep firing for Twitch follows even while viewing Kick
+    await Promise.all([
+      this.refreshFollowed(),
+      this.refreshTopLive(),
+      this._pollTwitchGoLive(),
+    ]);
   }
 
   async refreshFollowed() {
-    // Kick mode: the Following section is the LOCAL follow list (see kick-follows.js), which
-    // needs no login.
+    // Kick mode: the Following section is the LOCAL follow list (kick-follows.js), which needs no login
     if (isKick()) {
       await this.refreshKickFollowing();
       return;
@@ -106,9 +97,8 @@ export class ChannelsSidebar {
       return;
     }
 
-    // get_streams_for_users and get_users_info both depend only on `ids`, so fetch them
-    // concurrently. allSettled keeps each failure independent - one erroring shouldn't wipe
-    // the other's data.
+    // both fetches depend only on `ids`, so run them concurrently. allSettled keeps each failure
+    // independent, one erroring shouldn't wipe the other's data
     const missingAvatarIds = ids.filter((id) => !this.avatars.has(id));
     const [liveResult, usersResult] = await Promise.allSettled([
       invoke("get_streams_for_users", { broadcasterIds: ids }),
@@ -149,30 +139,76 @@ export class ChannelsSidebar {
           dropsEnabled: live ? streamHasDropsEnabled(live) : false,
         };
       })
-      // Live first (highest viewers), then offline alphabetically - the official sidebar's
-      // default sort.
+      // live first (highest viewers), then offline alphabetically, the official sidebar's default sort
       .sort((a, b) => {
         if (a.live !== b.live) return a.live ? -1 : 1;
         if (a.live) return b.viewers - a.viewers;
         return a.name.localeCompare(b.name);
       });
 
-    this._checkForNewlyLiveChannels();
+    // note: go-live detection is NOT driven from here anymore; _pollTwitchGoLive owns it so it keeps
+    // working in Kick mode too (this branch doesn't run when viewing Kick). this path only renders
     this.renderFollowed();
   }
 
-  /** Compares this tick's live state against last tick's per opted-in channel and notifies
-   * on offline->live. Owns updating _lastLiveState, so it's safe to call every tick. */
-  async _checkForNewlyLiveChannels() {
+  // polls Twitch followed-channel live state for go-live notifications, INDEPENDENTLY of the sidebar's
+  // current platform view. the visible Following list swaps to Kick's local follows in Kick mode
+  // (refreshFollowed early-returns there), so detection used to go dark the moment you switched to
+  // Kick. this fetches its own copy of the Twitch data and never touches this.followed / this.avatars
+  // / rendering, so the two concerns can't re-entangle. costs one extra batched Helix call per refresh
+  // while in Twitch mode (the view fetches the same rows separately), negligible next to the correctness
+  async _pollTwitchGoLive() {
+    // needs the Twitch follow list, which requires a Twitch login; and skip the round-trip when
+    // nothing is opted in (a later opt-in seeds its own baseline on the first tick after it's added)
+    if (!this.loggedIn || this.notifyChannels.size === 0) return;
+
+    let followedRows;
+    try {
+      followedRows = JSON.parse(await invoke("get_followed_channels"));
+    } catch (err) {
+      console.error("Go-live poll: failed to load followed channels:", err);
+      return;
+    }
+    const ids = followedRows.map((r) => r.broadcaster_id);
+    if (ids.length === 0) return;
+
+    let liveRows = [];
+    try {
+      liveRows = JSON.parse(await invoke("get_streams_for_users", { broadcasterIds: ids }));
+    } catch (err) {
+      console.error("Go-live poll: failed to load stream status:", err);
+      return;
+    }
+    const liveById = new Map(liveRows.map((s) => [s.user_id, s]));
+
+    // minimal shape the detector needs, deliberately built fresh rather than from this.followed
+    const channels = followedRows.map((r) => {
+      const live = liveById.get(r.broadcaster_id);
+      return {
+        login: r.broadcaster_login,
+        name: r.broadcaster_name,
+        live: Boolean(live),
+        title: live ? live.title : "",
+        game: live ? live.game_name : "",
+      };
+    });
+
+    this._checkForNewlyLiveChannels(channels);
+  }
+
+  // owns updating _lastLiveState, so it's safe to call every tick. takes the channel list explicitly
+  // (rather than reading this.followed) so the caller controls WHICH set is checked - the go-live
+  // poller passes its own platform-independent Twitch fetch, not whatever the sidebar is displaying
+  async _checkForNewlyLiveChannels(channels) {
     if (this.notifyChannels.size === 0) {
-      // Nothing opted in - still update the tracked state so a later opt-in has a correct
-      // baseline instead of misreading first-seen as a transition.
-      for (const ch of this.followed) this._lastLiveState.set(ch.login, ch.live);
+      // nothing opted in, but still update the tracked state so a later opt-in has a correct
+      // baseline instead of misreading first-seen as a transition
+      for (const ch of channels) this._lastLiveState.set(ch.login, ch.live);
       return;
     }
 
     const newlyLive = [];
-    for (const ch of this.followed) {
+    for (const ch of channels) {
       const wasLive = this._lastLiveState.get(ch.login);
       if (ch.live && wasLive === false && this.notifyChannels.has(ch.login)) {
         newlyLive.push(ch);
@@ -181,8 +217,7 @@ export class ChannelsSidebar {
     }
     if (newlyLive.length === 0) return;
 
-    // Permission is requested lazily, only when there's something to notify - so a user
-    // opted into nothing never gets a prompt.
+    // request permission lazily, only when there's something to notify, so a user opted into nothing never gets a prompt
     try {
       let granted = await isPermissionGranted();
       if (!granted) {
@@ -206,13 +241,11 @@ export class ChannelsSidebar {
     }
   }
 
-  /** DEBUG/TESTING ONLY - triggers the real go-live path for one channel without waiting for
-   * it to go live. Exposed as window.__testGoLiveNotification() (see main.js). Forces
-   * _lastLiveState to false and ch.live to true, then runs the real
-   * _checkForNewlyLiveChannels() - exercising the real detection, opt-in check, and notify.
-   * @param {string} [login] - defaults to the first opted-in channel; must be a followed
-   *   channel (production data comes from there).
-   */
+  // DEBUG ONLY (window.__testGoLiveNotification, see main.js): force "last seen offline" and feed a
+  // live row straight into the real _checkForNewlyLiveChannels(), so detection, opt-in check, and
+  // notify all fire without waiting for a channel to actually go live. works while viewing the Kick
+  // side too (which is the case this whole path exists to prove), since it no longer needs the channel
+  // to be present in this.followed
   async debugTestGoLiveNotification(login) {
     const targetLogin = login || [...this.notifyChannels][0];
     if (!targetLogin) {
@@ -220,30 +253,31 @@ export class ChannelsSidebar {
         "No channel opted into notifications yet - click the bell on a followed channel first, or pass a login explicitly: window.__testGoLiveNotification('somechannel')"
       );
     }
-    const ch = this.followed.find((c) => c.login === targetLogin);
-    if (!ch) {
-      throw new Error(
-        `"${targetLogin}" isn't in your followed channels list right now - debugTestGoLiveNotification only works with a channel from this.followed, since that's where the notification's title/game text comes from.`
-      );
-    }
     if (!this.notifyChannels.has(targetLogin)) {
       throw new Error(
         `"${targetLogin}" isn't opted into notifications - click its bell icon first, or pass a login that already is.`
       );
     }
-    // Force "last seen offline" so the real function reads this as a genuine transition.
+    // use real title/game text if the channel happens to be in the current view, else synthesize a
+    // minimal row (still exercises the real detection + notify path either way)
+    const known = this.followed.find((c) => c.login === targetLogin);
+    const ch = {
+      login: targetLogin,
+      name: known?.name || targetLogin,
+      live: true,
+      title: known?.title || "",
+      game: known?.game || "",
+    };
+    // force "last seen offline" so the real function reads this as a genuine transition
     this._lastLiveState.set(targetLogin, false);
-    // Also force ch.live, since _checkForNewlyLiveChannels reads it (not just _lastLiveState)
-    // - a real-offline channel would otherwise never trigger.
-    ch.live = true;
     console.log(`[debug] Faking go-live transition for "${targetLogin}" and re-running the real notification check...`);
-    await this._checkForNewlyLiveChannels();
+    await this._checkForNewlyLiveChannels([ch]);
     console.log("[debug] Done - check your OS notifications if nothing appeared, see console for any errors logged above.");
   }
 
-  /** Kick-mode Following: local follow list + one batched kick_followed_status lookup. Live
-   * first, offline greyed after - the same rows buildChannelRow draws for Twitch. A failed
-   * lookup falls back to stored name/avatar and renders offline. */
+  // local follow list + one batched kick_followed_status lookup. live first, offline greyed
+  // after, same rows buildChannelRow draws for Twitch. a failed lookup falls back to the stored
+  // name/avatar and renders offline
   async refreshKickFollowing() {
     const follows = getKickFollows();
     if (follows.length === 0) {
@@ -279,8 +313,7 @@ export class ChannelsSidebar {
         return (b.viewers || 0) - (a.viewers || 0);
       });
     this.renderFollowed();
-    // The 60s refresh normally starts on Twitch login - a Kick Following section wants
-    // live-state updates too.
+    // the 60s refresh normally starts on Twitch login, but a Kick Following section wants live-state updates too
     if (!this.refreshTimer) {
       this.refreshTimer = setInterval(() => this.refresh(), REFRESH_INTERVAL_MS);
     }
@@ -323,8 +356,7 @@ export class ChannelsSidebar {
       : this.followed.slice(0, COLLAPSED_LIVE_COUNT);
 
     for (const ch of visible) {
-      // The bell is wired to the Twitch poll - Kick rows don't get one (no offline->live
-      // pipeline behind their refresh).
+      // the bell is wired to the Twitch poll, Kick rows don't get one (no offline->live pipeline behind their refresh)
       this.followedListEl.appendChild(
         this.buildChannelRow(ch, { showNotifyToggle: !kick })
       );
@@ -341,9 +373,8 @@ export class ChannelsSidebar {
   }
 
   async renderTopLive(rows) {
-    // /helix/streams has no profile images, so batch-lookup avatars for uncached ids. Kick
-    // rows skip it: kick.rs embeds the avatar inline, and kick:* ids must never reach
-    // get_users_info (Helix would 400 the batch).
+    // /helix/streams has no profile images, so batch-lookup avatars for uncached ids. Kick rows
+    // skip it: kick.rs embeds the avatar inline, and kick:* ids must never reach get_users_info (Helix would 400)
     for (const s of rows) {
       if (s.profile_image_url && !this.avatars.has(s.user_id)) {
         this.avatars.set(s.user_id, s.profile_image_url);
@@ -382,12 +413,7 @@ export class ChannelsSidebar {
     }
   }
 
-  /**
-   * @param {object} ch - channel row data (see refreshFollowed/renderTopLive)
-   * @param {object} [opts]
-   * @param {boolean} [opts.showNotifyToggle] - adds a go-live bell. Only for Followed rows;
-   *   Top Live rows are channels the user may not follow, so it doesn't apply there.
-   */
+  // showNotifyToggle only for Followed rows; Top Live rows are channels the user may not follow, so a bell doesn't apply
   buildChannelRow(ch, opts = {}) {
     const btn = document.createElement("button");
     btn.className = "sidebar-channel";
@@ -402,9 +428,8 @@ export class ChannelsSidebar {
               tags: ch.dropsEnabled ? ["DropsEnabled"] : [],
               viewer_count: ch.viewers,
               // watchChannel() checks stream.type === "live" to decide whether to attempt playback.
-              // home/browse pass Helix's raw object (which has this field); this one is
-              // hand-built and was missing it, so every sidebar click read as offline. This
-              // branch only runs for a row known to be live, so hardcoding "live" is correct.
+              // home/browse pass Helix's raw object; this row is hand-built and was missing the field, so
+              // every sidebar click read as offline. this branch only runs for a known-live row, so hardcoding "live" is correct
               type: "live",
             }
           : null
@@ -462,8 +487,8 @@ export class ChannelsSidebar {
       return btn;
     }
 
-    // The bell must NOT be nested inside `btn` - a <button> inside a <button> is invalid HTML
-    // and clicks unreliably. Wrap both as siblings in a plain container.
+    // the bell must NOT nest inside `btn`: a <button> inside a <button> is invalid HTML and clicks
+    // unreliably. wrap both as siblings in a plain container
     const row = document.createElement("div");
     row.className = "sidebar-channel-row";
     row.appendChild(btn);
@@ -477,8 +502,7 @@ export class ChannelsSidebar {
     notifyBtn.innerHTML =
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>';
     notifyBtn.addEventListener("click", (e) => {
-      // Stop this from also triggering btn's click (channel select) - cheap insurance now that
-      // they're siblings.
+      // stop this also triggering btn's click (channel select), cheap insurance now that they're siblings
       e.stopPropagation();
       this.toggleNotify(ch.login, notifyBtn, ch.name || ch.login);
     });
@@ -487,8 +511,6 @@ export class ChannelsSidebar {
     return row;
   }
 
-  /** Flips one channel's notification opt-in, updates the bell immediately, and persists the
-   * full set via notify_prefs.rs. */
   async toggleNotify(login, btnEl, displayName) {
     const turningOn = !this.notifyChannels.has(login);
     if (turningOn) {
@@ -507,8 +529,7 @@ export class ChannelsSidebar {
       console.error("Failed to save notification preferences:", err);
     }
 
-    // Request permission on the FIRST opt-in (not when it goes live) so a denial gives
-    // immediate feedback, not a silent failure hours later.
+    // request permission on the FIRST opt-in, not when it goes live, so a denial gives immediate feedback instead of a silent failure hours later
     if (turningOn) {
       try {
         let granted = await isPermissionGranted();
@@ -525,8 +546,7 @@ function formatViewerCount(n) {
   return String(n);
 }
 
-/** 1x1 transparent pixel, so <img> never shows a broken-image icon for a channel with no
- *  avatar URL (e.g. top-live entries). */
+// 1x1 transparent pixel so <img> never shows a broken-image icon for a channel with no avatar (e.g. top-live entries)
 function blankAvatarDataUri() {
   return "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 }

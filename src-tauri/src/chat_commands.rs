@@ -1,7 +1,6 @@
-// Tauri command surface for chat: lifecycle (connect/disconnect/send),
-// moderation, cosmetics (badges/emotes/cheermotes), and the realtime
-// side-channels (EventSub redeems, 7TV emote events). The IRC client is in
-// chat.rs; this is only the command layer.
+// Tauri command surface for chat: lifecycle (connect/disconnect/send), moderation, cosmetics
+// (badges/emotes/cheermotes), and the realtime side-channels (EventSub redeems, 7TV emote events).
+// the IRC client is in chat.rs; this is only the command layer
 
 use tauri::State;
 
@@ -9,17 +8,13 @@ use crate::helix::{helix_get, require_auth, urlencoding_encode};
 use crate::{chat, eventsub, oauth, seventv_events};
 use crate::{ChatState, EventSubState, SevenTvEventsState};
 
-/// Starts the Twitch IRC chat client for the channel, as a background Tokio
-/// task. In Rust (not JS) to avoid WebView2's Tracking Prevention, which
-/// blocks/kills WebSocket connections to irc-ws.chat.twitch.tv from the webview
-/// - see chat.rs's module comment.
-///
-/// If the user has logged in (set_oauth_credentials succeeded), connects
-/// authenticated and able to send; otherwise anonymous/read-only.
+// starts the Twitch IRC chat client for the channel, as a background Tokio task. in Rust (not JS) to
+// avoid WebView2's Tracking Prevention, which blocks/kills WebSocket connections to
+// irc-ws.chat.twitch.tv from the webview (see chat.rs's module comment). if the user has logged in
+// connects authenticated and able to send; otherwise anonymous/read-only
 #[tauri::command]
 pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: String) -> Result<(), String> {
-    // If a chat session is already running, signal it to stop first so we don't
-    // end up with two concurrent connections.
+    // if a chat session is already running, signal it to stop first so we don't end up with two concurrent connections
     {
         let mut guard = state.stop_tx.lock().map_err(|e| e.to_string())?;
         if let Some(old_tx) = guard.take() {
@@ -60,10 +55,8 @@ pub fn stop_chat(state: State<ChatState>) -> Result<(), String> {
     Ok(())
 }
 
-/// Sends a chat message into the active connection. Errors if no session is
-/// running, or if the session is anonymous (Twitch IRC rejects PRIVMSG from
-/// justinfanXXXXX connections, so we check ourselves rather than let it fail
-/// silently server-side).
+// errors if no session is running, or if the session is anonymous (Twitch IRC rejects PRIVMSG from
+// justinfanXXXXX connections, so we check ourselves rather than let it fail silently server-side)
 #[tauri::command]
 pub fn send_chat_message(
     state: State<ChatState>,
@@ -94,10 +87,8 @@ pub fn send_chat_message(
         .map_err(|e| format!("Chat connection closed: {e}"))
 }
 
-/// Stores validated OAuth credentials in state for the next start_chat call.
-/// Doesn't affect an already-running anonymous session - the user Stops and
-/// Watches again (keeping this simple for the PoC) for a login to take effect
-/// on an already-playing stream's chat.
+// stores validated OAuth credentials in state for the next start_chat call. doesn't affect an
+// already-running anonymous session: the user Stops and Watches again for a login to take effect on an already-playing stream's chat
 #[tauri::command]
 pub fn set_oauth_credentials(
     state: State<ChatState>,
@@ -110,8 +101,7 @@ pub fn set_oauth_credentials(
     Ok(())
 }
 
-/// Fetches Twitch global chat emotes (Kappa, PogChamp, LUL, etc.). Returns raw
-/// Helix JSON for chat.js to parse and store by name+id.
+// fetches Twitch global chat emotes (Kappa, PogChamp, LUL, etc.). returns raw Helix JSON for chat.js to parse and store by name+id
 #[tauri::command]
 pub async fn fetch_global_emotes(state: State<'_, ChatState>) -> Result<String, String> {
     let token = state
@@ -123,11 +113,9 @@ pub async fn fetch_global_emotes(state: State<'_, ChatState>) -> Result<String, 
     helix_get("https://api.twitch.tv/helix/chat/emotes/global", token).await
 }
 
-// --- Cheermotes (animated bits emotes) ---
-// Like badges, the Helix endpoint isn't reachable from WebView2, so this proxies
-// through Rust. Returns raw JSON for the frontend. broadcaster_id is required by
-// Helix to include channel-specific cheermote overrides on top of the global
-// set.
+// like badges, the Helix cheermotes endpoint isn't reachable from WebView2, so this proxies through
+// Rust. returns raw JSON for the frontend. broadcaster_id is required by Helix to include
+// channel-specific cheermote overrides on top of the global set
 
 #[tauri::command]
 pub async fn fetch_cheermotes(
@@ -143,20 +131,14 @@ pub async fn fetch_cheermotes(
     helix_get(&url, token).await
 }
 
-// --- Moderation: timeout/ban/unban/delete-message ---
-// All four require the logged-in user to be a moderator or the broadcaster
-// (scopes: moderator:manage:banned_users for ban/timeout/unban,
-// moderator:manage:chat_messages for delete) - Twitch 403s these for a regular
-// viewer, which the frontend surfaces as a normal error. "Is this user a mod
-// here" for UI purposes is derived client-side from the USERSTATE badges tag
-// chat.rs emits on join - no extra Helix call needed.
+// all four require the logged-in user to be a moderator or the broadcaster (scopes:
+// moderator:manage:banned_users for ban/timeout/unban, moderator:manage:chat_messages for delete),
+// Twitch 403s these for a regular viewer, which the frontend surfaces as a normal error. "is this
+// user a mod here" for UI purposes is derived client-side from the USERSTATE badges tag chat.rs emits on join, no extra Helix call needed
 
-/// Times out or permanently bans a user in `broadcaster_id`'s channel.
-/// `duration_seconds` of None (or omitted) means a permanent ban; Twitch's
-/// /helix/moderation/bans makes the same distinction via the presence of the
-/// `duration` field, so this passes that choice straight through rather than
-/// having separate timeout/ban commands for one endpoint with one optional
-/// field.
+// times out or permanently bans a user. duration_seconds of None (or omitted) means a permanent
+// ban; Twitch's /helix/moderation/bans makes the same distinction via the presence of the `duration`
+// field, so this passes that choice straight through rather than having separate timeout/ban commands
 #[tauri::command]
 pub async fn ban_user(
     state: State<'_, ChatState>,
@@ -197,7 +179,7 @@ pub async fn ban_user(
     Ok(())
 }
 
-/// Lifts an existing timeout or ban early.
+// lifts an existing timeout or ban early
 #[tauri::command]
 pub async fn unban_user(
     state: State<'_, ChatState>,
@@ -228,13 +210,9 @@ pub async fn unban_user(
     Ok(())
 }
 
-/// Deletes a single chat message by its IRC message id (the `id` tag chat.rs
-/// captures and sends to the frontend as msg_id). Helix calls this
-/// `message_id`.
-///
-/// `message_id` is optional: per Helix's docs, omitting it entirely (actually
-/// absent, not empty) clears the ENTIRE room instead of one message - this backs
-/// the /clear slash command off the same endpoint.
+// deletes a single chat message by its IRC message id (the `id` tag chat.rs captures and sends to
+// the frontend as msg_id). Helix calls this message_id. it's optional: per Helix's docs, omitting it
+// entirely (actually absent, not empty) clears the ENTIRE room instead of one message, which backs the /clear slash command off the same endpoint
 #[tauri::command]
 pub async fn delete_chat_message(
     state: State<'_, ChatState>,
@@ -269,11 +247,9 @@ pub async fn delete_chat_message(
     Ok(())
 }
 
-/// Approves or denies a message AutoMod is holding, identified by the msg_id
-/// from the automod.message.hold EventSub event (see eventsub.rs's
-/// dispatch_notification). `action` is "ALLOW" or "DENY" - passed through rather
-/// than a bool so the Helix body and chat.js's Allow/Deny buttons both use
-/// Twitch's own vocabulary.
+// approves or denies a message AutoMod is holding, identified by the msg_id from the
+// automod.message.hold EventSub event. `action` is "ALLOW" or "DENY", passed through rather than a
+// bool so the Helix body and chat.js's Allow/Deny buttons both use Twitch's own vocabulary
 #[tauri::command]
 pub async fn automod_process_message(
     state: State<'_, ChatState>,
@@ -304,11 +280,9 @@ pub async fn automod_process_message(
     Ok(())
 }
 
-/// Resolves a Twitch login to its numeric Helix user id. ban_user/unban_user
-/// need the target's id, not login - the slash commands (/ban, /timeout, /unban)
-/// only have a typed username, so this is the lookup chat.js runs first. Mirrors
-/// the login->id lookup get_videos_for_login does inline, pulled out here since
-/// slash commands have no other reason to go through that function.
+// resolves a Twitch login to its numeric Helix user id. ban_user/unban_user need the target's id,
+// not login, and the slash commands only have a typed username, so this is the lookup chat.js runs
+// first. pulled out here since slash commands have no other reason to go through get_videos_for_login
 #[tauri::command]
 pub async fn get_user_id_for_login(
     state: State<'_, ChatState>,
@@ -332,10 +306,7 @@ pub async fn get_user_id_for_login(
         .ok_or_else(|| format!("No user found for login: {login}"))
 }
 
-// --- EventSub: channel point redemption events ---
-// Requires the logged-in user to be the broadcaster or a moderator (scope:
-// channel:read:redemptions). Silently no-ops if the subscription 403s (regular
-// viewer session).
+// requires the logged-in user to be the broadcaster or a moderator (scope: channel:read:redemptions). silently no-ops if the subscription 403s (regular viewer session)
 
 #[tauri::command]
 pub async fn start_eventsub(
@@ -344,21 +315,19 @@ pub async fn start_eventsub(
     eventsub_state: State<'_, EventSubState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    // Require an authenticated session - EventSub won't work anonymously. Also
-    // need the logged-in user's own id now, not just their token: the
-    // automod.message.hold subscription's condition requires moderator_user_id
-    // (Twitch delivers AutoMod holds only to a specific moderator's session),
-    // distinct from broadcaster_id, which the channel-points subscription uses
-    // and which stays the watched channel.
+    // require an authenticated session, EventSub won't work anonymously. also need the logged-in user's
+    // own id now, not just their token: the automod.message.hold subscription's condition requires
+    // moderator_user_id (Twitch delivers AutoMod holds only to a specific moderator's session), distinct
+    // from broadcaster_id, which the channel-points subscription uses and which stays the watched channel
     let (access_token, moderator_id) = {
         let guard = chat_state.auth.lock().map_err(|e| e.to_string())?;
         match guard.as_ref() {
             Some(creds) => (creds.access_token.clone(), creds.user_id.clone()),
-            None => return Ok(()), // anonymous - skip silently
+            None => return Ok(()), // anonymous, skip silently
         }
     };
 
-    // Tear down any previous EventSub connection for this session.
+    // tear down any previous EventSub connection for this session
     {
         let mut guard = eventsub_state.stop_tx.lock().map_err(|e| e.to_string())?;
         if let Some(tx) = guard.take() {
@@ -388,20 +357,16 @@ pub fn stop_eventsub(state: State<EventSubState>) -> Result<(), String> {
     Ok(())
 }
 
-/// Starts the 7TV EventAPI subscription for one emote set, so additions/
-/// removals (e.g. a temporary channel-points-unlocked emote) show up without
-/// rejoining. Called from chat.js right after loadSevenTvChannelEmotes()
-/// resolves with the set's id - unlike start_eventsub, needs no auth check,
-/// since 7TV's EventAPI has no login requirement here.
+// starts the 7TV EventAPI subscription for one emote set, so additions/removals (e.g. a temporary
+// channel-points-unlocked emote) show up without rejoining. called from chat.js right after
+// loadSevenTvChannelEmotes() resolves with the set's id, unlike start_eventsub needs no auth check, since 7TV's EventAPI has no login requirement here
 #[tauri::command]
 pub async fn start_seventv_events(
     emote_set_id: String,
     state: State<'_, SevenTvEventsState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    // Tear down any previous connection (e.g. a channel switch landed here before
-    // the old one's stop_seventv_events from disconnect() ran) - same defensive
-    // double-stop start_eventsub uses.
+    // tear down any previous connection (e.g. a channel switch landed here before the old one's stop ran), same defensive double-stop start_eventsub uses
     {
         let mut guard = state.stop_tx.lock().map_err(|e| e.to_string())?;
         if let Some(tx) = guard.take() {
@@ -429,17 +394,11 @@ pub fn stop_seventv_events(state: State<SevenTvEventsState>) -> Result<(), Strin
     Ok(())
 }
 
+// api.twitch.tv fails with ERR_NAME_NOT_RESOLVED inside WebView2, so badges proxy through Rust like
+// IRC. Helix requires Authorization: Bearer <token> on every request, so we read the stored access
+// token from ChatState. if the user hasn't logged in the token is None and the request 401s; chat.js catches that silently and calls loadBadges() again once login completes
 
-// --- Badges (proxied through Rust, same reason as IRC) ---
-// api.twitch.tv fails with ERR_NAME_NOT_RESOLVED inside WebView2. Helix requires
-// Authorization: Bearer <token> on every request, so we read the stored access
-// token from ChatState. If the user hasn't logged in the token is None and the
-// request 401s; chat.js catches that silently and calls loadBadges() again once
-// login completes.
-
-
-/// Fetches global Twitch chat badges (mod, VIP, broadcaster, sub tiers, etc.).
-/// Returns the raw Helix JSON for chat.js to parse and ingest.
+// fetches global Twitch chat badges (mod, VIP, broadcaster, sub tiers, etc.). returns the raw Helix JSON for chat.js to parse and ingest
 #[tauri::command]
 pub async fn fetch_global_badges(state: State<'_, ChatState>) -> Result<String, String> {
     let token = state
@@ -451,8 +410,7 @@ pub async fn fetch_global_badges(state: State<'_, ChatState>) -> Result<String, 
     helix_get("https://api.twitch.tv/helix/chat/badges/global", token).await
 }
 
-/// Fetches channel-specific badges (usually custom subscriber tiers). Channels
-/// with none return `{"data":[]}` with HTTP 200.
+// fetches channel-specific badges (usually custom subscriber tiers). channels with none return {"data":[]} with HTTP 200
 #[tauri::command]
 pub async fn fetch_channel_badges(
     broadcaster_id: String,
@@ -470,23 +428,12 @@ pub async fn fetch_channel_badges(
     helix_get(&url, token).await
 }
 
-/// Fetches everyone currently connected to a channel's chat via
-/// /helix/chat/chatters - the actual viewer roster (anyone joined, whether or
-/// not they've typed), unlike the @mention autocomplete's other source
-/// (chat.js's _chatUsers, built purely from observed PRIVMSGs), which only knows
-/// people who have spoken. Fills the gap: a silent "tylerb" still gets suggested
-/// when typing "@tyler".
-///
-/// Twitch restricts this to the broadcaster or a moderator (scope:
-/// moderator:read:chatters) - an ordinary viewer's token 403s regardless of
-/// scope, which is expected; chat.js only calls it once USERSTATE confirms the
-/// user is a mod/broadcaster, and keeps the speak-to-be-tracked fallback
-/// otherwise.
-///
-/// Paginated like get_followed_channels but capped at MAX_CHATTERS - the
-/// autocomplete only shows 10 matches, so there's no benefit to paging a full
-/// 50,000-viewer roster into a dropdown, and it would mean many avoidable Helix
-/// calls for the largest channels.
+// fetches everyone currently connected to a channel's chat via /helix/chat/chatters, the actual
+// viewer roster (anyone joined, whether or not they've typed), unlike the @mention autocomplete's
+// other source (chat.js's _chatUsers, built purely from observed PRIVMSGs) which only knows people
+// who have spoken. Twitch restricts this to the broadcaster or a moderator (scope:
+// moderator:read:chatters), so chat.js only calls it once USERSTATE confirms mod/broadcaster. paginated
+// but capped at MAX_CHATTERS, the autocomplete only shows 10 matches so there's no benefit to paging a full 50,000-viewer roster
 #[tauri::command]
 pub async fn get_chatters(
     broadcaster_id: String,

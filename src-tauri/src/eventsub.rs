@@ -1,11 +1,8 @@
-// Twitch EventSub WebSocket client - real-time events (redemptions, follows,
-// subs) without polling. In Rust because WebView2 Tracking Prevention kills
-// webview WebSockets. Flow: connect, get session_id from session_welcome, POST
-// subscriptions referencing it, receive notifications; reconnect on
-// session_reconnect before closing the old socket.
-//
-// Redemption subscriptions need broadcaster/mod scope (channel:read:redemptions)
-// and 403 for regular viewers - handled silently.
+// Twitch EventSub WebSocket client: real-time events (redemptions, follows, subs) without polling.
+// in Rust because WebView2 Tracking Prevention kills webview WebSockets. flow: connect, get
+// session_id from session_welcome, POST subscriptions referencing it, receive notifications;
+// reconnect on session_reconnect before closing the old socket. redemption subscriptions need
+// broadcaster/mod scope (channel:read:redemptions) and 403 for regular viewers, handled silently
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -14,8 +11,6 @@ use tauri::{AppHandle, Emitter};
 use tokio_tungstenite::tungstenite::Message;
 
 const EVENTSUB_WS: &str = "wss://eventsub.wss.twitch.tv/ws";
-
-// --- Wire types ---
 
 #[derive(Deserialize)]
 struct Envelope {
@@ -29,10 +24,7 @@ struct Metadata {
     message_type: String,
 }
 
-// --- Public entry point ---
-
-/// Runs the EventSub WebSocket loop in a background Tokio task. Exits when
-/// stop_rx fires or the connection fails unrecoverably.
+// runs the EventSub WebSocket loop in a background Tokio task. exits when stop_rx fires or the connection fails unrecoverably
 pub async fn run(
     app: AppHandle,
     broadcaster_id: String,
@@ -42,7 +34,7 @@ pub async fn run(
 ) {
     let mut connect_url = EVENTSUB_WS.to_string();
 
-    // Outer loop: handles session_reconnect by re-entering with a new URL.
+    // outer loop: handles session_reconnect by re-entering with a new URL
     'reconnect: loop {
         let ws = match tokio_tungstenite::connect_async(&connect_url).await {
             Ok((ws, _)) => ws,
@@ -74,8 +66,7 @@ pub async fn run(
                                         .get("session").and_then(|s| s.get("id"))
                                         .and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-                                    // Channel point redemptions. 403 = not mod/broadcaster; log and continue
-                                    // so the rest of the app keeps working.
+                                    // channel point redemptions. 403 = not mod/broadcaster; log and continue so the rest of the app keeps working
                                     if let Err(e) = subscribe_channel_point_redemptions(
                                         &session_id, &broadcaster_id, &access_token,
                                     ).await {
@@ -84,11 +75,8 @@ pub async fn run(
                                              (need mod/broadcaster on this channel): {e}"
                                         );
                                     }
-                                    // AutoMod-held messages. Same 403-for-non-mods story, but this one also
-                                    // needs moderator_id in its own right (not just
-                                    // broadcaster_id): Twitch delivers these only to the
-                                    // specific moderator's session, never as a broadcast to
-                                    // anyone watching.
+                                    // AutoMod-held messages. same 403-for-non-mods story, but this one also needs moderator_id in its
+                                    // own right (not just broadcaster_id): Twitch delivers these only to the specific moderator's session, never as a broadcast to anyone watching
                                     if let Err(e) = subscribe_automod_message_hold(
                                         &session_id, &broadcaster_id, &moderator_id, &access_token,
                                     ).await {
@@ -97,24 +85,18 @@ pub async fn run(
                                              (need mod/broadcaster on this channel): {e}"
                                         );
                                     }
-                                    // Outgoing raids FROM this channel (the watched streamer raiding
-                                    // someone). Unlike the two above, channel.raid needs no
-                                    // scope/mod status per Twitch's docs - any token can
-                                    // subscribe for any broadcaster, so a failure here is a
-                                    // genuine error worth logging loudly, not the
-                                    // expected-for-most-viewers 403.
+                                    // outgoing raids FROM this channel (the watched streamer raiding someone). unlike the two above,
+                                    // channel.raid needs no scope/mod status per Twitch's docs, any token can subscribe for any
+                                    // broadcaster, so a failure here is a genuine error worth logging loudly, not the expected 403
                                     if let Err(e) = subscribe_channel_raid(
                                         &session_id, &broadcaster_id, &access_token,
                                     ).await {
                                         eprintln!("[eventsub] raid subscription failed: {e}");
                                     }
 
-                                    // Hype Train and Predictions. These need
-                                    // channel:read:hype_train / channel:read:predictions,
-                                    // which ONLY the broadcaster can grant - so for most
-                                    // viewers they 403 and are skipped (same as
-                                    // redemptions/automod). They light up when you watch your
-                                    // own channel. Failures logged quietly.
+                                    // Hype Train and Predictions. these need channel:read:hype_train / channel:read:predictions, which
+                                    // ONLY the broadcaster can grant, so for most viewers they 403 and are skipped (same as
+                                    // redemptions/automod). they light up when you watch your own channel. failures logged quietly
                                     for (kind, ver) in [
                                         ("channel.hype_train.begin", "1"),
                                         ("channel.hype_train.progress", "1"),
@@ -135,11 +117,10 @@ pub async fn run(
                                     }
                                 }
                                 "session_keepalive" => {
-                                    // Server heartbeat - nothing to do.
+                                    // server heartbeat, nothing to do
                                 }
                                 "session_reconnect" => {
-                                    // Connect to the new URL BEFORE closing this socket to avoid a gap in
-                                    // event delivery.
+                                    // connect to the new URL BEFORE closing this socket to avoid a gap in event delivery
                                     if let Some(url) = env.payload
                                         .get("session").and_then(|s| s.get("reconnect_url"))
                                         .and_then(|v| v.as_str())
@@ -153,9 +134,7 @@ pub async fn run(
                                     dispatch_notification(&app, &env.payload);
                                 }
                                 "revocation" => {
-                                    // Subscription revoked (scope removed, channel banned the app). Log but
-                                    // keep running, since other subscriptions may still be
-                                    // active.
+                                    // subscription revoked (scope removed, channel banned the app). log but keep running, since other subscriptions may still be active
                                     eprintln!(
                                         "[eventsub] subscription revoked: {}",
                                         env.payload
@@ -179,8 +158,6 @@ pub async fn run(
         }
     }
 }
-
-// --- Subscription ---
 
 async fn subscribe_channel_point_redemptions(
     session_id: &str,
@@ -215,11 +192,9 @@ async fn subscribe_channel_point_redemptions(
     Ok(())
 }
 
-/// Subscribes to AutoMod-held messages for `broadcaster_id`, delivered to the
-/// `moderator_id` moderator. Per Twitch's docs, over WebSocket transport this
-/// MUST equal the token owner's own user id - see start_eventsub in main.rs for
-/// why that value is threaded all the way through rather than reusing
-/// broadcaster_id for both, as the redemptions subscription does.
+// delivered to the moderator_id moderator. per Twitch's docs, over WebSocket transport this MUST
+// equal the token owner's own user id, see start_eventsub in main.rs for why that value is threaded
+// all the way through rather than reusing broadcaster_id for both, as the redemptions subscription does
 async fn subscribe_automod_message_hold(
     session_id: &str,
     broadcaster_id: &str,
@@ -228,9 +203,7 @@ async fn subscribe_automod_message_hold(
 ) -> Result<(), String> {
     let client = reqwest::Client::new();
 
-    // Version 1 rather than V2 - both wrap the held text in { "text": "...",
-    // "fragments": [...] }, but V2 adds per-fragment reason annotations the
-    // AutoMod queue UI doesn't use. V1 is enough.
+    // version 1 rather than V2: both wrap the held text in { "text": "...", "fragments": [...] }, but V2 adds per-fragment reason annotations the AutoMod queue UI doesn't use. V1 is enough
     let body = json!({
         "type":    "automod.message.hold",
         "version": "1",
@@ -260,12 +233,9 @@ async fn subscribe_automod_message_hold(
     Ok(())
 }
 
-/// Subscribes to channel.raid FROM `broadcaster_id` - fires when the watched
-/// channel raids another. Per Twitch's docs this type needs no authorization
-/// (works for any broadcaster, regardless of the token's relationship to them),
-/// unlike the redemptions/automod subscriptions which need the logged-in user
-/// to be a mod/broadcaster. main.js uses it to auto-navigate the player to the
-/// raided-into channel - see the eventsub-raid listener.
+// subscribes to channel.raid FROM broadcaster_id, fires when the watched channel raids another. per
+// Twitch's docs this type needs no authorization (works for any broadcaster), unlike the
+// redemptions/automod subscriptions. main.js uses it to auto-navigate the player to the raided-into channel
 async fn subscribe_channel_raid(
     session_id: &str,
     broadcaster_id: &str,
@@ -299,11 +269,9 @@ async fn subscribe_channel_raid(
     Ok(())
 }
 
-/// Generic subscribe for events conditioned only on broadcaster_user_id (hype
-/// train, predictions). Kept separate from the bespoke helpers above, which
-/// have distinct conditions (moderator_user_id, from_/to_broadcaster). Most
-/// viewers lack the read scopes these need, so callers treat failure as an
-/// expected skip.
+// generic subscribe for events conditioned only on broadcaster_user_id (hype train, predictions).
+// kept separate from the bespoke helpers above, which have distinct conditions. most viewers lack the
+// read scopes these need, so callers treat failure as an expected skip
 async fn subscribe_broadcaster_event(
     session_id: &str,
     broadcaster_id: &str,
@@ -339,8 +307,6 @@ async fn subscribe_broadcaster_event(
     Ok(())
 }
 
-// --- Notification dispatch ---
-
 fn dispatch_notification(app: &AppHandle, payload: &Value) {
     let event_type = payload
         .get("subscription").and_then(|s| s.get("type"))
@@ -374,9 +340,7 @@ fn dispatch_notification(app: &AppHandle, payload: &Value) {
                 .and_then(|v| v.as_str()).unwrap_or("someone").to_string();
             let user_id = event.get("user_id")
                 .and_then(|v| v.as_str()).unwrap_or("").to_string();
-            // V1's `message` is an object { "text": "...", "fragments": [...] }, not a
-            // bare string - `.text` is the plain concatenated content, all the AutoMod
-            // queue UI needs.
+            // V1's `message` is an object { "text": "...", "fragments": [...] }, not a bare string, `.text` is the plain concatenated content, all the AutoMod queue UI needs
             let message = event.get("message")
                 .and_then(|v| v.get("text"))
                 .and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -386,8 +350,7 @@ fn dispatch_notification(app: &AppHandle, payload: &Value) {
                 .and_then(|v| v.as_str()).unwrap_or("").to_string();
             let level = event.get("level").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
-            // msg_id empty means the Allow/Deny buttons have nothing to act on - skip
-            // rather than show a useless entry.
+            // msg_id empty means the Allow/Deny buttons have nothing to act on, skip rather than show a useless entry
             if msg_id.is_empty() { return; }
 
             let _ = app.emit("eventsub-automod-hold", json!({
@@ -407,8 +370,7 @@ fn dispatch_notification(app: &AppHandle, payload: &Value) {
             let viewers = event.get("viewers")
                 .and_then(|v| v.as_u64()).unwrap_or(0) as u32;
 
-            // to_login empty means main.js has nothing to navigate to - skip rather than
-            // emit a useless event.
+            // to_login empty means main.js has nothing to navigate to, skip rather than emit a useless event
             if to_login.is_empty() { return; }
 
             let _ = app.emit("eventsub-raid", json!({
@@ -417,11 +379,9 @@ fn dispatch_notification(app: &AppHandle, payload: &Value) {
                 "viewers":  viewers,
             }));
         }
-        // Hype Train + Predictions: the event shapes are rich and the overlay
-        // (chat-events.js) wants most fields, so rather than re-map each one we
-        // forward the raw `event` plus a normalized `kind` the overlay switches on.
-        // The subscription-type suffix ("begin"/"progress"/"end"/"lock") is the
-        // state.
+        // Hype Train + Predictions: the event shapes are rich and the overlay (chat-events.js) wants most
+        // fields, so rather than re-map each one we forward the raw `event` plus a normalized `kind` the
+        // overlay switches on. the subscription-type suffix ("begin"/"progress"/"end"/"lock") is the state
         "channel.hype_train.begin"
         | "channel.hype_train.progress"
         | "channel.hype_train.end" => {

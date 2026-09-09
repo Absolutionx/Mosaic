@@ -1,18 +1,16 @@
-// Home feed (in #video-column when nothing plays): carousel, recommended grid, category
-// rows. Data via Rust-proxied Helix. Helix has no recommendation/genre endpoint, so this
-// substitutes top-viewed streams and a hand-picked RPG list.
+// home feed (in #video-column when nothing plays): carousel, recommended grid, category
+// rows, all via Rust-proxied Helix. Helix has no recommendation/genre endpoint, so this
+// fakes it with top-viewed streams and a hand-picked RPG list
 
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
-// Display caps - the fetches return far more (Twitch 100, Kick 40, category rows
-// hundreds); raised to fill out the page.
+// the fetches return far more (Twitch 100, Kick 40, category rows hundreds), capped here
+// just to fill out the page
 const CAROUSEL_SIZE = 15;
-// Cards a grid row shows before "Show more" expands it.
 const GRID_COLLAPSED_COUNT = 8;
-// Kick mode: how many top categories get their own home row (see fetchKickCategoryRows).
 const KICK_CATEGORY_ROW_COUNT = 6;
 const RPG_GAME_NAMES = [
   "Path of Exile 2",
@@ -24,23 +22,16 @@ const RPG_GAME_NAMES = [
 ];
 
 export class HomeFeed {
-  /**
-   * @param {object} opts
-   * @param {HTMLElement} opts.containerEl - element to render into
-   * @param {(channel: string) => void} opts.onChannelSelect
-   */
   constructor({ containerEl, onChannelSelect }) {
     this.containerEl = containerEl;
     this.onChannelSelect = onChannelSelect || (() => {});
-    /** @type {Map<string, string>} user_id -> profile_image_url */
     this.avatars = new Map();
     this.carouselIndex = 0;
     this.gridExpanded = false;
     this.refreshTimer = null;
     this.loaded = false;
-    // #video-frame has its own solid black background independent of its placeholder, so
-    // hiding only the placeholder left a black box over the feed. Hide/show it with the feed
-    // (they're mutually exclusive).
+    // #video-frame has its own solid black background, separate from its placeholder, so
+    // hiding only the placeholder left a black box over the feed. hide/show them together
     this.videoFrameEl = document.getElementById("video-frame");
   }
 
@@ -61,8 +52,7 @@ export class HomeFeed {
     if (this.videoFrameEl) this.videoFrameEl.style.display = "";
   }
 
-  /** Platform toggled: drop the feed and refetch. Refetch now if showing, else mark stale
-   * for the next show(). */
+  // refetch now if the feed is showing, else mark stale for the next show()
   reloadForPlatformChange() {
     this.topLive = [];
     this.extraRows = [];
@@ -74,10 +64,9 @@ export class HomeFeed {
   }
 
   async refresh() {
-    // Rows below the grid are platform-shaped: Twitch keeps its hand-picked RPGs row (exact
-    // Helix names - see RPG_GAME_NAMES), Kick builds rows from whatever's biggest now (its
-    // directory states per-category counts, and a Twitch game list resolved to nothing on
-    // Kick).
+    // rows below the grid are platform-shaped: Twitch keeps its hand-picked RPGs row (exact
+    // Helix names), Kick builds rows from whatever's biggest now (a Twitch game list resolved
+    // to nothing on Kick)
     const [topLive, extraRows] = await Promise.all([
       this.fetchTopLive(),
       isKick()
@@ -95,8 +84,8 @@ export class HomeFeed {
     this.render();
   }
 
-  /** Kick's home rows: the top KICK_CATEGORY_ROW_COUNT categories by live viewers, one
-   * section each. A category whose fetch fails or is empty is dropped, not shown blank. */
+  // one section per category; a category whose fetch fails or comes back empty is dropped,
+  // not shown blank
   async fetchKickCategoryRows() {
     let games = [];
     try {
@@ -152,8 +141,8 @@ export class HomeFeed {
 
   async hydrateAvatars(streams) {
     // Kick streams carry their avatar inline (kick.rs embeds profile_image_url), so seed
-    // those first, then batch-query Twitch only for missing Twitch ids. kick:* ids must never
-    // reach get_users_info (Helix would 400 the batch).
+    // those first and only batch-query Twitch for missing ids. kick:* ids must never reach
+    // get_users_info or Helix 400s the whole batch
     for (const s of streams) {
       if (s.profile_image_url && !this.avatars.has(s.user_id)) {
         this.avatars.set(s.user_id, s.profile_image_url);
@@ -167,8 +156,8 @@ export class HomeFeed {
       const users = JSON.parse(await invoke("get_users_info", { userIds: missingIds }));
       for (const u of users) this.avatars.set(u.id, u.profile_image_url);
     } catch (err) {
-      // Not fatal - cards fall back to a blank avatar. Usually just not logged in yet
-      // (get_users_info needs auth), expected on first load.
+      // not fatal, cards just fall back to a blank avatar. usually means not logged in yet
+      // (get_users_info needs auth), expected on first load
       console.error("Failed to load home feed avatars:", err);
     }
   }
@@ -193,8 +182,6 @@ export class HomeFeed {
       );
     }
   }
-
-  // --- Carousel ---
 
   buildCarousel(streams) {
     const wrap = document.createElement("div");
@@ -294,8 +281,6 @@ export class HomeFeed {
     card.appendChild(info);
     return card;
   }
-
-  // --- Grid sections ---
 
   buildSection(title, streams, collapsedCount, key) {
     const section = document.createElement("div");
@@ -412,7 +397,6 @@ export class HomeFeed {
   }
 }
 
-/** Helix thumbnail URLs are templates with {width}/{height} placeholders to substitute. */
 function thumbnailUrl(template, width, height) {
   if (!template) return blankAvatarDataUri();
   return template.replace("{width}", String(width)).replace("{height}", String(height));

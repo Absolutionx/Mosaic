@@ -1,6 +1,6 @@
-// Twitch-login -> Kick-slug mapping for failover. The same-name assumption breaks for
-// many streamers (zackrawrr -> asmongold), so it's explicit and user-set (the "Link Kick"
-// control). Stored in localStorage as {twitchLogin: kickSlug}, lowercase.
+// Twitch-login -> Kick-slug mapping for failover. the same-name assumption breaks for
+// plenty of streamers (zackrawrr -> asmongold), so it's explicit and user-set via the
+// "Link Kick" control. stored in localStorage as {twitchLogin: kickSlug}, lowercase
 
 const STORAGE_KEY = "kickAliases";
 
@@ -17,20 +17,17 @@ function write(map) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
   } catch {
-    // Quota failure - worst case the alias doesn't survive a restart.
+    // quota failure, worst case the alias doesn't survive a restart
   }
 }
 
 const SLUG_RE = /^[a-z0-9_-]+$/;
 
-/** The stored Kick slug for a Twitch login, or null. */
 export function getKickAlias(twitchLogin) {
   const key = String(twitchLogin || "").toLowerCase();
   return read()[key] || null;
 }
 
-/** Set (or clear, with an empty slug) the Kick slug for a Twitch login.
- *  @returns {boolean} whether the value was accepted. */
 export function setKickAlias(twitchLogin, kickSlug) {
   const key = String(twitchLogin || "").toLowerCase();
   if (!key) return false;
@@ -47,8 +44,8 @@ export function setKickAlias(twitchLogin, kickSlug) {
   return true;
 }
 
-/** The Kick slug for a Twitch login: the alias if set, else the login itself. Every Kick
- *  lookup keyed by a Twitch name should go through this. */
+// alias if set, else the login itself. every kick lookup keyed by a Twitch name
+// should go through here
 export function kickSlugFor(twitchLogin) {
   return getKickAlias(twitchLogin) || String(twitchLogin || "").toLowerCase();
 }

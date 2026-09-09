@@ -1,6 +1,6 @@
-// The strip below the player (avatar, name, title, game, viewers, tags) plus the in-video
-// overlay. Owns its DOM/caches; watchChannel/switchPage/setStatus are injected via
-// initChannelInfoBar() to avoid a circular import.
+// the strip below the player (avatar, name, title, game, viewers, tags) plus the in-video
+// overlay. owns its DOM/caches; watchChannel/switchPage/setStatus are injected via
+// initChannelInfoBar() to avoid a circular import
 
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -11,31 +11,26 @@ import { updateDropsBanner } from "./drops-banner.js";
 import { formatViewerCount } from "./format.js";
 import { session } from "./session.js";
 
-// --- Injected app-shell collaborators (see initChannelInfoBar) ---
 let watchChannel = () => {};
 let switchPage = () => {};
 let setStatus = () => {};
 
-/** Wires up the app-shell functions this module needs. Called once from main.js at startup,
- *  before any bar button can be clicked. */
+// call once from main.js at startup, before any bar button can be clicked
 export function initChannelInfoBar(deps) {
   watchChannel = deps.watchChannel;
   switchPage = deps.switchPage;
   setStatus = deps.setStatus;
 }
 
-/** Runs after refreshKickAliasBtn() re-evaluates the alias button's visibility, so main.js's
- *  dev "Test failover" button can track it. */
+// runs after refreshKickAliasBtn() re-evaluates the alias button, so main.js's dev "Test failover" button can track it
 let _afterAliasBtnRefresh = () => {};
 export function setAfterAliasBtnRefresh(fn) {
   _afterAliasBtnRefresh = fn;
 }
 
-/** The Kick-alias button, exported only so main.js can hang the dev "Test failover" button
- *  next to it. */
+// exported only so main.js can hang the dev "Test failover" button next to it
 export { channelInfoKickAliasBtn };
 
-// --- DOM ---
 const channelInfoBar = document.getElementById("channel-info-bar");
 const channelInfoAvatar = document.getElementById("channel-info-avatar");
 const channelInfoName = document.getElementById("channel-info-name");
@@ -53,25 +48,15 @@ const streamInfoBadge  = document.getElementById("stream-info-badge");
 const streamInfoTitle  = document.getElementById("stream-info-title");
 const streamInfoMeta  = document.getElementById("stream-info-meta");
 
-// Fills the space below #video-frame when not in theater mode (see #channel-info-bar in
-// index.html).
-/** @type {Map<string, string>} user_id -> profile_image_url, cached like the other avatar
- *  maps so returning to a channel doesn't refetch. */
+// cached like the other avatar maps so returning to a channel doesn't refetch
 const channelInfoAvatars = new Map();
 
-/** user_id -> broadcaster_type, populated alongside channelInfoAvatars so the partner badge
- *  needs no extra fetch. Used by the stream-info overlay. */
+// populated alongside channelInfoAvatars so the partner badge needs no extra fetch
 const channelBroadcasterTypes = new Map();
 let channelInfoRefreshTimer = null;
-// Last (channel, stream) the bar rendered with, so resyncChannelInfoBarVisibility() can
-// cheaply re-show/hide it on navigation without a full re-render (only needed when the data
-// changes).
+// last (channel, stream) the bar rendered with, so resync can re-show/hide cheaply without a full re-render
 let lastChannelInfo = null;
 
-/**
- * Populates the video-overlay stream info card (avatar, name, title, game + viewers). Shows
- * when controls are visible; hides via .empty when called with no live stream.
- */
 export function updateStreamInfoOverlay(channel, stream, avatarUrl, broadcasterType) {
   if (!stream || !channel) {
     streamInfoOverlay.classList.add("empty");
@@ -79,33 +64,28 @@ export function updateStreamInfoOverlay(channel, stream, avatarUrl, broadcasterT
   }
   streamInfoAvatar.src = avatarUrl || blankAvatarDataUri();
   streamInfoName.textContent = stream.user_name || channel;
-  // Partner badge: only for verified partners (broadcaster_type="partner").
+  // only for verified partners (broadcaster_type="partner")
   streamInfoBadge.style.display =
     broadcasterType === "partner" ? "inline-block" : "none";
   streamInfoTitle.textContent = stream.title || "";
   const gamePart    = stream.game_name ? `Playing ${stream.game_name}` : "";
-  // Full comma-formatted number ("4,373 viewers") like Twitch's overlay, vs the abbreviated
-  // "4.4K" in the tighter info bar.
+  // full comma-formatted number ("4,373 viewers") like Twitch's overlay, vs the abbreviated "4.4K" in the tighter bar
   const viewerPart  =
     typeof stream.viewer_count === "number"
       ? `${stream.viewer_count.toLocaleString()} viewers`
       : "";
-  // Mirrors "Playing X for N viewers".
   streamInfoMeta.textContent =
     gamePart && viewerPart ? `${gamePart} for ${viewerPart}` :
     gamePart || viewerPart;
   streamInfoOverlay.classList.remove("empty");
 }
 
-/**
- * Populates the info bar for `channel` and shows/hides it. `stream` may be null (offline or
- * a failed lookup) - the bar still shows what's knowable (name, Follow/Subscribe) but omits
- * viewer count/title/tags rather than faking them. Callable BEFORE start_stream resolves; see
- * resyncChannelInfoBarVisibility() for why visibility gates on session.intendedChannel.
- */
+// stream may be null (offline or a failed lookup): the bar still shows what's knowable
+// (name, Follow/Subscribe) but omits viewer count/title/tags rather than faking them. callable
+// BEFORE start_stream resolves, which is why visibility gates on session.intendedChannel (see resync)
 export async function updateChannelInfoBar(channel, stream) {
   lastChannelInfo = { channel, stream };
-  // Both platforms offer Videos now; belt-and-braces in case any path hides it.
+  // both platforms offer Videos now, belt-and-braces in case any path hid it
   channelInfoVideosBtn.style.display = "";
 
   channelInfoName.textContent = (stream && stream.user_name) || channel;
@@ -117,14 +97,13 @@ export async function updateChannelInfoBar(channel, stream) {
 
   const channelUrl = `https://www.twitch.tv/${encodeURIComponent(channel)}`;
   channelInfoFollowBtn.href = channelUrl;
-  // A preceding Kick session may have left this "Following" - on Twitch it's a plain
-  // link-out, always "Follow".
+  // a preceding Kick session may have left this "Following", on Twitch it's a plain link-out, always "Follow"
   channelInfoFollowBtn.textContent = "Follow";
   channelInfoFollowBtn.classList.remove("is-following");
   channelInfoSubscribeBtn.href = channelUrl;
-  // Sync "Link Kick" to THIS channel's alias (and re-show it - the Kick populator hides it).
-  // Without the per-channel refresh the label followed you across channels and a fresh channel
-  // showed the default even with an alias saved.
+  // sync "Link Kick" to THIS channel's alias (and re-show it, the Kick populator hides it).
+  // without the per-channel refresh the label followed you across channels and a fresh channel
+  // showed the default even with an alias saved
   refreshKickAliasBtn(channel);
 
   channelInfoTags.innerHTML = "";
@@ -144,29 +123,26 @@ export async function updateChannelInfoBar(channel, stream) {
     channelInfoTags.appendChild(tag);
   }
 
-  // Show the cached avatar for this broadcaster immediately, else blank rather than keeping
-  // the previous channel's. Check both the id-keyed (live) and login-keyed (offline) entries.
+  // show the cached avatar for this broadcaster immediately, else blank rather than keeping the
+  // previous channel's. check both the id-keyed (live) and login-keyed (offline) entries
   channelInfoAvatar.src =
     (stream && stream.user_id && channelInfoAvatars.get(stream.user_id)) ||
     channelInfoAvatars.get(`login:${channel}`) ||
     blankAvatarDataUri();
 
-  // Sync the video overlay immediately with whatever we have cached.
   updateStreamInfoOverlay(
     channel, stream,
     channelInfoAvatar.src,
     (stream?.user_id && channelBroadcasterTypes.get(stream.user_id)) || "",
   );
 
-  // Everything above is synchronous - resync visibility now, BEFORE the avatar fetch, so the
-  // bar appears with name/title/viewers instantly. It used to be the last line (after
-  // get_users_info), which held the whole bar behind that fetch; the avatar can arrive later
-  // into an already-visible bar.
+  // everything above is synchronous, so resync visibility now, BEFORE the avatar fetch, so the
+  // bar appears with name/title/viewers instantly. it used to be the last line (after
+  // get_users_info), which held the whole bar behind that fetch
   resyncChannelInfoBarVisibility();
 
-  // Avatar fetch: live -> stream.user_id via get_users_info (batch); offline -> only the
-  // login, via get_user_by_login. Cached under "login:<channel>" (distinct from the id-keyed
-  // entry) so both can coexist.
+  // live -> stream.user_id via get_users_info (batch); offline -> only the login, via
+  // get_user_by_login. cached under "login:<channel>" (distinct from the id-keyed entry) so both coexist
   const cacheKey   = (stream && stream.user_id) ? stream.user_id : `login:${channel}`;
   const alreadyHas = channelInfoAvatars.has(cacheKey);
 
@@ -185,12 +161,11 @@ export async function updateChannelInfoBar(channel, stream) {
       }
       if (url) {
         channelInfoAvatars.set(cacheKey, url);
-        // Only apply if this is still the intended channel - this is the tail of an await, and
-        // session.intendedChannel (set synchronously in watchChannel) is the current truth,
-        // unlike currentChannel (not set until start_stream resolves) or lastChannelInfo.
+        // only apply if this is still the intended channel: this is the tail of an await, and
+        // session.intendedChannel (set synchronously in watchChannel) is the current truth, unlike
+        // currentChannel (not set until start_stream resolves) or lastChannelInfo
         if (session.intendedChannel === channel) {
           channelInfoAvatar.src = url;
-          // Update overlay with the now-resolved avatar and partner badge.
           updateStreamInfoOverlay(channel, stream, url, broadcasterType);
         }
       }
@@ -200,18 +175,15 @@ export async function updateChannelInfoBar(channel, stream) {
   }
 }
 
-/**
- * Kick counterpart of updateChannelInfoBar: fills the SAME bar + overlay from KickLiveInfo,
- * no Twitch lookups. Follow/Subscribe link out to kick.com (real actions need scopes this app
- * lacks); Videos opens the same in-app VODs page (kick_channel_videos).
- */
+// Kick counterpart of updateChannelInfoBar: fills the SAME bar + overlay from KickLiveInfo, no
+// Twitch lookups. Follow/Subscribe link out to kick.com (real actions need scopes this app
+// lacks); Videos opens the same in-app VODs page (kick_channel_videos)
 export function updateKickChannelInfoBar(channel, info) {
   lastChannelInfo = {
     channel,
     stream: null,
     kick: true,
-    // Clean value for the Follow toggle to cache - channelInfoName.textContent isn't usable
-    // (the verified checkmark is appended inside that span, so it reads "Name✓").
+    // channelInfoName.textContent isn't usable, the verified checkmark is appended inside that span so it reads "Name✓"
     displayName: info.display_name || channel,
     avatar: info.avatar || "",
   };
@@ -226,32 +198,28 @@ export function updateKickChannelInfoBar(channel, info) {
   }
   channelInfoTitle.textContent = info.title || "";
 
-  // Viewer count only - Kick's follower count was noise next to the live number.
+  // viewer count only, Kick's follower count was noise next to the live number
   channelInfoViewers.textContent =
     typeof info.viewer_count === "number"
       ? `${formatViewerCount(info.viewer_count)} viewers`
       : "";
 
   const channelUrl = `https://kick.com/${encodeURIComponent(channel)}`;
-  // Aliases pair a Twitch channel to a Kick one - nothing to link on a Kick session, so hide
-  // it; refreshKickAliasBtn re-shows it for a Twitch channel.
+  // aliases pair a Twitch channel to a Kick one, nothing to link on a Kick session, so hide it
   channelInfoKickAliasBtn.style.display = "none";
   _afterAliasBtnRefresh(); // hide the dev "Test failover" button too on Kick sessions
-  // On Kick, Follow is a REAL in-app toggle (local list -> sidebar Following), not a
-  // link-out - see the click handler. href kept on the channel page so middle-click/copy work.
+  // on Kick, Follow is a REAL in-app toggle (local list -> sidebar Following), not a link-out. href kept so middle-click/copy work
   channelInfoFollowBtn.href = channelUrl;
   const followed = isKickFollowed(channel);
   channelInfoFollowBtn.textContent = followed ? "Following" : "Follow";
   channelInfoFollowBtn.classList.toggle("is-following", followed);
   channelInfoSubscribeBtn.href = channelUrl;
-  // Videos is offered on Kick too: same in-app VODs page, fetched from Kick's channel-videos
-  // listing (kick_channel_videos).
+  // same in-app VODs page, fetched from kick_channel_videos
   channelInfoVideosBtn.style.display = "";
 
   channelInfoTags.innerHTML = "";
   if (info.category) {
-    // The category gets the accent-filled treatment (like the Drops tag) since it's the pill
-    // people scan for - mirrors the site putting the category first, in green.
+    // the category gets the accent-filled treatment since it's the pill people scan for, mirroring the site putting it first in green
     const cat = document.createElement("span");
     cat.className = "channel-info-tag channel-info-category-tag";
     cat.textContent = info.category;
@@ -272,8 +240,7 @@ export function updateKickChannelInfoBar(channel, info) {
 
   channelInfoAvatar.src = info.avatar || blankAvatarDataUri();
 
-  // Video overlay: synthesize the Helix-ish shape it expects. Kick's verified checkmark maps
-  // onto the overlay's partner badge slot.
+  // synthesize the Helix-ish shape the overlay expects. Kick's verified checkmark maps onto the overlay's partner badge slot
   updateStreamInfoOverlay(
     channel,
     {
@@ -289,8 +256,7 @@ export function updateKickChannelInfoBar(channel, info) {
   resyncChannelInfoBarVisibility();
 }
 
-/** Kick states language as a word ("English") or sometimes an ISO code ("en") - expand
- *  codes, pass words through. */
+// Kick states language as a word ("English") or sometimes an ISO code ("en"), expand codes, pass words through
 export function languageLabel(lang) {
   const s = String(lang).trim();
   if (!s) return "";
@@ -302,13 +268,8 @@ export function languageLabel(lang) {
   }
 }
 
-/**
- * Keeps the viewer count fresh while watching, on the home feed's 60s cadence - else the bar
- * would freeze at the playback-start count.
- * @param {string} channel
- * @param {() => boolean} isStillCurrent - re-checked each tick; the caller owns "still
- *   watching this channel" (depends on playback state this module can't see).
- */
+// keeps the viewer count fresh while watching, on the home feed's 60s cadence, else the bar
+// would freeze at the playback-start count. isStillCurrent is re-checked each tick
 export function startChannelInfoRefresh(channel, isStillCurrent) {
   if (channelInfoRefreshTimer) clearInterval(channelInfoRefreshTimer);
   channelInfoRefreshTimer = setInterval(() => {
@@ -329,29 +290,27 @@ export function hideChannelInfoBar() {
   }
 }
 
-// Re-show/hide the bar from its last render, no re-fetch. Gated on session.intendedChannel
+// re-show/hide the bar from its last render, no re-fetch. gated on session.intendedChannel
 // (set synchronously in watchChannel), not session.playing (only true once start_stream
-// resolves), which would hold the bar behind the launch wait. No-op if nothing rendered.
+// resolves), which would hold the bar behind the launch wait
 export function resyncChannelInfoBarVisibility() {
   if (!lastChannelInfo) return;
   channelInfoBar.style.display = session.intendedChannel !== null && !session.pageVisible ? "flex" : "none";
 }
 
-/** 1x1 transparent pixel, so the avatar <img> never shows a broken-image icon while loading
- *  or absent - same fallback as home/browse/sidebar. */
+// 1x1 transparent pixel so the avatar <img> never shows a broken-image icon while loading or absent
 export function blankAvatarDataUri() {
   return "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 }
 
-// Same "intercept the click, call openUrl()" as dropsBannerLink (target="_blank" does
-// nothing in a Tauri webview). Both just link out to the channel page - see the CSS comment
-// for why these aren't real Follow/Subscribe actions (the OAuth scope lacks write perms).
+// same intercept-the-click, call openUrl() as dropsBannerLink (target="_blank" does nothing in
+// a Tauri webview). both just link out to the channel page, the OAuth scope lacks write perms
+// for real Follow/Subscribe actions
 for (const btn of [channelInfoFollowBtn, channelInfoSubscribeBtn]) {
   btn.addEventListener("click", (e) => {
     e.preventDefault();
-    // Kick sessions: Follow is an in-app toggle (local list; sidebar re-renders via
-    // onKickFollowsChange). Subscribe still links out (no local paid-sub equivalent); Twitch
-    // keeps both as link-outs.
+    // Kick sessions: Follow is an in-app toggle (local list, sidebar re-renders via
+    // onKickFollowsChange). Subscribe still links out (no local paid-sub equivalent); Twitch keeps both as link-outs
     if (btn === channelInfoFollowBtn && lastChannelInfo?.kick) {
       const slug = lastChannelInfo.channel;
       const nowFollowed = toggleKickFollow(slug, {
@@ -368,13 +327,12 @@ for (const btn of [channelInfoFollowBtn, channelInfoSubscribeBtn]) {
   });
 }
 
-/** "Link Kick" (Twitch bar): shows/edits this channel's Kick failover alias. Label reflects
- *  state ("Link Kick" unset, "Kick: <slug>" set). Click swaps it for an inline input: Enter
- *  saves (empty clears), Escape cancels, blur commits (window.prompt is unreliable in Tauri). */
+// "Link Kick" (Twitch bar): shows/edits this channel's Kick failover alias, label reflects
+// state. click swaps it for an inline input: Enter saves (empty clears), Escape cancels, blur
+// commits (window.prompt is unreliable in Tauri)
 export function refreshKickAliasBtn(channel) {
-  // Mid-edit: leave it alone - the bar re-populates on a 60s timer, and yanking the button
-  // back next to the open editor would be worse than a one-tick-stale label. finish() re-runs
-  // this.
+  // mid-edit: leave it alone. the bar re-populates on a 60s timer, and yanking the button back
+  // next to the open editor would be worse than a one-tick-stale label. finish() re-runs this
   if (channelInfoKickAliasBtn.nextElementSibling?.classList?.contains("channel-info-alias-input")) {
     return;
   }
@@ -388,7 +346,7 @@ export function refreshKickAliasBtn(channel) {
 channelInfoKickAliasBtn.addEventListener("click", () => {
   if (!lastChannelInfo || lastChannelInfo.kick) return;
   const channel = lastChannelInfo.channel;
-  // Already editing? (input present right after the button)
+  // already editing? (input present right after the button)
   if (channelInfoKickAliasBtn.nextElementSibling?.classList?.contains("channel-info-alias-input")) {
     return;
   }
@@ -427,17 +385,15 @@ channelInfoKickAliasBtn.addEventListener("click", () => {
   input.addEventListener("blur", () => finish(true));
 });
 
-// Videos button: open the in-app VODs page for the playing channel.
 channelInfoVideosBtn.addEventListener("click", () => {
   if (!lastChannelInfo) return;
   const channel = lastChannelInfo.channel;
   session.vodsChannel = channel;
-  // Which platform's listing: the Kick bar stamps lastChannelInfo.kick, the Twitch bar
-  // doesn't. Remembered in session.vodsChannelIsKick so later re-opens fetch from the right
-  // place.
+  // the Kick bar stamps lastChannelInfo.kick, the Twitch bar doesn't. remembered in
+  // session.vodsChannelIsKick so later re-opens fetch from the right place
   session.vodsChannelIsKick = Boolean(lastChannelInfo.kick);
   switchPage("vods");
 });
 
-// target="_blank" does nothing in a Tauri webview - intercept the click and call openUrl().
-// The href stays set (in updateDropsBanner) so it's a real, copyable <a>.
+// target="_blank" does nothing in a Tauri webview, so intercept the click and call openUrl().
+// the href stays set (in updateDropsBanner) so it's a real, copyable <a>

@@ -1,11 +1,11 @@
-// Part of TwitchChat (see ../chat.js): the emote picker - a composer button (#chat-emote-btn) opening a searchable grid of every available emote (Twitch/Kick global + 7TV/BTTV/FFZ), with a provider tab bar. Mixin merged onto
-// TwitchChat.prototype, so `this` is the chat instance; split by feature for readability.
-// Reads this.sevenTvEmotes / this.twitchNativeEmotes fresh each render rather than
-// snapshotting: those maps change live and the picker is only open briefly.
+// the emote picker: a composer button (#chat-emote-btn) opening a searchable grid of every
+// available emote (Twitch/Kick global + 7TV/BTTV/FFZ) with a provider tab bar. mixed onto
+// TwitchChat (see ../chat.js). reads this.sevenTvEmotes / this.twitchNativeEmotes fresh each
+// render rather than snapshotting, since those maps change live and the picker is open briefly
 
-/** Tab bars along the picker bottom - "All" plus one per source, PER PLATFORM: the last
- *  tab is the platform's native global set (Twitch chat gets "Twitch", Kick "Kick"). Order
- *  mirrors reach: channel emotes first, then the three providers, then native globals last. */
+// "All" plus one tab per source, per platform: the last tab is the platform's native global
+// set (Twitch chat gets "Twitch", Kick "Kick"). order mirrors reach: channel emotes first,
+// then the three providers, then native globals last
 const EMOTE_PICKER_TABS_TWITCH = [
   { id: "all", label: "All" },
   { id: "channel", label: "Channel" },
@@ -23,8 +23,7 @@ const EMOTE_PICKER_TABS_KICK = [
   { id: "kick", label: "Kick" },
 ];
 
-/** Section labels above each provider's grid in the "All" tab - distinct from the tab
- *  labels since a header reads better with more context ("7TV Global" vs "7TV"). */
+// section headers read better with more context than the tab labels ("7TV Global" vs "7TV")
 const EMOTE_PICKER_SECTIONS = {
   channel: "Channel Emotes",
   seventv: "7TV Global",
@@ -40,28 +39,26 @@ function bucketForProvider(provider) {
   if (provider === "seventv-global") return "seventv";
   if (provider === "bttv-global") return "bttv";
   if (provider === "ffz-global") return "ffz";
-  // Kick's Global + Emoji sets get their own shelf, like Twitch's native globals -
-  // previously folded into "channel", which bloated that bucket and took the Kick tab slot.
+  // Kick's Global + Emoji sets get their own shelf, like Twitch's native globals. folding them
+  // into "channel" (the old way) bloated that bucket and stole the Kick tab slot
   if (provider === "kick-global") return "kick";
   return null;
 }
 
 export const chatEmotePickerMixin = {
-  /** Wires up the button + flyout. Called once from the constructor. */
   _initEmotePicker() {
     this.emoteBtn = this._emoteBtnEl;
     this._emotePickerMenu = this._emotePickerMenuEl;
     this._emotePickerTab = "all";
     this._emotePickerSearch = "";
-    if (!this.emoteBtn || !this._emotePickerMenu) return; // absent in tests/older markup; call sites guard on this.emoteBtn
+    if (!this.emoteBtn || !this._emotePickerMenu) return; // absent in tests/older markup, call sites guard on this.emoteBtn
 
     this.emoteBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this._toggleEmotePicker();
     });
 
-    // Outside click closes it (like quality-menu/user-menu). On mousedown so it fires before
-    // a composer click would re-focus.
+    // on mousedown so it fires before a composer click would re-focus
     document.addEventListener("mousedown", (e) => {
       if (!this._emotePickerMenu.classList.contains("open")) return;
       if (this._emotePickerMenu.contains(e.target)) return;
@@ -75,7 +72,7 @@ export const chatEmotePickerMixin = {
       }
     });
 
-    // Keep it pinned above the composer on resize, like the other flyouts.
+    // keep it pinned above the composer on resize, like the other flyouts
     window.addEventListener("resize", () => this._repositionEmotePicker());
   },
 
@@ -86,7 +83,7 @@ export const chatEmotePickerMixin = {
 
   _openEmotePicker() {
     if (!this.emoteBtn || this.emoteBtn.disabled) return;
-    // Only one flyout above the composer at a time - close any open autocomplete first.
+    // only one flyout above the composer at a time, close any open autocomplete first
     this._hideEmotePopup();
     this._emotePickerMenu.classList.add("open");
     this.emoteBtn.classList.add("open");
@@ -102,21 +99,17 @@ export const chatEmotePickerMixin = {
   _repositionEmotePicker() {
     const menu = this._emotePickerMenu;
     if (!menu || !this.inputEl || !menu.classList.contains("open")) return;
-    // Anchor to the whole input row (not just the textarea) so the panel matches the
-    // composer's width and the Send button's right edge.
+    // anchor to the whole input row, not just the textarea, so it matches the composer width and Send's right edge
     const rect = (this.inputEl.closest(".chat-input-row, .multiview-chat-input-row") || this.inputEl).getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) { this._closeEmotePicker(); return; }
     const menuHeight = menu.offsetHeight || 360;
     menu.style.left = rect.left + "px";
     menu.style.width = rect.width + "px";
-    // Prefer above the composer; if the window's too short, pin near the top instead of
-    // drifting off-screen.
+    // prefer above the composer; if the window's too short, pin near the top instead of drifting off-screen
     const top = rect.top - menuHeight - 6;
     menu.style.top = (top >= 6 ? top : 6) + "px";
   },
 
-  /** Groups every known emote by picker bucket, applying the search filter. Returns
-   * {channel, seventv, bttv, ffz, twitch}, each an array of {name, url} sorted alphabetically. */
   _collectEmotePickerBuckets() {
     const term = this._emotePickerSearch.trim().toLowerCase();
     const buckets = { channel: [], seventv: [], bttv: [], ffz: [], twitch: [], kick: [] };
@@ -125,8 +118,8 @@ export const chatEmotePickerMixin = {
       const bucket = bucketForProvider(entry.provider);
       if (bucket) buckets[bucket].push({ name, url: entry.url });
     }
-    // Twitch native globals belong only in a Twitch chat's picker - the map persists across
-    // a platform swap (loaded once at startup), so gate on the session.
+    // Twitch native globals belong only in a Twitch chat's picker, but the map persists across a
+    // platform swap (loaded once at startup), so gate on the session
     if (!this._isKickChat) {
       for (const [name, entry] of this.twitchNativeEmotes) {
         if (term && !name.toLowerCase().includes(term)) continue;
@@ -139,8 +132,7 @@ export const chatEmotePickerMixin = {
     return buckets;
   },
 
-  /** Full (re)render: search box, tabs, and grid. Called on open and every tab switch -
-   * cheap enough that a targeted diff isn't worth it. */
+  // cheap enough on open + every tab switch that a targeted diff isn't worth it
   _renderEmotePicker() {
     const menu = this._emotePickerMenu;
     menu.innerHTML = "";
@@ -151,8 +143,8 @@ export const chatEmotePickerMixin = {
     const tabs = document.createElement("div");
     tabs.className = "emote-picker-tabs";
     const tabList = this._isKickChat ? EMOTE_PICKER_TABS_KICK : EMOTE_PICKER_TABS_TWITCH;
-    // The remembered tab can belong to the other platform's bar (used on Twitch, flipped,
-    // reopened on Kick) - snap back to All if its button is gone.
+    // the remembered tab can belong to the other platform's bar (used on Twitch, flipped, reopened
+    // on Kick), so snap back to All if its button is gone
     if (!tabList.some((t) => t.id === this._emotePickerTab)) {
       this._emotePickerTab = "all";
     }
@@ -184,8 +176,8 @@ export const chatEmotePickerMixin = {
       this._emotePickerSearch = search.value;
       this._renderEmoteGrid(gridWrap);
     });
-    // A sibling input, not the composer - Enter shouldn't send the chat message, and other
-    // keys stay local instead of hitting the composer's history/autocomplete.
+    // a sibling input, not the composer: Enter mustn't send the message, and other keys stay local
+    // instead of hitting the composer's history/autocomplete
     search.addEventListener("keydown", (e) => {
       if (e.key === "Escape") { this._closeEmotePicker(); return; }
       e.stopPropagation();
@@ -200,8 +192,6 @@ export const chatEmotePickerMixin = {
     search.focus();
   },
 
-  /** Renders just the grid for the current tab + search term, without touching the
-   * tabs/search box - called on every keystroke and tab switch. */
   _renderEmoteGrid(gridWrap) {
     gridWrap.innerHTML = "";
     const buckets = this._collectEmotePickerBuckets();
@@ -253,8 +243,8 @@ export const chatEmotePickerMixin = {
     }
   },
 
-  /** Inserts `name` at the cursor, padding with spaces only where needed - distinct from
-   * _commitEmoteByName (chat-emotes.js), which REPLACES the partial word being autocompleted. */
+  // pad with spaces only where needed. distinct from _commitEmoteByName (chat-emotes.js), which
+  // REPLACES the partial word being autocompleted
   _insertEmoteAtCursor(name) {
     const input = this.inputEl;
     if (!input) return;
@@ -266,8 +256,7 @@ export const chatEmotePickerMixin = {
     input.value = val.slice(0, pos) + insertText + val.slice(pos);
     const newPos = pos + insertText.length;
     input.setSelectionRange(newPos, newPos);
-    // Fires the "input" listener (chat.js) that toggles .has-text and drives the Send button
-    // - a plain value assignment doesn't dispatch it.
+    // fires the input listener (chat.js) that toggles .has-text and drives Send, a plain assignment doesn't dispatch it
     input.dispatchEvent(new Event("input", { bubbles: true }));
     this._autosizeChatInput();
     input.focus();

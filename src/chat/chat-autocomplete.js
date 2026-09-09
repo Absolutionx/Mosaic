@@ -1,9 +1,7 @@
-// Part of TwitchChat (see ../chat.js): @mention autocomplete - chatter fetching and the username popup. Mixin merged onto
-// TwitchChat.prototype, so `this` is the chat instance; split by feature for readability.
+// @mention autocomplete: chatter fetching + the username popup. mixed onto TwitchChat (see ../chat.js)
 
 import { invoke } from "@tauri-apps/api/core";
 export const chatAutocompleteMixin = {
-  /** Returns the @word under the cursor (including the @), or "". */
   _currentAtWord() {
     const input = this.inputEl;
     if (!input) return { word: "", wordStart: 0, wordEnd: 0 };
@@ -18,9 +16,9 @@ export const chatAutocompleteMixin = {
     return { word, wordStart: start, wordEnd: end };
   },
 
-  // Fetch the full chatter roster (get_chatters) so @mention can suggest silent viewers.
-  // Mod/broadcaster only (else 403), tried from both the room-id and mod-status listeners,
-  // guarded against a duplicate. Errors swallowed.
+  // pull the full chatter roster (get_chatters) so @mention can suggest silent viewers.
+  // mod/broadcaster only (else 403), tried from both the room-id and mod-status listeners
+  // and guarded against a duplicate
   async _maybeFetchChatters() {
     if (!this.roomId || !this.channel) return;
     const isBroadcaster = this.ownLogin && this.ownLogin.toLowerCase() === this.channel;
@@ -34,23 +32,21 @@ export const chatAutocompleteMixin = {
       for (const c of chatters) {
         const login = c.user_login;
         if (!login) continue;
-        // Don't clobber a display-name casing already captured from a real PRIVMSG - the more
-        // "live" source.
+        // don't clobber a display-name casing already captured from a real PRIVMSG, the more live source
         if (!this._chatUsers.has(login.toLowerCase())) {
           this._chatUsers.set(login.toLowerCase(), c.user_name || login);
         }
       }
     } catch (err) {
-      // Expected for a channel the user isn't a mod/broadcaster of (403) - not worth logging.
+      // expected for a channel you aren't a mod/broadcaster of (403), not worth logging
       this._chattersFetchedForChannel = null;
     }
   },
 
-  /** Refreshes the user suggestion popup from the typed @prefix. */
   _updateUserPopup() {
     const { word } = this._currentAtWord();
     if (!word || word.length < 2) { this._hideEmotePopup(); return; }
-    const prefix = word.slice(1).toLowerCase(); // strip leading @
+    const prefix = word.slice(1).toLowerCase();
     const matches = [];
     for (const [login, displayName] of this._chatUsers) {
       if (login.startsWith(prefix)) matches.push(displayName);

@@ -1,11 +1,10 @@
 // VOD seek-bar hover previews from Twitch storyboard sprite sheets (URL via chapters.js).
-// The metadata JSON is quality tiers, each { quality, count, interval, width, height, rows,
+// the metadata JSON is quality tiers, each { quality, count, interval, width, height, rows,
 // cols, images[] }; frames spill across `images` in order, filenames resolved against the
-// JSON's CDN directory.
+// JSON's CDN directory
 
 import { invoke } from "@tauri-apps/api/core";
 
-/** First present, non-null value among a few key spellings. */
 function pick(obj, ...keys) {
   for (const k of keys) {
     if (obj?.[k] !== undefined && obj[k] !== null) return obj[k];
@@ -13,8 +12,6 @@ function pick(obj, ...keys) {
   return undefined;
 }
 
-/** One quality tier's parsed layout, spanning the VOD (count * intervalSec), frames spread
- *  across sprite images in order. */
 class StoryboardTier {
   constructor({ imageUrls, width, height, rows, cols, intervalSec, count }) {
     this.imageUrls = imageUrls;
@@ -28,8 +25,6 @@ class StoryboardTier {
     this.durationSec = count * intervalSec;
   }
 
-  /** Returns {url, width, height, backgroundX, backgroundY} for the frame covering `sec`, or
-   * null past the last frame. */
   frameFor(sec) {
     if (this.imageUrls.length === 0 || sec < 0) return null;
     const frameIndex = Math.min(this.count - 1, Math.floor(sec / this.intervalSec));
@@ -49,8 +44,6 @@ class StoryboardTier {
   }
 }
 
-/** Parses one tier, resolving relative image filenames against baseUrl (same CDN dir).
- *  Returns null if required fields are missing. */
 function parseTier(entry, baseUrl) {
   const width = Number(pick(entry, "width", "frame_width", "frameWidth"));
   const height = Number(pick(entry, "height", "frame_height", "frameHeight"));
@@ -68,29 +61,23 @@ function parseTier(entry, baseUrl) {
   return new StoryboardTier({ imageUrls, width, height, rows, cols, intervalSec, count });
 }
 
-/** Parses the storyboard JSON into tiers, higher quality first - loadVodStoryboard's
- *  frameFor() tries each in order. */
+// higher quality first, frameFor() tries each tier in order
 function parseStoryboardJson(json, baseUrl) {
   const entries = Array.isArray(json) ? json : [json];
   const tiers = entries.map((e) => parseTier(e, baseUrl)).filter(Boolean);
-  // Larger frame area first, so the nicer thumbnail is preferred when multiple tiers
-  // parsed.
+  // larger frame area first, so the nicer thumbnail wins when multiple tiers parsed
   tiers.sort((a, b) => (b.width * b.height) - (a.width * a.height));
   return tiers;
 }
 
-/**
- * Fetches and parses a VOD's storyboard. Returns an object with frameFor(sec) for the seek
- * tooltip, or null out of range. Never throws: any failure resolves to a storyboard whose
- * frameFor() always returns null.
- */
+// never throws: any failure resolves to a storyboard whose frameFor() always returns null
 export async function loadVodStoryboard(seekPreviewsUrl) {
   const empty = { frameFor: () => null };
   if (!seekPreviewsUrl) return empty;
 
   try {
-    // Plain fetch() is blocked by CORS - Twitch's CDN doesn't allow this origin to read the
-    // response. reqwest (Rust) has no CORS, so this sidesteps it like fetch_link_preview.
+    // plain fetch() is blocked by CORS, Twitch's CDN won't let this origin read the response.
+    // reqwest (Rust) has no CORS, so this sidesteps it like fetch_link_preview
     const text = await invoke("fetch_storyboard_json", { url: seekPreviewsUrl });
     const json = JSON.parse(text);
     console.log("[seek-thumbnails] raw storyboard JSON:", JSON.stringify(json));

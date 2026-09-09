@@ -1,5 +1,4 @@
-// Part of TwitchChat (see ../chat.js): emote loading, parsing, rendering, and the autocomplete popup (Twitch/BTTV/7TV). Mixin merged onto
-// TwitchChat.prototype, so `this` is the chat instance; split by feature for readability.
+// emote loading, parsing, rendering, and the autocomplete popup. mixed onto TwitchChat (see ../chat.js)
 import { invoke } from "@tauri-apps/api/core";
 import { SEVENTV_API_BASE, BTTV_API_BASE } from "./shared.js";
 import {
@@ -11,16 +10,15 @@ import {
   isChannelProvider,
 } from "./emote-parsing.js";
 
-// 7TV's zero-width (overlay) flag: bit 8 (256) on the ActiveEmote, NOT bit 1 - a known gotcha
-// (night/betterttv#5925). It can appear on the wrapper's `flags` and/or nested `data.flags`, so OR
-// both. Checking `& 1` means Fog0/CiGrip render side-by-side instead of overlaid.
-const SEVENTV_ZERO_WIDTH_FLAG = 1 << 8; // 256
+// 7TV's zero-width (overlay) flag is bit 8 (256) on the ActiveEmote, NOT bit 1, a known
+// gotcha (night/betterttv#5925). it can appear on the wrapper's `flags` and/or nested
+// `data.flags`, so OR both. checking `& 1` renders Fog0/CiGrip side-by-side instead of overlaid
+const SEVENTV_ZERO_WIDTH_FLAG = 1 << 8;
 const isSevenTvZeroWidth = (emote) =>
   Boolean(((emote?.flags ?? 0) | (emote?.data?.flags ?? 0)) & SEVENTV_ZERO_WIDTH_FLAG);
 
-// BTTV zero-width (overlay) emotes. Unlike 7TV, BTTV's API exposes no per-emote flag, so overlay
-// emotes are recognized by name against this fixed list (as BTTV's own frontend does). Rendered ON
-// TOP of the preceding emote (_overlayZeroWidthEmote in chat.js).
+// unlike 7TV, BTTV exposes no per-emote flag, so overlay emotes are recognized by name
+// against this fixed list (as BTTV's own frontend does), rendered ON TOP of the preceding emote
 const BTTV_ZERO_WIDTH_EMOTES = new Set([
   "SoSnowy",
   "IceCold",
@@ -33,31 +31,26 @@ const BTTV_ZERO_WIDTH_EMOTES = new Set([
 ]);
 
 export const chatEmotesMixin = {
-  /** See emote-parsing.js - kept as methods so render code can keep calling
-   * this.parseTwitchEmotesTag() etc. */
+  // thin wrappers over emote-parsing.js, kept as methods so render code can call this.parseTwitchEmotesTag() etc
   parseTwitchEmotesTag(message, emotesTag) {
     return parseTwitchEmotesTag(message, emotesTag);
   },
 
-  /** See parseCheermoteWord in emote-parsing.js. */
   parseCheermote(word) {
     return parseCheermoteWord(word, this.cheermoteMap);
   },
 
-  /** See parseKickEmoteMarker in emote-parsing.js. */
   parseKickEmoteMarker(word) {
     return parseKickEmoteMarker(word);
   },
 
-  /** See emote-parsing.js. */
   pickEmoteUrl(host) {
     return pickEmoteUrl(host);
   },
 
-  /** Single write-path for every third-party emote (7TV/BTTV/FFZ, global and channel) into
-   * this.sevenTvEmotes. Applies EMOTE_PROVIDER_PRIORITY so a name collision resolves the same way
-   * every session, not by whichever fire-and-forget fetch finished last. A same-provider write always
-   * goes through (a reload or live update, not a collision). */
+  // single write-path for every third-party emote into this.sevenTvEmotes. applies
+  // EMOTE_PROVIDER_PRIORITY so a name collision resolves the same way every session, not by
+  // whichever fire-and-forget fetch finished last. a same-provider write always goes through
   _setEmote(name, entry, provider) {
     const existing = this.sevenTvEmotes.get(name);
     if (existing && existing.provider !== provider &&
@@ -67,9 +60,9 @@ export const chatEmotesMixin = {
     this.sevenTvEmotes.set(name, { ...entry, provider });
   },
 
-  /** Removes channel-level emotes (all providers), keeping globals. connect() clears everything on
-   * a live switch, but setVodMode() only goes through disconnect() (which doesn't), so a VOD opened
-   * after a live channel kept that channel's emotes. Globals are re-fetched anyway (idempotent). */
+  // remove channel-level emotes, keep globals. connect() clears everything on a live switch,
+  // but setVodMode() only goes through disconnect() (which doesn't), so a VOD opened after a
+  // live channel kept that channel's emotes. globals are re-fetched anyway (idempotent)
   _clearChannelEmotes() {
     for (const [name, entry] of this.sevenTvEmotes) {
       if (isChannelProvider(entry.provider)) this.sevenTvEmotes.delete(name);
@@ -97,8 +90,8 @@ export const chatEmotesMixin = {
       const res = await fetch(`${SEVENTV_API_BASE}/users/twitch/${twitchUserId}`);
       if (!res.ok) {
         if (res.status === 404) {
-          // Informational, not a warning - usually the channel just has no 7TV profile (normal). Logged
-          // so a channel emote not rendering can be told from "no 7TV profile" vs a real failure.
+          // informational, not a warning: usually the channel just has no 7TV profile. logged so a
+          // channel emote not rendering can be told from "no 7TV profile" vs a real failure
           console.log(`[7tv] No 7TV profile for user id ${twitchUserId} (404) - channel likely hasn't set one up.`);
         } else {
           console.warn("7TV channel lookup failed:", res.status);
@@ -109,9 +102,9 @@ export const chatEmotesMixin = {
       if (data.emote_set) {
         this.ingestEmoteSet(data.emote_set, "seventv-channel");
         this.systemLine(`Loaded ${data.emote_set.emotes?.length ?? 0} 7TV emotes for this channel.`);
-        // Subscribe to this emote set's changes so mid-stream additions/removals (a channel-points
-        // emote) show live, not just the set at fetch time. data.emote_set.id is the SET's id (distinct
-        // from twitchUserId, which we looked up BY) - what 7TV's EventAPI needs as object_id.
+        // subscribe to this set's changes so mid-stream additions/removals (a channel-points emote)
+        // show live, not just the set at fetch time. emote_set.id is the SET's id (distinct from the
+        // twitchUserId we looked up BY), which is what 7TV's EventAPI needs as object_id
         if (data.emote_set.id) {
           invoke("start_seventv_events", { emoteSetId: data.emote_set.id }).catch((err) => {
             console.warn("Failed to start 7TV live emote updates:", err);
@@ -125,9 +118,8 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** 7TV channel emotes for a KICK channel. 7TV supports Kick first-class - same lookup as the
-   * Twitch one, just /users/kick/{kick user id}. The id is the broadcaster's Kick user id. BTTV/FFZ
-   * have no Kick support, so no Kick counterparts (their globals still load in Kick chat). */
+  // 7TV supports Kick first-class, same lookup as Twitch just /users/kick/{kick user id}.
+  // BTTV/FFZ have no Kick support, so no Kick counterparts (their globals still load in Kick chat)
   async loadSevenTvKickChannelEmotes(kickUserId) {
     try {
       const res = await fetch(`${SEVENTV_API_BASE}/users/kick/${kickUserId}`);
@@ -143,8 +135,7 @@ export const chatEmotesMixin = {
       if (data.emote_set) {
         this.ingestEmoteSet(data.emote_set, "seventv-channel");
         this.systemLine(`Loaded ${data.emote_set.emotes?.length ?? 0} 7TV emotes for this channel.`);
-        // Same live-update subscription as the Twitch loader - the EventAPI is keyed on the SET id,
-        // which is platform-agnostic.
+        // same live-update subscription as the Twitch loader, the EventAPI is keyed on the SET id which is platform-agnostic
         if (data.emote_set.id) {
           invoke("start_seventv_events", { emoteSetId: data.emote_set.id }).catch((err) => {
             console.warn("Failed to start 7TV live emote updates:", err);
@@ -158,9 +149,9 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** The channel's NATIVE Kick emotes (its set + Kick's Global/Emoji sets, via Rust - kick.com is
-   * Cloudflare-fronted). kick_chat.rs flattens inline [emote:id:name] tokens to names; ingesting
-   * name -> CDN-url here turns them back into images in the same render path as every provider. */
+  // the channel's native Kick emotes (its set + Kick's Global/Emoji sets) via Rust, since
+  // kick.com is Cloudflare-fronted. kick_chat.rs flattens inline [emote:id:name] tokens to
+  // names; ingesting name -> CDN-url here turns them back into images in the same render path
   async loadKickNativeEmotes(slug) {
     try {
       const emotes = JSON.parse(await invoke("kick_channel_emotes", { slug }));
@@ -199,8 +190,7 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** Fetches the channel's BTTV emotes (channelEmotes + sharedEmotes). Same numeric-user-id
-   * requirement as loadSevenTvChannelEmotes; 404 just means no BTTV page. */
+  // same numeric-user-id requirement as loadSevenTvChannelEmotes; 404 just means no BTTV page
   async loadBttvChannelEmotes(twitchUserId) {
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/users/twitch/${twitchUserId}`);
@@ -228,9 +218,9 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** Shared ingest for BTTV's cached FFZ endpoints (global and channel), which return FFZ emotes in
-   * a BTTV-like flat array. Using BTTV's mirror keeps all third-party emote traffic on the one API
-   * base known to work from the webview. 2x/4x can be null, so fall through sizes. Returns the count. */
+  // BTTV's cached FFZ endpoints return FFZ emotes in a BTTV-like flat array. using BTTV's
+  // mirror keeps all third-party emote traffic on the one API base known to work from the
+  // webview. 2x/4x can be null, so fall through sizes
   _ingestFfzEmotes(emotes, provider) {
     let count = 0;
     for (const emote of emotes || []) {
@@ -243,9 +233,8 @@ export const chatEmotesMixin = {
     return count;
   },
 
-  /** Fetches FFZ GLOBAL emotes via BTTV's cached mirror. FFZ was previously not loaded at all,
-   * which is why common FFZ emotes rendered as plain text (the LOLW/KEKW cause - both FFZ channel
-   * emotes). */
+  // FFZ was previously not loaded at all, which is why common FFZ emotes (LOLW/KEKW, both FFZ
+  // channel emotes) rendered as plain text
   async loadFfzGlobalEmotes() {
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/frankerfacez/emotes/global`);
@@ -260,8 +249,7 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** Fetches the channel's FFZ emotes via BTTV's cached mirror. Same numeric-id requirement and
-   * 404-is-normal semantics as the other channel loaders. */
+  // same numeric-id requirement and 404-is-normal semantics as the other channel loaders
   async loadFfzChannelEmotes(twitchUserId) {
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/frankerfacez/users/twitch/${twitchUserId}`);
@@ -280,9 +268,9 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** Fetches Twitch's global emotes (Kappa, PogChamp, LUL) via Rust - same WebView2 cross-origin
-   * issue as badges/cheermotes. Populates twitchNativeEmotes, which renderMessageBody() falls back to
-   * when a message lacks an IRC emotes tag, and which autocomplete searches. */
+  // via Rust, same WebView2 cross-origin issue as badges/cheermotes. populates twitchNativeEmotes,
+  // which renderMessageBody() falls back to when a message has no IRC emotes tag, and which
+  // autocomplete searches
   async loadTwitchGlobalEmotes() {
     try {
       const json = await invoke("fetch_global_emotes");
@@ -301,11 +289,7 @@ export const chatEmotesMixin = {
     }
   },
 
-  /**
-   * Parses the Helix /bits/cheermotes response into cheermoteMap.
-   * Shape: { data: [{ prefix, tiers: [{ min_bits, color, images, can_cheer }] }] }
-   * Prefers dark/animated/2x images to match the dark theme.
-   */
+  // Helix shape { data: [{ prefix, tiers: [...] }] }. prefers dark/animated/2x images to match the theme
   ingestCheermotes(data) {
     if (!Array.isArray(data?.data)) return;
     for (const cheermote of data.data) {
@@ -323,23 +307,20 @@ export const chatEmotesMixin = {
                 || "",
         }))
         .filter(t => t.url)
-        .sort((a, b) => b.minBits - a.minBits); // descending - see parseCheermote
+        .sort((a, b) => b.minBits - a.minBits); // descending, see parseCheermote
       if (tiers.length) this.cheermoteMap.set(prefix, tiers);
     }
   },
 
-  /** Re-evaluate the current input word and show/hide the emote popup. */
   _updateEmotePopup() {
     const { word } = this._currentEmoteWord();
-    // Trigger on any word of 2+ characters starting with a non-space char.
     if (!word || word.length < 2) {
       this._hideEmotePopup();
       return;
     }
     const lower = word.toLowerCase();
-    // Collect emote names containing the typed fragment (case-insensitive), prefix matches first,
-    // capped at 12. Same platform gate as the picker: Twitch native globals aren't suggestable in a
-    // Kick chat (they'd send text that renders unresolved for everyone).
+    // prefix matches first, capped at 12. same platform gate as the picker: Twitch native globals
+    // aren't suggestable in a Kick chat (they'd send text that renders unresolved for everyone)
     const all = this._isKickChat
       ? [...this.sevenTvEmotes.keys()]
       : [...this.sevenTvEmotes.keys(), ...this.twitchNativeEmotes.keys()];
@@ -355,10 +336,6 @@ export const chatEmotesMixin = {
     this._showEmotePopup(matches);
   },
 
-  /**
-   * Returns { word, wordStart, wordEnd } for the word under the cursor, or empty values if on
-   * whitespace.
-   */
   _currentEmoteWord() {
     const input = this.inputEl;
     if (!input) return { word: "", wordStart: 0, wordEnd: 0 };
@@ -410,18 +387,18 @@ export const chatEmotesMixin = {
     }
     popup.style.display = "block";
 
-    // Position the popup fixed above the input, after display:block so it has a measurable height.
+    // after display:block so it has a measurable height
     this._repositionPopup();
 
-    // Select first item by default so Tab/Enter immediately commits.
+    // select the first item so Tab/Enter immediately commits
     this._setEmoteSelection(0);
   },
 
   _repositionPopup() {
     if (!this.inputEl || this._emotePopup.style.display === "none") return;
     const rect = this.inputEl.getBoundingClientRect();
-    // If the input is hidden or not laid out, its rect is zero-sized - positioning at (0,0) would
-    // strand the popup in the top-left over the nav bar.
+    // if the input is hidden or not laid out its rect is zero-sized, and positioning at (0,0)
+    // would strand the popup in the top-left over the nav bar
     if (rect.width === 0 || rect.height === 0) {
       this._hideEmotePopup();
       return;
@@ -430,7 +407,7 @@ export const chatEmotesMixin = {
     this._emotePopup.style.position = "fixed";
     this._emotePopup.style.left = rect.left + "px";
     this._emotePopup.style.width = rect.width + "px";
-    // Prefer above the input; fall back to below if not enough room.
+    // prefer above the input, fall back to below if there's not enough room
     if (rect.top - popupHeight - 6 >= 0) {
       this._emotePopup.style.top = (rect.top - popupHeight - 6) + "px";
       this._emotePopup.style.bottom = "";
@@ -472,16 +449,15 @@ export const chatEmotesMixin = {
     if (!input) return;
     const { wordStart, wordEnd } = this._currentEmoteWord();
     const val = input.value;
-    // Replace the partial word with the full emote name + trailing space.
     input.value = val.slice(0, wordStart) + name + " " + val.slice(wordEnd);
     this._autosizeChatInput();
     const newPos = wordStart + name.length + 1;
     input.setSelectionRange(newPos, newPos);
     this._hideEmotePopup();
     input.focus();
-    // Previously re-ran _updateEmotePopup() here, but that's the auto-open behavior this feature was
-    // changed to NOT do (see the Tab handler) - the cursor now sits after a trailing space, so this would
-    // risk reopening suggestions with no Tab press. Opening happens only via Tab now.
+    // used to re-run _updateEmotePopup() here, but that's the auto-open behavior this feature was
+    // changed to NOT do: the cursor now sits after a trailing space, so it risked reopening
+    // suggestions with no Tab press. opening happens only via Tab now
   },
 
   ingestEmoteSet(emoteSet, provider) {
@@ -490,8 +466,7 @@ export const chatEmotesMixin = {
       const host = emote.data?.host;
       const url = this.pickEmoteUrl(host);
       if (!url) {
-        // Rare - most emotes have a valid host.url. Logged once per emote (not spammed) so a missing
-        // emote can be identified instead of silently dropped.
+        // rare, most emotes have a valid host.url. logged once per emote so a missing one can be identified, not silently dropped
         console.warn(`[7tv] Skipping emote "${emote.name}" - no usable host.url. host:`, JSON.stringify(host));
         continue;
       }
@@ -502,9 +477,8 @@ export const chatEmotesMixin = {
     }
   },
 
-  /** Handles a live seventv-emote-set-update push (seventv_events.rs) for the watched channel's set
-   * - the real-time counterpart to the one-time fetch at join. `payload.added` entries are individual
-   * emote objects (flat, not wrapped), merged directly; `payload.removed` entries need only `.name`. */
+  // real-time counterpart to the one-time fetch at join. payload.added entries are individual
+  // emote objects (flat, not wrapped) merged directly; payload.removed entries need only .name
   _applySevenTvEmoteSetUpdate(payload) {
     const added = Array.isArray(payload?.added) ? payload.added : [];
     const removed = Array.isArray(payload?.removed) ? payload.removed : [];
@@ -522,16 +496,15 @@ export const chatEmotesMixin = {
       }, "seventv-channel");
     }
     for (const emote of removed) {
-      // Only delete if this provider owns it - a same-named emote from another provider (which
-      // _setEmote's precedence may have let 7TV shadow) shouldn't vanish because 7TV removed ITS emote.
-      // The shadowed one isn't restored until its loader next runs (channel switch) - accepted as rare.
+      // only delete if this provider owns it: a same-named emote from another provider (which
+      // _setEmote's precedence may have let 7TV shadow) shouldn't vanish because 7TV removed ITS
+      // emote. the shadowed one isn't restored until its loader next runs (channel switch), accepted as rare
       if (emote.name && this.sevenTvEmotes.get(emote.name)?.provider === "seventv-channel") {
         this.sevenTvEmotes.delete(emote.name);
       }
     }
 
-    // Mirrors the systemLine() loadSevenTvChannelEmotes() posts on initial load, so a temporary emote
-    // appearing/disappearing mid-stream is as visible in chat as the batch load was.
+    // mirrors the systemLine() the initial load posts, so a temporary emote appearing/disappearing mid-stream is as visible as the batch load
     for (const emote of added) {
       if (emote.name) this.systemLine(`7TV emote added: ${emote.name}`);
     }

@@ -1,11 +1,10 @@
-// Part of TwitchChat (see ../chat.js): moderation (delete, timeout, ban) and slash-command
-// equivalents. Need this.roomId and the target user id; disabled (not hidden) for non-mods
-// and self-targeting (Helix would 400). Mixin on TwitchChat.prototype.
+// moderation (delete, timeout, ban) and slash-command equivalents. mixed onto TwitchChat
+// (see ../chat.js). needs this.roomId and the target user id; disabled, not hidden, for
+// non-mods and self-targeting (Helix would 400)
 
 import { invoke } from "@tauri-apps/api/core";
 export const chatModActionsMixin = {
-  /** True if `text` was a recognized command (handled - success or failure both count, so
-   * it isn't also sent as a message). False for unrecognized /input. */
+  // handled means success or failure both count, so it isn't also sent as a plain message
   async _tryHandleSlashCommand(text) {
     const parts = text.slice(1).split(/\s+/).filter(Boolean);
     const cmd = (parts.shift() || "").toLowerCase();
@@ -18,8 +17,7 @@ export const chatModActionsMixin = {
       case "timeout":
         return this._slashTimeout(parts);
       case "untimeout":
-        // Twitch's /untimeout just lifts the active restriction early - same DELETE .../bans as
-        // /unban; Helix has no timeout-vs-ban distinction once in effect.
+        // /untimeout just lifts the restriction early, same DELETE .../bans as /unban, Helix has no timeout-vs-ban distinction once in effect
         return this._slashUnban(parts);
       case "clear":
         return this._slashClear();
@@ -28,8 +26,6 @@ export const chatModActionsMixin = {
     }
   },
 
-  /** Shared "must be a mod, must have a roomId" guard, with one consistent system-line
-   * message for every command that fails it. */
   _requireModForSlashCommand(commandLabel) {
     if (!this.roomId) {
       this.systemLine(`Can't run ${commandLabel}: not connected to a channel.`);
@@ -42,8 +38,6 @@ export const chatModActionsMixin = {
     return true;
   },
 
-  /** Resolves a typed username to a user id via Helix, with one consistent error message on
-   * failure. */
   async _resolveSlashTarget(login, commandLabel) {
     try {
       return await invoke("get_user_id_for_login", { login });
@@ -91,8 +85,7 @@ export const chatModActionsMixin = {
       await invoke("unban_user", { broadcasterId: this.roomId, targetUserId: userId });
       this.systemLine(`${login} has been unbanned.`);
     } catch (err) {
-      // Helix 400s "not banned" when there's nothing to lift (e.g. /untimeout on an expired
-      // timeout) - a common outcome, not a failure. Show a plain info line.
+      // Helix 400s "not banned" when there's nothing to lift (e.g. /untimeout on an expired timeout), a common outcome, not a failure
       if (this._isNotBannedError(err)) {
         this.systemLine(`${login} is not currently banned or timed out.`);
       } else {
@@ -103,9 +96,8 @@ export const chatModActionsMixin = {
     return true;
   },
 
-  /** True if `err` is Helix's "user isn't banned" 400 - shared by /unban and /untimeout.
-   * Matched on the message text, not just the 400 (a 400 could be a malformed id, which
-   * should still show as failure). */
+  // match on the message text, not just the 400, since a 400 could be a malformed id which
+  // should still show as a failure
   _isNotBannedError(err) {
     return /not banned/i.test(String(err));
   },
@@ -116,8 +108,8 @@ export const chatModActionsMixin = {
       this.systemLine("Usage: /timeout <username> [duration] (e.g. /timeout someuser 10m)");
       return true;
     }
-    // Flexible order: whichever token parses as a duration is the duration, the rest is the
-    // username. Twitch's /timeout defaults to 10 minutes.
+    // flexible order: whichever token parses as a duration is the duration, the rest is the
+    // username. /timeout defaults to 10 minutes
     let login = null;
     let durationSeconds = 600;
     let sawDuration = false;
@@ -153,8 +145,7 @@ export const chatModActionsMixin = {
   async _slashClear() {
     if (!this._requireModForSlashCommand("/clear")) return true;
     try {
-      // messageId null clears the ENTIRE room (per Helix), not one message - see
-      // delete_chat_message in main.rs.
+      // messageId null clears the ENTIRE room (per Helix), not one message, see delete_chat_message in main.rs
       await invoke("delete_chat_message", { broadcasterId: this.roomId, messageId: null });
       this.systemLine("Chat has been cleared.");
     } catch (err) {
@@ -164,9 +155,7 @@ export const chatModActionsMixin = {
     return true;
   },
 
-  /** Parses a duration token ("15", "15s", "10m", "2h", "1d") into seconds, or null if it
-   * isn't one (so the caller can tell a duration from an all-digit username). A bare number
-   * is seconds, matching Twitch's /timeout. */
+  // null if it isn't a duration, so the caller can tell a duration from an all-digit username. a bare number is seconds
   _parseDuration(token) {
     const m = /^(\d+)(s|m|h|d|w)?$/i.exec(token);
     if (!m) return null;
@@ -177,16 +166,14 @@ export const chatModActionsMixin = {
     return n * multiplier;
   },
 
-  /** Deletes one message. `btn` is disabled + "..." while in flight so a slow connection
-   * doesn't invite a second click. */
+  // disable the btn while in flight so a slow connection doesn't invite a second click
   async _deleteMessage(msgId, btn) {
     if (!msgId || !this.roomId) return;
     const original = btn.innerHTML;
     btn.disabled = true;
     try {
       await invoke("delete_chat_message", { broadcasterId: this.roomId, messageId: msgId });
-      // No optimistic update - Twitch's CLEARMSG for this deletion arrives over IRC and is
-      // handled centrally in _handleClearMsg(), same as a deletion from any other client.
+      // no optimistic update: Twitch's CLEARMSG for this arrives over IRC and is handled centrally in _handleClearMsg, same as any other client
     } catch (err) {
       console.error("Failed to delete message:", err);
       this.systemLine(`Failed to delete message: ${err}`);
@@ -211,8 +198,8 @@ export const chatModActionsMixin = {
     }
   },
 
-  /** Bans are permanent and easy to misclick, unlike timeout (the picker confirms) or
-   * delete (reversible) - so this is the one mod action with a confirm step. */
+  // bans are permanent and easy to misclick, unlike timeout (the picker confirms) or delete
+  // (reversible), so this is the one mod action with a confirm step
   _confirmAndBan(targetUserId, targetUsername) {
     if (!window.confirm(`Permanently ban ${targetUsername}? This can be undone later via unban.`)) {
       return;
@@ -231,8 +218,7 @@ export const chatModActionsMixin = {
     }
   },
 
-  /** Right-click menu - copy + reply only. Mod actions live in the user card now, matching
-   * Twitch. Rebuilt each right-click since reply depends on isLoggedIn/msgId. */
+  // copy + reply only, mod actions live in the user card now. rebuilt each right-click since reply depends on isLoggedIn/msgId
   _showMessageContextMenu(x, y, line) {
     this._closeMessageContextMenu();
 
