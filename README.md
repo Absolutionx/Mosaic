@@ -58,12 +58,20 @@ Typical memory usage lands around 30MB on Windows.
 ### Chat
 
 - **Full Twitch chat** with send, replies, and a message history.
-- **Emotes from every source**, Twitch (global + channel), 7TV, BTTV, and FFZ,
+- **Emotes from every source**, Twitch (global, channel, and your own
+  subscriber / follower / unlocked / modified emotes), 7TV, BTTV, and FFZ,
   including animated and **zero-width overlay** emotes, plus cheermotes.
 - **Badges** (global and per-channel), with automatic contrast-lightening so
   hard-to-read name colors stay legible on the dark background.
-- **Moderation**, delete, timeout, and ban from a user card or slash commands,
-  shown only when you're a mod/broadcaster of the channel.
+- **Moderation toolkit** (shown only when you're a mod/broadcaster): per-message
+  hover actions (delete, timeout with a duration menu, ban), a user card with
+  timeout presets and ban, and slash commands. A **shield menu** exposes room
+  controls, emote-only, followers-only (with minimum follow time), subscriber-only,
+  slow mode, unique-chat (r9k), and clear chat.
+- **Mod action log**, a live, colour-coded feed of bans, timeouts, and deletions
+  on any channel (with richer "who did what" detail on channels you moderate),
+  plus a **Mod Chat** tab that filters chat down to just moderators and the
+  broadcaster.
 - **AutoMod hold queue**, review, allow, or deny held messages inline.
 - **User cards**, avatar, account age, this session's message log, and mod
   actions, opened by clicking a username.
@@ -71,6 +79,24 @@ Typical memory usage lands around 30MB on Windows.
   and first-time-chatter / mention highlighting.
 - **Kick chat**, read live Kick chat (with Kick's native emotes and badges);
   sending requires an optional Kick login (see [Kick support](#kick-support)).
+
+### Rewards
+
+These use a one-time Twitch **device login** (separate from the main login, done
+in-app the first time you use them).
+
+- **Channel points**, see your balance and **spend it**. Redeem the channel's
+  custom rewards (with a text box where the reward requires input) and Twitch's
+  built-in rewards, Highlight My Message, Unlock a Random Sub Emote (with a reveal
+  of what you got), and an in-app emote picker for Choose / Modify an Emote.
+- **Real-time redemptions**, a PubSub connection surfaces redemptions in chat as
+  they happen (yours and other viewers') and keeps your balance live.
+- **Twitch Drops**, progress accrues while you watch a drops-enabled stream, with
+  in-app claiming and the ability to hide campaigns you don't care about (and
+  restore them later).
+- **Watch streaks**, shown per channel, with one-click share for the bonus.
+- **Song ID**, identify the track currently playing through a built-in
+  fingerprinter (no external service or API key).
 
 ### Discovery
 
@@ -86,13 +112,12 @@ Typical memory usage lands around 30MB on Windows.
 
 ### Quality of life
 
-- **In-app auto-update** on Windows, an "Update available" banner on launch,
-  one click to download and install.
+- **In-app auto-update** on Windows, a compact **Update** button appears in the
+  header when a new version is available, one click to download and install.
 - **Dependency bootstrap**, an in-app banner can install streamlink/ffmpeg for
   you on Windows.
-- **System tray**, a **Drops-enabled banner** (with a link out, since relay
-  playback doesn't accrue Drops, see [Known limitations](#known-limitations)),
-  and a WebView2 sleep/wake surface-recovery fix.
+- **System tray**, a **watch heartbeat** that accrues Drops and channel points
+  while you watch, and a WebView2 sleep/wake surface-recovery fix.
 
 ## Download and install
 
@@ -147,12 +172,12 @@ Playback takes a different path per platform, for good reasons:
 
 ## Known limitations
 
-- **Twitch Drops and Channel Points do not accrue while watching through this
-  app.** Both are tracked by a "minute watched" heartbeat that only the official
-  Twitch player emits. This app plays real video from a real stream, but that
-  specific signal isn't part of what streamlink relays, so Twitch's backend has
-  no way to know you're watching. If a drop matters to you, watch that stream in
-  a browser or the official app instead.
+- **Drops, channel points, and real-time redemptions rely on reverse-engineered
+  Twitch mechanisms**, not official APIs. Accrual is driven by a "minute watched"
+  heartbeat, and live redemptions/balance use Twitch's (now deprecated) PubSub.
+  Both work reliably in testing, but because they aren't officially supported they
+  could break if Twitch changes their backend. These features also need the
+  one-time in-app **device login**.
 - **Live seeking is limited to a rolling ~2 minute buffer** unless the streamer
   has VODs enabled, in which case seeking further back transparently switches to
   hls.js against the in-progress VOD (see the comments above
@@ -199,8 +224,8 @@ npm run tauri build
 ```
 
 Add `-- --bundles nsis` to build only the Windows `.exe` installer. Output lands
-under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_1.2.0_x64-setup.exe`,
-`dmg/Mosaic_1.2.0_aarch64.dmg`).
+under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_1.2.1_x64-setup.exe`,
+`dmg/Mosaic_1.2.1_aarch64.dmg`).
 
 > **Note:** `createUpdaterArtifacts` is enabled, so `tauri build` requires the
 > updater signing key. For a plain local build without signing, use
@@ -261,13 +286,25 @@ src/                    Frontend (vanilla JS, no framework)
   seek-thumbnails.js    VOD storyboard seek-preview thumbnails
   session-restore.js    Resume the last session across a reload
   drops.js, drops-banner.js         Drops-enabled detection + banner
+  rewards.js            Channel points / drops / watch-streak panel + redeeming
+  mod-log.js            Mod action log + Mod Chat tab
+  mod-menu.js           Moderator room-control (shield) menu
+  track-id.js           Song ID capture + result UI
+  pin-auth.js           Twitch device-login modal (points/drops/pins)
   deps-banner.js        streamlink/ffmpeg bootstrap banner
-  update-banner.js      In-app auto-updater UI (Windows)
+  update-banner.js      In-app auto-updater button (Windows)
   format.js             Small display-formatting helpers
 
 src-tauri/src/          Backend (Rust)
   main.rs               Tauri app setup and command registration
-  helix.rs              Twitch Helix (REST API) commands
+  helix.rs              Twitch Helix (REST API) commands, plus GQL for channel
+                          points, drops, watch streaks, and reward redemptions
+  twitch_device_auth.rs Twitch Android device-login token (points/drops/pins)
+  pubsub.rs             Twitch PubSub (real-time redemptions + live balance)
+  watch_heartbeat.rs    "minute watched" heartbeat (Drops + points accrual)
+  drop_prefs.rs         Hidden drop campaigns (local)
+  user_notes.rs         Per-user moderator notes (local)
+  track_id.rs, song_id/ Song identification (native fingerprinter)
   stream_relay.rs       Spawns streamlink/ffmpeg, relays bytes over HTTP
                           (Windows), resolves ad-free m3u8 URLs (macOS),
                           and proxies HLS for CORS

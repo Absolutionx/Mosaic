@@ -61,7 +61,7 @@ jobs:
         run: npm ci
 
       - name: Build, sign, and publish the release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5  # pinned = the v0.x that built v1.2.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # The updater signing keypair. Without these the build fails,
