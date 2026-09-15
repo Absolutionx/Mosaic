@@ -247,9 +247,66 @@ pub async fn delete_chat_message(
     Ok(())
 }
 
-// approves or denies a message AutoMod is holding, identified by the msg_id from the
-// automod.message.hold EventSub event. `action` is "ALLOW" or "DENY", passed through rather than a
-// bool so the Helix body and chat.js's Allow/Deny buttons both use Twitch's own vocabulary
+// read the channel's current room settings (emote-only, followers-only, sub-only, slow, unique) for the
+// moderator shield menu. needs moderator:read:chat_settings.
+#[tauri::command]
+pub async fn get_chat_settings(
+    state: State<'_, ChatState>,
+    broadcaster_id: String,
+) -> Result<serde_json::Value, String> {
+    let (token, moderator_id) = require_auth(&state)?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.twitch.tv/helix/chat/settings")
+        .header("Client-ID", oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {token}"))
+        .query(&[
+            ("broadcaster_id", broadcaster_id.as_str()),
+            ("moderator_id", moderator_id.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json.pointer("/data/0").cloned().unwrap_or(serde_json::Value::Null))
+}
+
+// update one or more room settings. `patch` is a JSON object with any subset of Helix's chat/settings
+// fields (emote_mode, follower_mode, follower_mode_duration, subscriber_mode, slow_mode,
+// slow_mode_wait_time, unique_chat_mode). needs moderator:manage:chat_settings.
+#[tauri::command]
+pub async fn update_chat_settings(
+    state: State<'_, ChatState>,
+    broadcaster_id: String,
+    patch: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let (token, moderator_id) = require_auth(&state)?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .patch("https://api.twitch.tv/helix/chat/settings")
+        .header("Client-ID", oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {token}"))
+        .query(&[
+            ("broadcaster_id", broadcaster_id.as_str()),
+            ("moderator_id", moderator_id.as_str()),
+        ])
+        .json(&patch)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json.pointer("/data/0").cloned().unwrap_or(serde_json::Value::Null))
+}
 #[tauri::command]
 pub async fn automod_process_message(
     state: State<'_, ChatState>,

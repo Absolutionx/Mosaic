@@ -3,7 +3,7 @@
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 #   .\build-windows.ps1
 #
-# Installs winget packages (Rust, Node.js, VS Build Tools), runs npm install +
+# Installs all prerequisites via winget (Node.js, Rust, VS Build Tools, WebView2), runs npm install +
 # `npm run tauri build`, then prints the finished .msi/.exe paths. End users who
 # install the output need none of this - the installer is self-contained
 # (WebView2 is bundled if missing).
@@ -41,13 +41,13 @@ if (-not (Has "node")) {
 # --- 3. Rust ---
 Step "Checking Rust"
 if (-not (Has "rustup")) {
-    Write-Host "Installing Rust via rustup-init..."
-    $rustupUrl = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
-    $rustupExe = "$env:TEMP\rustup-init.exe"
-    Invoke-WebRequest -Uri $rustupUrl -OutFile $rustupExe
-    & $rustupExe -y --default-toolchain stable
-    # Refresh PATH
-    $env:Path = "$env:USERPROFILE\.cargo\bin;" + $env:Path
+    Write-Host "Installing Rust (rustup) via winget..."
+    winget install --id Rustlang.Rustup -e --silent --accept-package-agreements --accept-source-agreements
+    # Refresh PATH so cargo/rustup are usable in this session
+    $env:Path = "$env:USERPROFILE\.cargo\bin;" +
+                [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path","User")
+    if (Has "rustup") { rustup default stable }
 } else {
     Write-Host "Rust already installed: $(rustup --version)"
     rustup update stable
@@ -72,11 +72,8 @@ if (-not $hasMsvc) {
 Step "Checking WebView2 runtime"
 $wv2Key = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 if (-not (Test-Path $wv2Key)) {
-    Write-Host "Installing WebView2 runtime..."
-    $wv2Url = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
-    $wv2Exe = "$env:TEMP\MicrosoftEdgeWebview2Setup.exe"
-    Invoke-WebRequest -Uri $wv2Url -OutFile $wv2Exe
-    & $wv2Exe /silent /install
+    Write-Host "Installing WebView2 runtime via winget..."
+    winget install --id Microsoft.EdgeWebView2Runtime -e --silent --accept-package-agreements --accept-source-agreements
 } else {
     Write-Host "WebView2 runtime already installed."
 }

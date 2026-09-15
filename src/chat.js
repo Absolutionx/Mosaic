@@ -6,6 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { loadFilter } from "./chat-filter.js";
+import { clearModLog } from "./mod-log.js";
 import { chatEmotesMixin } from "./chat/chat-emotes.js";
 import { chatEmotePickerMixin } from "./chat/chat-emote-picker.js";
 import { chatVodReplayMixin } from "./chat/chat-vod-replay.js";
@@ -382,6 +383,14 @@ export class TwitchChat {
       this.renderMessage(this.ownDisplayName || this.ownLogin || "you", this._ownColor || "#9147ff", text, this._ownBadgesTag,
                           undefined, undefined, undefined, undefined, undefined, this.ownUserId,
                           /*isAction=*/false, /*emotesTag=*/null, /*isFirstMsg=*/false);
+      // IRC won't echo this back, so the Mod Chat tab (which watches "chat-message") never sees our own
+      // messages — surface them via a window event using the same badge filter
+      window.dispatchEvent(new CustomEvent("mosaic-own-message", { detail: {
+        username: this.ownDisplayName || this.ownLogin || "you",
+        color: this._ownColor || "#9147ff",
+        message: text,
+        badges: this._ownBadgesTag || "",
+      }}));
     } catch (err) {
       console.error("Failed to send message:", err);
       this.systemLine(`Failed to send: ${err}`);
@@ -393,7 +402,10 @@ export class TwitchChat {
   // order ("username 10m" or "10m username"), like Twitch's own (duration optional, defaults to 10 min)
 
   setStatus(text) {
-    if (this.statusEl) this.statusEl.textContent = text;
+    if (!this.statusEl) return;
+    // "connected (#channel)" is redundant with the header/title and eats chat-header space, so blank it.
+    // transient states (connecting/reconnecting/error/replay/kick) still show as real feedback.
+    this.statusEl.textContent = /^connected\b/i.test(text || "") ? "" : text;
   }
 
   systemLine(text) {
@@ -484,6 +496,7 @@ export class TwitchChat {
     this.channel = channel.toLowerCase();
     this.roomId = null;
     this._stopPinPoll();
+    clearModLog(); // mod-action log is per-channel
     this._stopHypePoll();
     this._stopPredictionPoll();
     this.userScrolledUp = false;
@@ -508,6 +521,11 @@ export class TwitchChat {
     this._ownBadgesTag = null;
     // being a mod in the previous channel says nothing about this one, and USERSTATE won't arrive instantly, so mod tools would otherwise wrongly stay on
     this.isMod = false;
+    // notify listeners (e.g. the shield button) so listener-driven mod UI hides immediately on switch;
+    // USERSTATE re-derives and re-fires if this channel makes us a mod
+    for (const fn of this._modStatusListeners) {
+      try { fn(false); } catch (err) { console.error("mod status listener error:", err); }
+    }
     // a new channel's held messages have nothing to do with the previous one's, clear the queue and the panel/badge it drives
     this._automodQueue = [];
     this._renderAutomodPanel();
@@ -530,6 +548,24 @@ export class TwitchChat {
     this.loadBttvGlobalEmotes();
     this.loadFfzGlobalEmotes();
     this.loadTwitchGlobalEmotes();
+    this.loadAvailableTwitchEmotes();
+    // re-pull available emotes right after the user unlocks/modifies one via the rewards panel. the event
+    // also carries the exact {id, token} just unlocked, which we add immediately — reliable even if the
+    // broader AvailableEmotesForChannel fetch misses it.
+    if (!this._emotesChangedBound) {
+      this._emotesChangedBound = true;
+      window.addEventListener("mosaic-emotes-changed", (e) => {
+        const d = e && e.detail;
+        if (d && d.id && d.token) {
+          this.twitchNativeEmotes.set(d.token, {
+            id: d.id,
+            url: `https://static-cdn.jtvnw.net/emoticons/v2/${d.id}/default/dark/2.0`,
+          });
+          console.log(`Added unlocked emote ${d.token} (${d.id}) to the usable set.`);
+        }
+        this.loadAvailableTwitchEmotes();
+      });
+    }
     // globals load now, channel-specific badges (which override global subscriber art) load once the room-id is known
     this.loadGlobalBadges();
 
@@ -552,6 +588,9 @@ export class TwitchChat {
     // Twitch pins don't apply once we leave; also covers the Kick path (connectKick calls this first)
     this._stopPinPoll();
     this._stopHypePoll();
+    this._stopPointsPoll();
+    invoke("heartbeat_clear_target").catch(() => {});
+    invoke("pubsub_clear").catch(() => {});
     this._stopPredictionPoll();
     // always dismiss the emote autocomplete popup, it's position:fixed on body, so it can strand over unrelated UI after a channel switch or stop
     this._hideEmotePopup();
@@ -716,7 +755,7 @@ export class TwitchChat {
       await listen("chat-message", (event) => {
         const { username, color, message, badges, bits, custom_reward_id,
                 reply_parent_user, reply_parent_body, msg_id, user_id, is_action,
-                emotes_tag, is_first_msg } = event.payload;
+                emotes_tag, is_first_msg, is_highlighted } = event.payload;
         // track chatters for @mention autocomplete (cap at 500 to avoid memory bloat)
         if (username) {
           this._chatUsers.set(username.toLowerCase(), username);
@@ -726,7 +765,7 @@ export class TwitchChat {
         }
         this.renderMessage(username, color || "#9147ff", message, badges, bits, custom_reward_id,
                            reply_parent_user, reply_parent_body, msg_id, user_id, is_action,
-                           emotes_tag, is_first_msg);
+                           emotes_tag, is_first_msg, is_highlighted);
       })
     );
 
@@ -745,6 +784,31 @@ export class TwitchChat {
     this.unlisteners.push(
       await listen("eventsub-redeem", (event) => {
         this.renderRedeemEvent(event.payload);
+      })
+    );
+
+    // real-time redemptions (all channels) + live balance via PubSub
+    this.unlisteners.push(
+      await listen("pubsub-redemption", (event) => {
+        const p = event.payload || {};
+        if (!p.reward_title) return;
+        this.renderRedeemEvent({
+          redeemer: p.user_name || p.user_login || "someone",
+          reward_title: p.reward_title,
+          reward_cost: p.reward_cost,
+          user_input: p.user_input,
+          redemption_id: p.redemption_id,
+        });
+      })
+    );
+    this.unlisteners.push(
+      await listen("pubsub-points", (event) => {
+        const p = event.payload || {};
+        if (String(p.channel_id) !== String(this.roomId)) return; // only the watched channel
+        const el = document.getElementById("rewards-balance");
+        const btn = document.getElementById("rewards-btn");
+        if (el) el.textContent = fmtCount(p.balance);
+        if (btn) btn.classList.add("has-balance");
       })
     );
 
@@ -771,6 +835,15 @@ export class TwitchChat {
         this._startHypePoll(this.channel);
         // begin polling for an active prediction (see _startPredictionPoll)
         this._startPredictionPoll(this.channel);
+        // watch heartbeat: report minute-watched so Twitch drops + channel points accrue for this
+        // channel (needs the device login; no-ops without it)
+        invoke("heartbeat_set_target", { channelId: this.roomId, login: this.channel }).catch(() => {});
+        // real-time channel-point redemptions + balance for ANY channel (device login required)
+        invoke("pubsub_set_channel", { channelLogin: this.channel }).catch(() => {});
+        // persistent channel-points pill by the chatbox (device login required; hides otherwise)
+        this._startPointsPoll(this.channel);
+        // load the set of user ids that have a note, for the in-chat indicator (see user_notes.rs)
+        if (!this._noteUserIds) invoke("get_user_note_ids").then((ids) => { this._noteUserIds = new Set(ids); }).catch(() => {});
       })
     );
 
@@ -1147,9 +1220,38 @@ export class TwitchChat {
     el.style.display = "block";
   }
 
+  // persistent channel-points balance pill next to the chatbox. polls the current channel's balance
+  // (device login required); hides when not connected / no balance / on Kick
+  _startPointsPoll(login) {
+    this._stopPointsPoll();
+    if (!login) return;
+    const setBal = (txt) => {
+      const el = document.getElementById("rewards-balance");
+      const btn = document.getElementById("rewards-btn");
+      if (el) el.textContent = txt || "";
+      if (btn) btn.classList.toggle("has-balance", !!txt);
+    };
+    const poll = async () => {
+      try {
+        const p = await invoke("get_channel_points", { channelLogin: login });
+        setBal(p == null ? "" : fmtCount(p));
+      } catch { setBal(""); }
+    };
+    poll();
+    this._pointsPollTimer = setInterval(poll, 60000);
+  }
+
+  _stopPointsPoll() {
+    if (this._pointsPollTimer) { clearInterval(this._pointsPollTimer); this._pointsPollTimer = null; }
+    const el = document.getElementById("rewards-balance");
+    const btn = document.getElementById("rewards-btn");
+    if (el) el.textContent = "";
+    if (btn) btn.classList.remove("has-balance");
+  }
+
   renderMessage(username, color, message, badgesTag, bits, customRewardId,
                 replyParentUser, replyParentBody, msgId, userId, isAction = false,
-                emotesTag = null, isFirstMsg = false) {
+                emotesTag = null, isFirstMsg = false, isHighlighted = false) {
     // words/phrases hide the whole message (see reloadChatFilter / the Chat Filter modal)
     if (this._shouldFilterMessage(username, message, emotesTag)) return;
     // blocked emotes: stripped from the body but the message still shows, UNLESS it's only blocked
@@ -1182,6 +1284,22 @@ export class TwitchChat {
       gem.className = "channel-point-gem";
       gem.title = "Channel Point Redemption";
       line.appendChild(gem);
+    }
+
+    // "Highlight My Message" reward (msg-id=highlighted-message): accent left border + tint, matching twitch.tv
+    if (isHighlighted) {
+      line.classList.add("is-highlighted-message");
+      const hdr = document.createElement("div");
+      hdr.className = "highlight-redeem-header";
+      const gem = document.createElement("span");
+      gem.className = "channel-point-gem";
+      hdr.appendChild(gem);
+      const who = document.createElement("span");
+      who.className = "highlight-redeem-user";
+      who.textContent = username;
+      hdr.appendChild(who);
+      hdr.appendChild(document.createTextNode(" redeemed Highlight My Message"));
+      line.insertBefore(hdr, line.firstChild);
     }
 
     // first-time chatter: purple highlight matching twitch.tv's treatment for a user's first message in the channel (IRC "first-msg" tag, see is_first_msg in chat.rs). the classic viewer-visible welcome
@@ -1237,6 +1355,12 @@ export class TwitchChat {
       });
     }
     line.appendChild(nameSpan);
+    if (userId && this._noteUserIds && this._noteUserIds.has(userId)) {
+      const noteDot = document.createElement("span");
+      noteDot.className = "chat-note-dot";
+      noteDot.title = "You have a note on this user";
+      line.appendChild(noteDot);
+    }
 
     const textSpan = document.createElement("span");
     textSpan.className = "chat-message-text" + (isAction ? " chat-action-message" : "");
@@ -1311,6 +1435,32 @@ export class TwitchChat {
           this._deleteMessage(line.dataset.msgId, deleteBtn);
         });
         actions.appendChild(deleteBtn);
+
+        // Timeout (with a duration menu) + Ban, matching StreamNook's per-message dock
+        const canMod = this.isMod && Boolean(line.dataset.msgUserId) && Boolean(this.roomId) && !isSelf;
+        const toBtn = document.createElement("button");
+        toBtn.className = "chat-line-action-btn mod-action-btn";
+        toBtn.title = canMod ? "Timeout" : "Timeout (mod only)";
+        toBtn.disabled = !canMod;
+        toBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5a5.5 5.5 0 0 1 0 11zM7.25 4v4.31l3.4 2 .75-1.25-2.65-1.56V4h-1.5z"/></svg>`;
+        toBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!canMod) return;
+          this._showTimeoutMenu(toBtn, line.dataset.msgUserId, line.dataset.msgUsername);
+        });
+        actions.appendChild(toBtn);
+
+        const banBtn = document.createElement("button");
+        banBtn.className = "chat-line-action-btn mod-action-btn";
+        banBtn.title = canMod ? "Ban" : "Ban (mod only)";
+        banBtn.disabled = !canMod;
+        banBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM2.5 8a5.5 5.5 0 0 1 8.9-4.32l-7.72 7.72A5.47 5.47 0 0 1 2.5 8zm5.5 5.5c-1.28 0-2.46-.44-3.4-1.18l7.72-7.72A5.5 5.5 0 0 1 8 13.5z"/></svg>`;
+        banBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!canMod) return;
+          this._confirmAndBan(line.dataset.msgUserId, line.dataset.msgUsername);
+        });
+        actions.appendChild(banBtn);
       }
 
       line.appendChild(actions);
@@ -1326,7 +1476,14 @@ export class TwitchChat {
     this.trimAndScroll();
   }
 
-  renderRedeemEvent({ redeemer, reward_title, reward_cost, user_input }) {
+  renderRedeemEvent({ redeemer, reward_title, reward_cost, user_input, redemption_id }) {
+    // own channel delivers redemptions via BOTH EventSub and PubSub; dedupe by redemption id
+    if (redemption_id) {
+      if (!this._seenRedeem) this._seenRedeem = new Set();
+      if (this._seenRedeem.has(redemption_id)) return;
+      this._seenRedeem.add(redemption_id);
+      if (this._seenRedeem.size > 500) this._seenRedeem.clear();
+    }
     const line = document.createElement("div");
     line.className = "chat-line channel-point-redeem-event";
 

@@ -7,6 +7,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { TwitchChat } from "./chat.js";
 import { openChatFilterModal } from "./chat-filter.js";
 import { openPinAuthModal } from "./pin-auth.js";
+import { openRewardsModal } from "./rewards.js";
+import { initModLog, openModLogModal } from "./mod-log.js";
+import { initModMenu } from "./mod-menu.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { TwitchAuth } from "./auth.js";
@@ -368,6 +371,22 @@ document.getElementById("pin-connect-btn")?.addEventListener("click", () => {
     if (chat.roomId) chat._startPinPoll(chat.roomId);
   });
 });
+document.getElementById("rewards-btn")?.addEventListener("click", () => {
+  openRewardsModal(chat.channel, chat.roomId, () => {
+    openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); });
+  });
+});
+// Mod action log (fills in only on channels you moderate; see mod-log.js + channel.moderate in eventsub.rs)
+initModLog(chat);
+document.getElementById("modlog-btn")?.addEventListener("click", () => openModLogModal());
+initModMenu(chat);
+// the shield (room controls) only makes sense where you can moderate
+{
+  const modmenuBtn = document.getElementById("modmenu-btn");
+  const syncModMenu = (isMod) => { if (modmenuBtn) modmenuBtn.style.display = isMod ? "" : "none"; };
+  syncModMenu(chat.isMod);
+  chat.onModStatusChange(syncModMenu);
+}
 
 // Clip button: create a Twitch clip of the live stream and toast the editor link
 const clipToast = document.getElementById("clip-toast");

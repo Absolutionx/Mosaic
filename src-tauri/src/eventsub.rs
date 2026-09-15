@@ -85,6 +85,17 @@ pub async fn run(
                                              (need mod/broadcaster on this channel): {e}"
                                         );
                                     }
+                                    // channel.moderate v2: every mod action on the channel (ban/timeout/
+                                    // delete/mode changes/warnings/etc) with the acting moderator. same
+                                    // 403-for-non-mods story; only fires on channels you moderate
+                                    if let Err(e) = subscribe_channel_moderate(
+                                        &session_id, &broadcaster_id, &moderator_id, &access_token,
+                                    ).await {
+                                        eprintln!(
+                                            "[eventsub] channel.moderate subscription skipped \
+                                             (need mod/broadcaster on this channel): {e}"
+                                        );
+                                    }
                                     // outgoing raids FROM this channel (the watched streamer raiding someone). unlike the two above,
                                     // channel.raid needs no scope/mod status per Twitch's docs, any token can subscribe for any
                                     // broadcaster, so a failure here is a genuine error worth logging loudly, not the expected 403
@@ -233,6 +244,41 @@ async fn subscribe_automod_message_hold(
     Ok(())
 }
 
+// channel.moderate v2 — all moderation actions on the channel, tagged with the acting moderator.
+// mod-only (403 otherwise). needs the moderator:read:* scopes added to oauth.rs.
+async fn subscribe_channel_moderate(
+    session_id: &str,
+    broadcaster_id: &str,
+    moderator_id: &str,
+    access_token: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let body = json!({
+        "type":    "channel.moderate",
+        "version": "2",
+        "condition": {
+            "broadcaster_user_id": broadcaster_id,
+            "moderator_user_id":   moderator_id,
+        },
+        "transport": { "method": "websocket", "session_id": session_id }
+    });
+    let resp = client
+        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+        .header("Client-ID", crate::oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    eprintln!("[eventsub] subscribed to channel.moderate for {broadcaster_id} (moderator {moderator_id})");
+    Ok(())
+}
+
 // subscribes to channel.raid FROM broadcaster_id, fires when the watched channel raids another. per
 // Twitch's docs this type needs no authorization (works for any broadcaster), unlike the
 // redemptions/automod subscriptions. main.js uses it to auto-navigate the player to the raided-into channel
@@ -329,11 +375,16 @@ fn dispatch_notification(app: &AppHandle, payload: &Value) {
                 .map(|s| s.to_string());
 
             let _ = app.emit("eventsub-redeem", json!({
+                "redemption_id": event.get("id").and_then(|v| v.as_str()).unwrap_or(""),
                 "redeemer":     redeemer,
                 "reward_title": reward_title,
                 "reward_cost":  reward_cost,
                 "user_input":   user_input,
             }));
+        }
+        "channel.moderate" => {
+            // pass the whole event through; the frontend renders it into a mod-log line
+            let _ = app.emit("eventsub-moderate", event.clone());
         }
         "automod.message.hold" => {
             let user_name = event.get("user_name")

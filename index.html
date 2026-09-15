@@ -63,6 +63,8 @@
         </button>
         <!-- Status sits next to the launcher as a quiet pill; empty when idle. -->
         <span class="status" id="status-text"></span>
+        <!-- Shown only when an update is available (see update-banner.js). -->
+        <button id="update-btn" class="header-update-btn" style="display:none">Update</button>
         <!-- Account control; person icon + label. -->
         <button id="login-btn">
           <svg class="account-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-7 2-7 5v1h14v-1c0-3-3-5-7-5z" fill="currentColor"/></svg>
@@ -315,6 +317,19 @@
             <button id="pin-connect-btn" class="chat-filter-btn" title="Enable pinned messages">
               <!-- Pin icon -->
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M14 2l6 6-4 1-3 3-1 5-3-3-4.5 4.5-1.4-1.4L10 15.6 7 12.6l5-1 3-3z"/></svg>
+            </button>
+            <button id="modmenu-btn" class="chat-filter-btn" title="Moderator controls" style="display:none">
+              <!-- Shield icon -->
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2l8 3v6c0 5-3.4 8.7-8 11-4.6-2.3-8-6-8-11V5l8-3zm0 2.2L6 6.3V11c0 3.9 2.5 6.9 6 8.8 3.5-1.9 6-4.9 6-8.8V6.3l-6-2.1z"/></svg>
+            </button>
+            <button id="modlog-btn" class="chat-filter-btn" title="Mod actions log">
+              <!-- Gavel icon -->
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M2 20h10v2H2zM14.3 2.3l-2.1 2.1 5.4 5.4 2.1-2.1zM11.5 5.1 9.4 7.2l5.4 5.4 2.1-2.1zM7.9 8.7 6.5 10.1a1 1 0 0 0 0 1.4l4 4a1 1 0 0 0 1.4 0l1.4-1.4z"/></svg>
+            </button>
+            <button id="rewards-btn" class="chat-filter-btn" title="Channel points & drops">
+              <!-- Gift icon -->
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4 11h7v10H5a1 1 0 0 1-1-1v-9zm9 0h7v9a1 1 0 0 1-1 1h-6V11zM3 7h18a1 1 0 0 1 1 1v2H2V8a1 1 0 0 1 1-1zm6.5-2A1.5 1.5 0 0 1 11 6.5V7H9.5a1.5 1.5 0 0 1 0-3zm5 0a1.5 1.5 0 0 1 0 3H13v-.5A1.5 1.5 0 0 1 14.5 5z"/></svg>
+              <span id="rewards-balance" class="rewards-balance"></span>
             </button>
           </div>
           <span id="chat-status" class="chat-status">connecting…</span>

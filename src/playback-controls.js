@@ -230,8 +230,8 @@ export class PlaybackControls {
     });
 
     // keep the play/pause icon and center button in sync with whatever changed video.paused, not just our clicks but the element's own changes (autoplay, or a shortcut calling video.play()/.pause() directly)
-    this.videoEl.addEventListener("play", () => this.setPauseIcon(false));
-    this.videoEl.addEventListener("pause", () => this.setPauseIcon(true));
+    this.videoEl.addEventListener("play", () => { this.setPauseIcon(false); invoke("heartbeat_set_playing", { playing: true }).catch(() => {}); });
+    this.videoEl.addEventListener("pause", () => { this.setPauseIcon(true); invoke("heartbeat_set_playing", { playing: false }).catch(() => {}); });
 
     // exiting native PiP other than via our pipBtn (the OS window's own close) must reflect back in our UI
     this.videoEl.addEventListener("leavepictureinpicture", () => {

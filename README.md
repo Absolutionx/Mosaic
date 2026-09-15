@@ -199,8 +199,8 @@ npm run tauri build
 ```
 
 Add `-- --bundles nsis` to build only the Windows `.exe` installer. Output lands
-under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_1.1.0_x64-setup.exe`,
-`dmg/Mosaic_1.1.0_aarch64.dmg`).
+under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_1.2.0_x64-setup.exe`,
+`dmg/Mosaic_1.2.0_aarch64.dmg`).
 
 > **Note:** `createUpdaterArtifacts` is enabled, so `tauri build` requires the
 > updater signing key. For a plain local build without signing, use

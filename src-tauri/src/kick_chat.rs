@@ -339,6 +339,7 @@ fn handle_frame(app: &AppHandle, txt: &str) -> FrameAction {
                         .and_then(|v| v.as_u64())
                         .map(|id| id.to_string()),
                     is_first_msg: false,
+                    is_highlighted: false,
                 },
             );
             FrameAction::None

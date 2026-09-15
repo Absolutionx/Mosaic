@@ -994,3 +994,791 @@ pub async fn create_clip(
 
     Ok(ClipResult { id, edit_url, ready })
 }
+
+// --- Channel points + drops (device-login token; return empty/None when not connected) ---
+
+// current channel-points balance for a channel (raw ChannelPointsContext query, like StreamNook)
+#[tauri::command]
+pub async fn get_channel_points(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<Option<i64>, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(None),
+    };
+    const QUERY: &str = "query ChannelPointsContext($channelLogin: String!) { user(login: $channelLogin) { channel { self { communityPoints { balance } } } } }";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "ChannelPointsContext",
+            "query": QUERY,
+            "variables": { "channelLogin": channel_login.to_lowercase() }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json
+        .pointer("/data/user/channel/self/communityPoints/balance")
+        .and_then(|v| v.as_i64()))
+}
+
+// active drops: campaigns in progress with per-drop minute progress + claimable state. Inventory
+// persisted query + hashes from the StreamNook project.
+#[tauri::command]
+pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::json!([])),
+    };
+    const HASH: &str = "d86775d0ef16a63a33ad52e80eaff963b2d5b72fada7c991504a57496e1d8e4b";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "Inventory",
+            "variables": { "fetchRewardCampaigns": false },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(errors) = json.get("errors") {
+        return Err(format!("Inventory GQL errors: {errors}"));
+    }
+
+    let mut out = Vec::new();
+    if let Some(campaigns) = json
+        .pointer("/data/currentUser/inventory/dropCampaignsInProgress")
+        .and_then(|v| v.as_array())
+    {
+        for c in campaigns {
+            let game = c
+                .pointer("/game/displayName")
+                .and_then(|v| v.as_str())
+                .or_else(|| c.pointer("/game/name").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let box_art = c.pointer("/game/boxArtURL").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let campaign = c.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            let mut drops = Vec::new();
+            if let Some(tbd) = c.get("timeBasedDrops").and_then(|v| v.as_array()) {
+                for d in tbd {
+                    let name = d.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let required = d.get("requiredMinutesWatched").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let current = d.pointer("/self/currentMinutesWatched").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let claimed = d.pointer("/self/isClaimed").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let instance = d.pointer("/self/dropInstanceID").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let image = d
+                        .pointer("/benefitEdges/0/benefit/imageAssetURL")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let claimable = !instance.is_empty() && !claimed;
+                    drops.push(serde_json::json!({
+                        "name": name,
+                        "current": current,
+                        "required": required,
+                        "claimed": claimed,
+                        "claimable": claimable,
+                        "drop_instance_id": instance,
+                        "image": image,
+                    }));
+                }
+            }
+            if !drops.is_empty() {
+                let cid = c
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{game}|{campaign}"));
+                out.push(serde_json::json!({
+                    "id": cid, "game": game, "campaign": campaign, "box_art": box_art, "drops": drops
+                }));
+            }
+        }
+    }
+    Ok(serde_json::json!(out))
+}
+
+// claim an earned drop by its instance id (DropsPage_ClaimDropRewards)
+#[tauri::command]
+pub async fn claim_drop(drop_instance_id: String, app: tauri::AppHandle) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    const HASH: &str = "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "DropsPage_ClaimDropRewards",
+            "variables": { "input": { "dropInstanceID": drop_instance_id } },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("claim failed: HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json.get("errors").is_none())
+}
+
+// --- Watch streaks (RewardList / ShareMilestone), mirrored from StreamNook. Web client id + the
+// device-login token; returns the current channel's streak milestone (count, share status, bonus). ---
+
+fn watch_streak_headers(token: &str) -> reqwest::header::HeaderMap {
+    let mut rnd = [0u8; 16];
+    let _ = getrandom::getrandom(&mut rnd);
+    let id: String = rnd.iter().map(|b| format!("{b:02x}")).collect();
+    let mut h = reqwest::header::HeaderMap::new();
+    h.insert("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko".parse().unwrap());
+    h.insert(reqwest::header::ACCEPT, "*/*".parse().unwrap());
+    h.insert("Authorization", format!("OAuth {token}").parse().unwrap());
+    h.insert("X-Device-Id", id.parse().unwrap());
+    h.insert("Client-Session-Id", id.parse().unwrap());
+    h
+}
+
+#[allow(dead_code)]
+// resolve a channel's numeric broadcaster id from its login (device token). used by the point/streak/
+// redeem commands so they don't depend on the IRC room-id, which isn't reliably set on every channel.
+pub(crate) async fn resolve_broadcaster_id(login: &str, token: &str) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "query": "query R($login:String!){ user(login:$login){ id } }",
+            "variables": { "login": login.to_lowercase() }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let j: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    j.pointer("/data/user/id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "couldn't resolve channel id".to_string())
+}
+
+#[tauri::command]
+pub async fn get_watch_streak(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::Value::Null),
+    };
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "0b1471876d7647993731b9e3c6a13bf304c67fb31d07f06a945d42286ee377c4";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .headers(watch_streak_headers(&token))
+        .json(&serde_json::json!({
+            "operationName": "RewardList",
+            "variables": { "channelID": channel_id, "shouldIncludeAllSuspendedStreaks": false },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let milestone = match json.pointer("/data/channel/self/watchStreakMilestone") {
+        Some(m) if !m.is_null() => m.clone(),
+        _ => return Ok(serde_json::Value::Null),
+    };
+    let count = milestone
+        .pointer("/watchStreakMilestone/value")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    if count <= 0 {
+        return Ok(serde_json::Value::Null);
+    }
+    Ok(serde_json::json!({
+        "count": count,
+        "milestone_id": milestone.pointer("/watchStreakMilestone/id").and_then(|v| v.as_str()).unwrap_or(""),
+        "share_status": milestone.pointer("/watchStreakMilestone/shareStatus").and_then(|v| v.as_str()).unwrap_or(""),
+        "threshold": milestone.get("watchStreakThreshold").and_then(|v| v.as_i64()).unwrap_or(0),
+        "bonus": milestone.get("watchStreakCopoBonus").and_then(|v| v.as_i64()).unwrap_or(0),
+    }))
+}
+
+// share the streak milestone to chat -> grants the channel-points bonus
+#[tauri::command]
+pub async fn share_watch_streak(
+    channel_login: String,
+    milestone_id: String,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "25d20e60945d10123e8d466e30f21a1f1f578dfdea52c72095030b118eda9f39";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .headers(watch_streak_headers(&token))
+        .json(&serde_json::json!({
+            "operationName": "ShareMilestone",
+            "variables": { "input": { "milestoneID": milestone_id, "channelID": channel_id } },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("share failed: HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json.get("errors").is_none())
+}
+
+// --- Spending channel points: list a channel's custom rewards + redeem one (mirrored from StreamNook) ---
+
+#[tauri::command]
+pub async fn get_channel_rewards(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::json!([])),
+    };
+    const HASH: &str = "374314de591e69925fce3ddc2bcf085796f56ebb8cad67a0daa3165c03adc345";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "ChannelPointsContext",
+            "variables": { "channelLogin": channel_login.to_lowercase(), "includeGoalTypes": ["CREATOR", "BOOST"] },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let settings = json
+        .pointer("/data/community/channel/communityPointsSettings")
+        .or_else(|| json.pointer("/data/channel/communityPointsSettings"));
+    let mut out = Vec::new();
+    if let Some(rewards) = settings
+        .and_then(|s| s.get("customRewards"))
+        .and_then(|v| v.as_array())
+    {
+        for r in rewards {
+            let id = match r.get("id").and_then(|v| v.as_str()) {
+                Some(i) => i.to_string(),
+                None => continue,
+            };
+            let image = r
+                .pointer("/image/url")
+                .and_then(|v| v.as_str())
+                .or_else(|| r.pointer("/defaultImage/url").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            // isEnabled is the field Twitch actually enforces (a disabled reward redeem returns DISABLED);
+            // isPaused/isInStock were unreliable in this response, so don't gate on them here.
+            let available = r.get("isEnabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            out.push(serde_json::json!({
+                "id": id,
+                "title": r.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                "cost": r.get("cost").and_then(|v| v.as_i64()).unwrap_or(0),
+                "prompt": r.get("prompt").and_then(|v| v.as_str()).unwrap_or(""),
+                "requires_input": r.get("isUserInputRequired").and_then(|v| v.as_bool()).unwrap_or(false),
+                "image": image,
+                "available": available,
+                "automatic": false,
+                "reward_type": "",
+            }));
+        }
+    }
+    // Twitch's built-in "automatic" rewards (Highlight My Message, Unlock a Random Sub Emote, etc.).
+    // These aren't customRewards; they use per-type mutations. Cost is `cost` (streamer override) else
+    // `defaultCost` — NOT minimumCost, which causes a server-side cost mismatch. Mirrors StreamNook.
+    if let Some(autos) = settings
+        .and_then(|s| s.get("automaticRewards"))
+        .and_then(|v| v.as_array())
+    {
+        for r in autos {
+            let id = match r.get("id").and_then(|v| v.as_str()) {
+                Some(i) => i.to_string(),
+                None => continue,
+            };
+            let rtype = r.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if r.get("pricingType").and_then(|v| v.as_str()) == Some("BITS") {
+                continue;
+            }
+            let title = match rtype {
+                "SEND_HIGHLIGHTED_MESSAGE" => "Highlight My Message".to_string(),
+                "SINGLE_MESSAGE_BYPASS_SUB_MODE" => "Send a Message in Sub-Only Mode".to_string(),
+                "RANDOM_SUB_EMOTE_UNLOCK" => "Unlock a Random Sub Emote".to_string(),
+                "CHOSEN_SUB_EMOTE_UNLOCK" => "Choose an Emote to Unlock".to_string(),
+                "CHOSEN_MODIFIED_SUB_EMOTE_UNLOCK" => "Modify a Single Emote".to_string(),
+                "SEND_GIGANTIFIED_EMOTE" => "Gigantify an Emote".to_string(),
+                other => other.replace('_', " "),
+            };
+            let cost = r
+                .get("cost")
+                .and_then(|v| v.as_i64())
+                .or_else(|| r.get("defaultCost").and_then(|v| v.as_i64()))
+                .unwrap_or(0);
+            if cost == 0 {
+                continue;
+            }
+            let available = r.get("isEnabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let image = r
+                .pointer("/image/url")
+                .and_then(|v| v.as_str())
+                .or_else(|| r.pointer("/defaultImage/url").and_then(|v| v.as_str()))
+                .unwrap_or("")
+                .to_string();
+            let requires_input =
+                rtype == "SEND_HIGHLIGHTED_MESSAGE" || rtype == "SINGLE_MESSAGE_BYPASS_SUB_MODE";
+            out.push(serde_json::json!({
+                "id": id,
+                "title": title,
+                "cost": cost,
+                "prompt": "",
+                "requires_input": requires_input,
+                "image": image,
+                "available": available,
+                "automatic": true,
+                "reward_type": rtype,
+            }));
+        }
+    }
+    out.sort_by(|a, b| a["cost"].as_i64().unwrap_or(0).cmp(&b["cost"].as_i64().unwrap_or(0)));
+    Ok(serde_json::json!(out))
+}
+
+// Fetch the emotes the logged-in user can actually use in this channel (subscriber, follower, unlocked,
+// and modified emotes) via AvailableEmotesForChannel. Reverse-engineered — StreamNook defines this hash
+// but never calls it — so the response shape is parsed defensively: we recursively collect every object
+// that has both a string `id` and a string `token`, which is what an emote node looks like regardless of
+// the exact nesting.
+#[tauri::command]
+pub async fn get_available_emotes(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::json!([])),
+    };
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "6c45e0ecaa823cc7db3ecdd1502af2223c775bdcfb0f18a3a0ce9a0b7db8ef6c";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "AvailableEmotesForChannel",
+            "variables": { "channelID": channel_id, "withOwner": true },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    // surface a GQL error (wrong hash/variables) instead of silently returning nothing
+    if let Some(errs) = json.get("errors").and_then(|v| v.as_array()) {
+        if !errs.is_empty() {
+            let msg = errs[0]
+                .pointer("/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("GraphQL error");
+            return Err(format!("AvailableEmotesForChannel: {msg}"));
+        }
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_emotes(&json, &mut out, &mut seen);
+    Ok(serde_json::json!(out))
+}
+
+fn collect_emotes(
+    v: &serde_json::Value,
+    out: &mut Vec<serde_json::Value>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    match v {
+        serde_json::Value::Object(map) => {
+            let id = map.get("id").and_then(|x| x.as_str());
+            let token = map.get("token").and_then(|x| x.as_str());
+            if let (Some(id), Some(token)) = (id, token) {
+                if !id.is_empty() && !token.is_empty() && seen.insert(id.to_string()) {
+                    out.push(serde_json::json!({ "id": id, "token": token }));
+                }
+            }
+            for (_, val) in map {
+                collect_emotes(val, out, seen);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for val in arr {
+                collect_emotes(val, out, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+// Redeem the two simplest automatic rewards. Others (emote picker / gigantify) need more UI and aren't
+// wired yet. Mirrors StreamNook's per-type mutations.
+#[tauri::command]
+pub async fn redeem_highlight_message(
+    channel_login: String,
+    message: String,
+    cost: i64,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "bb187d763156dc5c25c6457e1b32da6c5033cb7504854e6d33a8b876d10444b6";
+    automatic_redeem(
+        &token,
+        "SendHighlightedChatMessage",
+        HASH,
+        serde_json::json!({
+            "channelID": channel_id, "cost": cost, "message": message,
+            "transactionID": rand_hex(),
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn redeem_random_emote(
+    channel_login: String,
+    cost: i64,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "f548e89966b21d0094f3dc35233232eb6ec76d63e02594c8a494407712a85350";
+    let json = post_redeem_json(
+        &token,
+        serde_json::json!({
+            "operationName": "UnlockRandomSubscriberEmote",
+            "variables": { "input": { "channelID": channel_id, "cost": cost, "transactionID": rand_hex() } },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }),
+    )
+    .await?;
+    // surface which emote was unlocked so the UI can reveal it
+    let data = json.pointer("/data/unlockRandomSubscriberEmote");
+    let emote = data
+        .and_then(|d| d.get("unlockedEmote").or_else(|| d.get("emote")))
+        .and_then(|e| {
+            let id = e.get("id").and_then(|v| v.as_str())?;
+            let token_name = e
+                .get("token")
+                .and_then(|v| v.as_str())
+                .or_else(|| e.get("name").and_then(|v| v.as_str()))
+                .unwrap_or(id);
+            Some(serde_json::json!({ "id": id, "token": token_name }))
+        });
+    Ok(emote.unwrap_or(serde_json::Value::Null))
+}
+
+fn rand_hex() -> String {
+    let mut r = [0u8; 16];
+    let _ = getrandom::getrandom(&mut r);
+    r.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+async fn automatic_redeem(
+    token: &str,
+    op: &str,
+    hash: &str,
+    input: serde_json::Value,
+) -> Result<bool, String> {
+    post_redeem(
+        token,
+        serde_json::json!({
+            "operationName": op,
+            "variables": { "input": input },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": hash } }
+        }),
+    )
+    .await
+}
+
+// core POST for the automatic/emote reward mutations: sends the given GQL payload with the device token
+// + dashless ids, turns a nested `error.code` into a friendly message, and returns the response JSON.
+async fn post_redeem_json(token: &str, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let did = rand_hex();
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .header("X-Device-Id", did.as_str())
+        .header("Client-Session-Id", &did[..16])
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(errs) = json.get("errors").and_then(|v| v.as_array()) {
+        if !errs.is_empty() {
+            let msg = errs[0].pointer("/message").and_then(|v| v.as_str()).unwrap_or("rejected");
+            return Err(msg.to_string());
+        }
+    }
+    if let Some(code) = find_error_code(&json) {
+        let friendly = match code.as_str() {
+            "INSUFFICIENT_POINTS" => "Not enough points.".to_string(),
+            "COOLDOWN" => "Reward is on cooldown.".to_string(),
+            "MAX_PER_STREAM_EXCEEDED" => "Max redemptions this stream reached.".to_string(),
+            "ALREADY_UNLOCKED" | "EMOTE_ALREADY_UNLOCKED" => "You already have that emote.".to_string(),
+            other => format!("Redemption failed: {other}"),
+        };
+        return Err(friendly);
+    }
+    Ok(json)
+}
+
+async fn post_redeem(token: &str, payload: serde_json::Value) -> Result<bool, String> {
+    post_redeem_json(token, payload).await.map(|_| true)
+}
+
+// List a channel's unlockable / modifiable sub emotes for the reward picker (from ChannelPointsContext's
+// emoteVariants). Mirrors StreamNook's get_modifiable_emotes.
+#[tauri::command]
+pub async fn get_channel_emotes(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::json!([])),
+    };
+    const HASH: &str = "374314de591e69925fce3ddc2bcf085796f56ebb8cad67a0daa3165c03adc345";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "ChannelPointsContext",
+            "variables": { "channelLogin": channel_login.to_lowercase() },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let variants = json
+        .pointer("/data/community/channel/communityPointsSettings/emoteVariants")
+        .or_else(|| json.pointer("/data/channel/communityPointsSettings/emoteVariants"))
+        .and_then(|v| v.as_array());
+    let mut out = Vec::new();
+    if let Some(variants) = variants {
+        for v in variants {
+            if !v.get("isUnlockable").and_then(|b| b.as_bool()).unwrap_or(false) {
+                continue;
+            }
+            let emote = match v.get("emote") {
+                Some(e) => e,
+                None => continue,
+            };
+            let id = emote.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            if id.is_empty() {
+                continue;
+            }
+            let token_name = emote.get("token").and_then(|t| t.as_str()).unwrap_or(id);
+            let mut mods = Vec::new();
+            if let Some(ms) = v.get("modifications").and_then(|m| m.as_array()) {
+                for m in ms {
+                    let me = m.get("emote");
+                    let modifier = m.get("modifier");
+                    if let (Some(me), Some(modifier)) = (me, modifier) {
+                        let mid = me.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                        if mid.is_empty() {
+                            continue;
+                        }
+                        mods.push(serde_json::json!({
+                            "id": mid,
+                            "token": me.get("token").and_then(|t| t.as_str()).unwrap_or(mid),
+                            "modifier_id": modifier.get("id").and_then(|i| i.as_str()).unwrap_or(""),
+                        }));
+                    }
+                }
+            }
+            out.push(serde_json::json!({ "id": id, "token": token_name, "modifications": mods }));
+        }
+    }
+    Ok(serde_json::json!(out))
+}
+
+#[tauri::command]
+pub async fn unlock_chosen_emote(
+    channel_login: String,
+    emote_id: String,
+    cost: i64,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    post_redeem(
+        &token,
+        serde_json::json!({
+            "operationName": "UnlockChosenSubscriberEmote",
+            "query": "mutation UnlockChosenSubscriberEmote($input: UnlockChosenSubscriberEmoteInput!) { unlockChosenSubscriberEmote(input: $input) { balance error { code __typename } __typename } }",
+            "variables": { "input": {
+                "channelID": channel_id, "emoteID": emote_id, "cost": cost, "transactionID": rand_hex(),
+            }}
+        }),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn unlock_modified_emote(
+    channel_login: String,
+    emote_id: String,
+    cost: i64,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "30e8cc29b1d6d96809f5e35f5e7a550ae8bf5d26966a9637d919477ffd0bfc52";
+    automatic_redeem(
+        &token,
+        "UnlockModifiedEmote",
+        HASH,
+        serde_json::json!({
+            "channelID": channel_id, "emoteID": emote_id, "cost": cost, "transactionID": rand_hex(),
+        }),
+    )
+    .await
+}
+
+fn find_error_code(v: &serde_json::Value) -> Option<String> {
+    if let Some(obj) = v.get("error").and_then(|e| e.as_object()) {
+        if let Some(c) = obj.get("code").and_then(|c| c.as_str()) {
+            return Some(c.to_string());
+        }
+    }
+    if let Some(map) = v.as_object() {
+        for (_, val) in map {
+            if let Some(c) = find_error_code(val) {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+pub async fn redeem_reward(
+    channel_login: String,
+    reward_id: String,
+    cost: i64,
+    title: String,
+    prompt: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    const HASH: &str = "d56249a7adb4978898ea3412e196688d4ac3cea1c0c2dfd65561d229ea5dcc42";
+    let hexid = || {
+        let mut r = [0u8; 16];
+        let _ = getrandom::getrandom(&mut r);
+        r.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let transaction_id = hexid();
+    let device_id = hexid();
+    let session_id = hexid();
+    let prompt_sent = prompt.unwrap_or_default();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .header("X-Device-Id", device_id.as_str())
+        .header("Client-Session-Id", &session_id[..16])
+        .json(&serde_json::json!({
+            "operationName": "RedeemCustomReward",
+            "variables": { "input": {
+                "channelID": channel_id,
+                "cost": cost,
+                "pricingType": "POINTS",
+                "prompt": prompt_sent,
+                "rewardID": reward_id,
+                "title": title,
+                "transactionID": transaction_id,
+            }},
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("redeem failed: HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(errs) = json.get("errors").and_then(|v| v.as_array()) {
+        if !errs.is_empty() {
+            let msg = errs[0]
+                .pointer("/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Twitch rejected the redemption");
+            return Err(msg.to_string());
+        }
+    }
+    // payload has been seen under both field names; an `error` object means failure, otherwise success
+    let payload = json
+        .pointer("/data/redeemCommunityPointsCustomReward")
+        .or_else(|| json.pointer("/data/redeemCustomReward"));
+    if let Some(err) = payload.and_then(|p| p.get("error")).filter(|e| e.is_object()) {
+        let code = err.get("code").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+        let friendly = match code {
+            "INSUFFICIENT_POINTS" => "Not enough points.".to_string(),
+            "NOT_AVAILABLE" => "This reward isn't available right now.".to_string(),
+            "MAX_PER_STREAM_EXCEEDED" => "Max redemptions this stream reached.".to_string(),
+            "MAX_PER_USER_PER_STREAM_EXCEEDED" => "You've already redeemed this this stream.".to_string(),
+            "COOLDOWN" => "Reward is on cooldown.".to_string(),
+            "PROPERTIES_MISMATCH" => "Reward changed — reopen and try again.".to_string(),
+            other => format!("Redemption failed: {other}"),
+        };
+        return Err(friendly);
+    }
+    Ok(true)
+}

@@ -198,6 +198,35 @@ export const chatModActionsMixin = {
     }
   },
 
+  // small duration menu for the per-message hover Timeout button (StreamNook-style: 1s/10m/1h/24h)
+  _showTimeoutMenu(anchor, targetUserId, targetUsername) {
+    document.querySelector(".mod-timeout-menu")?.remove();
+    if (!targetUserId) return;
+    const menu = document.createElement("div");
+    menu.className = "mod-timeout-menu";
+    const presets = [["1s", 1], ["10m", 600], ["1h", 3600], ["24h", 86400]];
+    for (const [label, secs] of presets) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._timeoutUser(targetUserId, targetUsername, secs);
+        menu.remove();
+      });
+      menu.appendChild(b);
+    }
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    const mw = menu.offsetWidth || 150;
+    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.left - mw / 2))}px`;
+    const close = (e) => {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close); }
+    };
+    setTimeout(() => document.addEventListener("mousedown", close), 0);
+  },
+
   // bans are permanent and easy to misclick, unlike timeout (the picker confirms) or delete
   // (reversible), so this is the one mod action with a confirm step
   _confirmAndBan(targetUserId, targetUsername) {

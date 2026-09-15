@@ -44,6 +44,9 @@ pub struct ChatMessageEvent {
     pub user_id: Option<String>,
     // true when this is the user's very first message ever in the channel (IRC "first-msg" tag, sent on every PRIVMSG, no extra capability beyond the tags one already requested). drives the purple first-time-chatter highlight on twitch.tv
     pub is_first_msg: bool,
+    // true when the message carries msg-id=highlighted-message (the "Highlight My Message" channel-points
+    // reward). Twitch renders these with an accent left border + tint.
+    pub is_highlighted: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -441,6 +444,10 @@ async fn handle_irc_line<S>(
             let emotes_tag = tags.get("emotes").cloned().filter(|s| !s.is_empty());
             let user_id = tags.get("user-id").cloned().filter(|s| !s.is_empty());
             let is_first_msg = tags.get("first-msg").map(|v| v == "1").unwrap_or(false);
+            let is_highlighted = tags
+                .get("msg-id")
+                .map(|v| v == "highlighted-message")
+                .unwrap_or(false);
 
             // strip the CTCP ACTION wrapper (\x01ACTION ...\x01) that bots and /me use. pass is_action so the frontend renders it in italics, matching Twitch
             let (message, is_action) = if trailing.starts_with("ACTION ")
@@ -461,6 +468,7 @@ async fn handle_irc_line<S>(
                     reply_parent_user, reply_parent_body,
                     msg_id, user_id, is_action, emotes_tag,
                     is_first_msg,
+                    is_highlighted,
                 },
             );
         }

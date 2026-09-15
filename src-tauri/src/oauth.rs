@@ -76,6 +76,13 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
         "moderator:manage:automod",
         "moderator:read:chatters",
         "clips:edit",
+        "moderator:read:blocked_terms",
+        "moderator:read:chat_settings",
+        "moderator:manage:chat_settings",
+        "moderator:read:unban_requests",
+        "moderator:read:warnings",
+        "moderator:read:moderators",
+        "moderator:read:vips",
     ]
     .join(" ");
 

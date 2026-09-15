@@ -121,6 +121,27 @@ export const chatUserCardMixin = {
       : "Account created: unknown";
     body.appendChild(created);
 
+    // private per-user note (local; see user_notes.rs). Available for any user, mod or not.
+    const noteWrap = document.createElement("div");
+    noteWrap.className = "user-card-note";
+    const noteInput = document.createElement("textarea");
+    noteInput.className = "user-card-note-input";
+    noteInput.rows = 2;
+    noteInput.placeholder = "Private note\u2026";
+    noteInput.addEventListener("mousedown", (e) => e.stopPropagation()); // don't start a card drag
+    noteInput.addEventListener("change", () => {
+      invoke("set_user_note", { userId, note: noteInput.value }).catch(() => {});
+      if (this._noteUserIds) {
+        if (noteInput.value.trim()) this._noteUserIds.add(userId);
+        else this._noteUserIds.delete(userId);
+      }
+    });
+    noteWrap.appendChild(noteInput);
+    body.appendChild(noteWrap);
+    invoke("get_user_note", { userId })
+      .then((n) => { noteInput.value = n || ""; })
+      .catch(() => {});
+
     // isSelf/enabled recomputed each open since isMod can change
     const isSelf = this._isSelf(username);
     const enabled = this.isMod && Boolean(this.roomId) && !isSelf;

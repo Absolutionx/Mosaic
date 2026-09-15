@@ -20,13 +20,17 @@ mod kick_oauth;
 mod link_preview;
 mod notify_prefs;
 mod oauth;
+mod pubsub;
+mod drop_prefs;
 mod stream_relay;
 mod seventv_events;
 mod song_id;
 mod track_id;
+mod user_notes;
 mod tray;
 mod twitch_device_auth;
 mod vod_progress;
+mod watch_heartbeat;
 
 // state for the active chat session: the oneshot sender that signals the running chat task to
 // disconnect, the mpsc sender that pushes outgoing PRIVMSGs into it, and the logged-in user's
@@ -132,6 +136,19 @@ fn main() {
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.maximize();
             }
+
+            // watch heartbeat: reports minute-watched so Twitch drops + channel points accrue while
+            // watching. needs the device-login token (opt-in); no-ops without it. must be created here
+            // since it needs the AppHandle to read that token.
+            let heartbeat = std::sync::Arc::new(watch_heartbeat::WatchHeartbeatService::new(
+                app.handle().clone(),
+            ));
+            heartbeat.start();
+            app.manage(heartbeat);
+
+            let pubsub = std::sync::Arc::new(pubsub::PubSubService::new(app.handle().clone()));
+            app.manage(pubsub);
+
             Ok(())
         })
         .manage(LaunchState::default())
@@ -143,6 +160,16 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             take_is_fresh_launch,
             track_id::identify_song,
+            user_notes::get_user_note,
+            user_notes::set_user_note,
+            user_notes::get_user_note_ids,
+            pubsub::pubsub_set_channel,
+            pubsub::pubsub_clear,
+            drop_prefs::get_hidden_drops,
+            drop_prefs::set_drop_hidden,
+            watch_heartbeat::heartbeat_set_target,
+            watch_heartbeat::heartbeat_clear_target,
+            watch_heartbeat::heartbeat_set_playing,
             stream_relay::start_stream,
             kick::get_kick_stream,
             kick::get_kick_channel_chat_info,
@@ -192,6 +219,8 @@ fn main() {
             chat_commands::ban_user,
             chat_commands::unban_user,
             chat_commands::delete_chat_message,
+            chat_commands::get_chat_settings,
+            chat_commands::update_chat_settings,
             chat_commands::automod_process_message,
             chat_commands::get_user_id_for_login,
             chat_commands::start_eventsub,
@@ -205,6 +234,19 @@ fn main() {
             helix::get_hype_train,
             helix::get_channel_prediction,
             helix::create_clip,
+            helix::get_channel_points,
+            helix::get_drops_inventory,
+            helix::claim_drop,
+            helix::get_watch_streak,
+            helix::share_watch_streak,
+            helix::get_channel_rewards,
+            helix::redeem_reward,
+            helix::redeem_highlight_message,
+            helix::redeem_random_emote,
+            helix::get_channel_emotes,
+            helix::get_available_emotes,
+            helix::unlock_chosen_emote,
+            helix::unlock_modified_emote,
             twitch_device_auth::twitch_device_start,
             twitch_device_auth::twitch_device_poll,
             twitch_device_auth::twitch_device_connected,

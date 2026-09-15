@@ -16,18 +16,9 @@ const channelInput = document.getElementById("channel-input");
 let manuallyDismissedFor = null;
 
 export function updateDropsBanner(channel, stream) {
-  const normalized = channel.toLowerCase();
-  const dropsEnabled = Boolean(stream && streamHasDropsEnabled(stream));
-  if (!dropsEnabled || manuallyDismissedFor === normalized) {
-    dropsBanner.style.display = "none";
-    return;
-  }
-  dropsBannerLink.href = `https://www.twitch.tv/${encodeURIComponent(channel)}`;
-  dropsBannerViewers.textContent =
-    typeof stream.viewer_count === "number"
-      ? `\u2022 ${formatViewerCount(stream.viewer_count)} watching on Twitch`
-      : "";
-  dropsBanner.style.display = "flex";
+  // Drops now accrue in-app via the watch heartbeat, so the old "can't be earned here, watch on
+  // Twitch" banner is obsolete and always hidden. Progress/claim live in the Points & Drops panel.
+  dropsBanner.style.display = "none";
 }
 
 export function resetDropsDismissal() {

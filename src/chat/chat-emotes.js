@@ -289,6 +289,31 @@ export const chatEmotesMixin = {
     }
   },
 
+  // the logged-in user's usable emotes for THIS channel (subscriber, follower, unlocked, and modified
+  // emotes). merged into twitchNativeEmotes so autocomplete, the picker, and local-echo rendering all pick
+  // them up with no extra wiring. per-channel and requires the device login (returns nothing otherwise).
+  async loadAvailableTwitchEmotes() {
+    if (this._isKickChat || !this.channel) return;
+    try {
+      const list = await invoke("get_available_emotes", { channelLogin: this.channel });
+      if (!Array.isArray(list)) return;
+      let count = 0;
+      for (const e of list) {
+        if (!e.id || !e.token) continue;
+        // don't overwrite an already-resolved channel/global entry with the same name
+        if (this.twitchNativeEmotes.has(e.token)) continue;
+        this.twitchNativeEmotes.set(e.token, {
+          id: e.id,
+          url: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`,
+        });
+        count++;
+      }
+      console.log(`Available Twitch emotes for #${this.channel}: ${list.length} returned, ${count} added.`);
+    } catch (err) {
+      console.warn("Failed to load available Twitch emotes:", err);
+    }
+  },
+
   // Helix shape { data: [{ prefix, tiers: [...] }] }. prefers dark/animated/2x images to match the theme
   ingestCheermotes(data) {
     if (!Array.isArray(data?.data)) return;

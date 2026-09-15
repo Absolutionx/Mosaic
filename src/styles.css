@@ -1727,9 +1727,9 @@ header #login-btn.logged-in { border-radius: 7px; }
   background: rgba(255, 255, 255, 0.06);
 }
 .automod-toggle-btn {
-  background: #2e1a52;
-  border: 1px solid #6441a5;
-  color: var(--accent-text);
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  color: var(--m-text, #e7ebf2);
   font-size: 11px;
   font-weight: 600;
   border-radius: 10px;
@@ -1740,7 +1740,7 @@ header #login-btn.logged-in { border-radius: 7px; }
   gap: 4px;
 }
 .automod-toggle-btn:hover {
-  background: #3a2266;
+  background: var(--m-raised, #232b36);
 }
 .automod-toggle-btn.has-pending {
   border-color: #ff9147;
@@ -6017,3 +6017,357 @@ button:active { transform: translateY(1px); }
   background: var(--m-raised, #232b36);
   text-decoration: none;
 }
+
+/* Points & Drops panel (reuses the chat-filter modal shell) */
+.rewards-modal { width: 400px; max-height: 70vh; }
+.rewards-body { overflow-y: auto; }
+.rewards-section-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--m-muted, #9aa5b4); margin: 14px 0 8px;
+}
+.rewards-section-title:first-child { margin-top: 4px; }
+.rewards-points { font-size: 15px; font-weight: 700; color: var(--m-text, #e7ebf2); }
+.rewards-points.muted, .rewards-points .muted, .rewards-empty {
+  font-weight: 500; font-size: 12.5px; color: var(--m-muted, #9aa5b4);
+}
+.rewards-coin { color: var(--m-muted, #9aa5b4); }
+.rewards-empty { padding: 4px 0; }
+.rewards-campaign { margin-bottom: 12px; }
+.rewards-campaign-head { font-size: 12.5px; font-weight: 600; color: var(--m-text, #e7ebf2); margin-bottom: 6px; }
+.rewards-campaign-head .muted { font-weight: 500; color: var(--m-muted, #9aa5b4); }
+.rewards-drop { margin: 0 0 8px; }
+.rewards-drop-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 3px; }
+.rewards-drop-name { color: var(--m-text, #e7ebf2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rewards-bar { height: 6px; border-radius: 3px; background: var(--m-bg, #0e1116); overflow: hidden; }
+.rewards-bar-fill { height: 100%; background: var(--m-accent, #9147ff); transition: width 0.3s ease; }
+.rewards-bar-fill.done { background: #3ba55d; }
+.rewards-claimed { color: #3ba55d; font-weight: 600; font-size: 11.5px; flex: 0 0 auto; }
+.rewards-claim {
+  flex: 0 0 auto; font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  background: var(--m-accent, #9147ff); color: var(--m-accent-fg, #fff);
+  border: none; border-radius: 5px; padding: 3px 10px;
+}
+.rewards-claim:hover { background: var(--m-accent-hover, #772ce8); }
+.rewards-claim:disabled { opacity: 0.6; cursor: default; }
+.rewards-drop-top .muted { color: var(--m-muted, #9aa5b4); flex: 0 0 auto; }
+
+/* Persistent channel-points pill by the chatbox */
+.chat-points-bar {
+  display: none;
+  justify-content: flex-end;
+  padding: 4px 10px 8px;
+}
+.chat-points {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--m-text, #e7ebf2);
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 999px;
+  padding: 3px 11px;
+  cursor: pointer;
+}
+.chat-points:hover { background: var(--m-raised, #232b36); }
+.chat-points .chat-points-icon { color: var(--m-accent, #9147ff); }
+
+/* Points balance shown inside the header gift button (icon + balance = one control) */
+#rewards-btn { gap: 4px; }
+.rewards-balance {
+  display: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--m-text, #e7ebf2);
+  font-variant-numeric: tabular-nums;
+}
+#rewards-btn.has-balance .rewards-balance { display: inline; }
+#rewards-btn.has-balance {
+  background: var(--m-surface-2, #1c222c);
+  padding: 3px 8px;
+}
+
+/* Flatten every scrollbar to neutral gray (no purple accent), matching the app theme. Placed last so
+   it wins over the earlier accent-based rules (e.g. the specific #chat-pane .chat-body one). */
+#chat-pane .chat-body::-webkit-scrollbar-thumb,
+#channels-sidebar::-webkit-scrollbar-thumb,
+#home-feed::-webkit-scrollbar-thumb,
+#browse-page::-webkit-scrollbar-thumb,
+#vods-page::-webkit-scrollbar-thumb,
+.multiview-followed-list::-webkit-scrollbar-thumb,
+.multiview-chat-body::-webkit-scrollbar-thumb,
+.multiview-grid::-webkit-scrollbar-thumb {
+  background: var(--m-border);
+}
+#chat-pane .chat-body::-webkit-scrollbar-thumb:hover,
+#channels-sidebar::-webkit-scrollbar-thumb:hover,
+#home-feed::-webkit-scrollbar-thumb:hover,
+#browse-page::-webkit-scrollbar-thumb:hover,
+#vods-page::-webkit-scrollbar-thumb:hover,
+.multiview-followed-list::-webkit-scrollbar-thumb:hover,
+.multiview-chat-body::-webkit-scrollbar-thumb:hover,
+.multiview-grid::-webkit-scrollbar-thumb:hover {
+  background: var(--m-faint);
+}
+
+/* Watch streak row in the Points & Drops panel */
+.rewards-streak {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--m-text, #e7ebf2);
+}
+.rewards-streak .muted { color: var(--m-muted, #9aa5b4); }
+.rewards-streak .rewards-share { margin-left: auto; }
+
+/* Neutralize the STANDARD scrollbar-color too (WebView2 honors it, not just -webkit-). Last in the
+   file so it wins over the earlier accent-dark scrollbar-color rules. */
+#chat-pane .chat-body,
+#channels-sidebar,
+#home-feed,
+#browse-page,
+#vods-page,
+.multiview-followed-list,
+.multiview-chat-body,
+.multiview-grid {
+  scrollbar-color: var(--m-border) transparent;
+}
+
+/* User notes: editor in the user card + in-chat indicator */
+.user-card-note { margin: 8px 0; }
+.user-card-note-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 40px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--m-text, #e7ebf2);
+  background: var(--m-bg, #0e1116);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.user-card-note-input:focus { outline: none; border-color: var(--m-muted, #9aa5b4); }
+.chat-note-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--m-muted, #9aa5b4);
+  vertical-align: middle;
+  margin: 0 2px 0 3px;
+  flex: 0 0 auto;
+}
+
+/* Mod action log */
+.modlog-modal { width: 440px; max-height: 70vh; }
+.modlog-body { overflow-y: auto; font-size: 12.5px; }
+.modlog-row {
+  padding: 5px 2px;
+  border-bottom: 1px solid var(--m-border-soft, #212832);
+  line-height: 1.4;
+}
+.modlog-row:last-child { border-bottom: none; }
+.modlog-time { color: var(--m-faint, #697386); font-family: var(--font-mono, monospace); font-size: 11px; }
+.modlog-mod { color: var(--m-text, #e7ebf2); font-weight: 700; }
+.modlog-text { color: var(--m-muted, #9aa5b4); }
+#modlog-btn.has-unread { position: relative; }
+#modlog-btn.has-unread::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff5c5c;
+}
+
+/* Channel point rewards (redeem) */
+.reward-list { display: flex; flex-direction: column; gap: 6px; }
+.reward-row { display: flex; align-items: center; gap: 8px; }
+.reward-img { width: 22px; height: 22px; border-radius: 4px; object-fit: cover; flex: 0 0 auto; }
+.reward-img-fallback {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--m-surface-2, #1c222c); color: var(--m-accent, #9147ff); font-size: 12px;
+}
+.reward-title {
+  flex: 1; min-width: 0; font-size: 12.5px; color: var(--m-text, #e7ebf2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.reward-cost { font-size: 11.5px; color: var(--m-muted, #9aa5b4); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.reward-redeem {
+  flex: 0 0 auto; font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2);
+  border: 1px solid var(--m-border, #29313d); border-radius: 5px; padding: 3px 10px;
+}
+.reward-redeem:hover:not(:disabled) { background: var(--m-raised, #232b36); }
+.reward-redeem:disabled { opacity: 0.45; cursor: default; }
+.reward-input-wrap { display: inline-flex; gap: 4px; flex: 0 0 auto; }
+.reward-input {
+  font-family: inherit; font-size: 11.5px; width: 110px;
+  background: var(--m-bg, #0e1116); color: var(--m-text, #e7ebf2);
+  border: 1px solid var(--m-border, #29313d); border-radius: 5px; padding: 2px 6px;
+}
+
+/* Drops: hide/restore controls */
+.rewards-campaign-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rewards-campaign-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rewards-drop-hide {
+  flex: 0 0 auto; font-family: inherit; font-size: 15px; line-height: 1; cursor: pointer;
+  background: transparent; color: var(--m-faint, #6b7482); border: none; padding: 0 2px; border-radius: 4px;
+}
+.rewards-drop-hide:hover { color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); }
+.rewards-hidden-wrap { margin-top: 8px; }
+.rewards-hidden-toggle {
+  font-family: inherit; font-size: 11.5px; cursor: pointer; background: none; border: none;
+  color: var(--m-muted, #9aa5b4); padding: 2px 0; text-decoration: underline;
+}
+.rewards-hidden-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.rewards-hidden-list[hidden] { display: none; }
+.rewards-hidden-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.rewards-drop-restore {
+  flex: 0 0 auto; font-family: inherit; font-size: 11px; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2);
+  border: 1px solid var(--m-border, #29313d); border-radius: 5px; padding: 2px 8px;
+}
+.rewards-drop-restore:hover { background: var(--m-raised, #232b36); }
+
+/* Emote picker (Choose/Modify an Emote rewards) */
+.emote-picker-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.emote-picker-back {
+  font-family: inherit; font-size: 12px; cursor: pointer; background: var(--m-surface-2, #1c222c);
+  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 6px; padding: 3px 10px;
+}
+.emote-picker-back:hover { background: var(--m-raised, #232b36); }
+.emote-picker-title { font-size: 13px; font-weight: 600; }
+.emote-picker-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px;
+  max-height: 420px; overflow-y: auto;
+}
+.emote-tile {
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 4px;
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d); border-radius: 8px;
+  aspect-ratio: 1; transition: background 0.1s, border-color 0.1s;
+}
+.emote-tile:hover:not(:disabled) { background: var(--m-raised, #232b36); border-color: var(--m-accent, #9147ff); }
+.emote-tile img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.emote-tile.redeeming { opacity: 0.5; }
+.emote-tile:disabled { cursor: default; }
+
+/* "Highlight My Message" reward — stronger accent than a channel-point message, matching twitch.tv */
+.chat-line.is-highlighted-message {
+  background: rgba(145, 71, 255, 0.14);
+  border-left: 4px solid rgba(145, 71, 255, 0.9);
+  padding-left: 6px;
+  margin-left: -6px;
+}
+
+/* Header line on a highlighted message: "<user> redeemed Highlight My Message" */
+.highlight-redeem-header {
+  display: block;
+  font-size: 11px;
+  color: var(--m-muted, #9aa5b4);
+  margin-bottom: 3px;
+}
+.highlight-redeem-header .channel-point-gem { vertical-align: middle; margin-right: 3px; }
+.highlight-redeem-user { color: var(--m-text, #e7ebf2); font-weight: 600; }
+
+/* Redemption confirmation banner (emote unlock/modify) */
+.rewards-flash {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(145, 71, 255, 0.14); border: 1px solid rgba(145, 71, 255, 0.5);
+  color: var(--m-text, #e7ebf2); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px;
+  font-size: 13px; font-weight: 600; transition: opacity 0.6s ease;
+}
+.rewards-flash.fade { opacity: 0; }
+.rewards-flash-emote { width: 28px; height: 28px; object-fit: contain; }
+
+/* Per-message hover Timeout duration menu */
+.mod-timeout-menu {
+  position: fixed; z-index: 9999; display: flex; gap: 4px;
+  background: var(--m-surface, #14181f); border: 1px solid var(--m-border, #29313d);
+  border-radius: 8px; padding: 5px; box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+}
+.mod-timeout-menu button {
+  font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2);
+  border: 1px solid var(--m-border, #29313d); border-radius: 6px; padding: 3px 9px;
+}
+.mod-timeout-menu button:hover { background: var(--m-raised, #232b36); border-color: var(--m-accent, #9147ff); }
+
+/* Mod log category color bars (StreamNook-style) */
+.modlog-row { border-left: 3px solid transparent; padding-left: 8px; }
+.modlog-cat-ban      { border-left-color: #e5484d; }
+.modlog-cat-timeout  { border-left-color: #f5a623; }
+.modlog-cat-delete   { border-left-color: #8a94a6; }
+.modlog-cat-reversal { border-left-color: #46a758; }
+.modlog-cat-role     { border-left-color: #9147ff; }
+.modlog-cat-mode     { border-left-color: #4593ff; }
+.modlog-cat-warn     { border-left-color: #f5a623; }
+.modlog-cat-other    { border-left-color: var(--m-border, #29313d); }
+
+/* Moderator room-control menu (shield) */
+.modmenu-overlay { position: fixed; inset: 0; z-index: 9998; }
+.modmenu {
+  position: fixed; width: 250px; max-width: calc(100vw - 16px);
+  background: var(--m-surface, #14181f); border: 1px solid var(--m-border, #29313d);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); padding: 12px; z-index: 9999;
+}
+.modmenu-title { font-size: 13px; font-weight: 700; color: var(--m-text, #e7ebf2); margin-bottom: 10px; }
+.modmenu-body { display: flex; flex-direction: column; gap: 4px; }
+.modmenu-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-size: 13px; color: var(--m-text, #e7ebf2); padding: 5px 4px; cursor: pointer; border-radius: 6px;
+}
+.modmenu-row:hover { background: var(--m-surface-2, #1c222c); }
+.modmenu-row input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--m-accent, #9147ff); }
+.modmenu-row-col { flex-direction: column; align-items: stretch; gap: 4px; cursor: default; }
+.modmenu-row-inline { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+.modmenu-sub { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--m-muted, #9aa5b4); padding-left: 4px; }
+.modmenu-num {
+  width: 62px; font-family: inherit; font-size: 12px; background: var(--m-bg, #0e1116);
+  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 5px; padding: 2px 6px;
+}
+.modmenu-clear {
+  margin-top: 8px; width: 100%; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); color: #e5484d;
+  border: 1px solid var(--m-border, #29313d); border-radius: 8px; padding: 7px;
+}
+.modmenu-clear:hover { background: rgba(229,72,77,0.12); border-color: #e5484d; }
+
+/* Mod log tabs (Actions / Mod Chat) */
+.modlog-tabs { display: flex; gap: 4px; padding: 0 12px 8px; border-bottom: 1px solid var(--m-border, #29313d); }
+.modlog-tab {
+  font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: transparent; color: var(--m-muted, #9aa5b4); border: none;
+  border-bottom: 2px solid transparent; padding: 6px 8px;
+}
+.modlog-tab:hover { color: var(--m-text, #e7ebf2); }
+.modlog-tab.active { color: var(--m-text, #e7ebf2); border-bottom-color: var(--m-accent, #9147ff); }
+.modchat-row { padding: 3px 4px; font-size: 13px; line-height: 1.4; }
+.modchat-user { font-weight: 700; }
+.modchat-user.is-broadcaster::after { content: "★"; font-size: 10px; margin-left: 3px; color: #e5484d; }
+.modchat-text { color: var(--m-text, #e7ebf2); word-break: break-word; }
+
+/* Compact "Update available" header button (replaces the old full-width banner) */
+.header-update-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  color: var(--m-text, #e7ebf2);
+  height: 32px; padding: 0 12px; border-radius: 7px;
+  font-size: 13px; font-family: inherit; cursor: pointer;
+}
+.header-update-btn:hover { background: var(--m-raised, #232b36); }
+.header-update-btn::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--m-accent, #9147ff); flex: 0 0 auto;
+}
+.header-update-btn.updating { cursor: default; }
+.header-update-btn.updating::before { display: none; }
+.header-update-btn:disabled { opacity: 0.75; cursor: default; }
