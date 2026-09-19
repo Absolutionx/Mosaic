@@ -9,6 +9,17 @@
   </head>
   <body>
 
+    <!-- Native decorations are off; window controls live in the app header (see below), Battle.net-style.
+         Invisible resize grips for the borderless window: -->
+    <div class="resize-grip rg-n" data-resize="North"></div>
+    <div class="resize-grip rg-s" data-resize="South"></div>
+    <div class="resize-grip rg-e" data-resize="East"></div>
+    <div class="resize-grip rg-w" data-resize="West"></div>
+    <div class="resize-grip rg-ne" data-resize="NorthEast"></div>
+    <div class="resize-grip rg-nw" data-resize="NorthWest"></div>
+    <div class="resize-grip rg-se" data-resize="SouthEast"></div>
+    <div class="resize-grip rg-sw" data-resize="SouthWest"></div>
+
     <!--
       Sibling of #app, not a child - see the CSS comment on .deps-banner
       for why. Hidden by default; shown by main.js on startup if
@@ -57,6 +68,11 @@
           flip. State + everything reacting to it lives in platform.js and
           applyPlatformUi() in main.js.
         -->
+        <div class="titlebar-action-buttons">
+        <button id="whispers-btn" class="header-whispers-btn" title="Whispers">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4-8 5-8-5V6.4l8 5 8-5V8z"/></svg>
+          <span id="whispers-unread" class="header-whispers-unread" style="display:none"></span>
+        </button>
         <button id="platform-toggle" class="platform-toggle platform-twitch" title="Switch platform">
           <svg class="platform-icon" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 3h16v11l-4 4h-4l-3 3H7v-3H4V3zm2 2v9h3v3l3-3h4l2-2V5H6zm5 2h2v5h-2V7zm5 0h2v5h-2V7z" fill="currentColor"/></svg>
           <span class="platform-label">Twitch</span>
@@ -65,7 +81,6 @@
         <span class="status" id="status-text"></span>
         <!-- Shown only when an update is available (see update-banner.js). -->
         <button id="update-btn" class="header-update-btn" style="display:none">Update</button>
-        <!-- Account control; person icon + label. -->
         <button id="login-btn">
           <svg class="account-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-7 2-7 5v1h14v-1c0-3-3-5-7-5z" fill="currentColor"/></svg>
           <span class="login-label">Log in with Twitch</span>
@@ -75,6 +90,19 @@
           Separate button + OAuth flow from Twitch's (see kick_oauth.rs).
         -->
         <button id="kick-login-btn" class="platform-kick" style="display:none">Log in with Kick</button>
+        </div>
+        </div>
+        <!-- Window controls (native decorations off), integrated into the header Battle.net-style. -->
+        <div class="win-controls">
+          <button class="win-btn" id="titlebar-min" title="Minimize" aria-label="Minimize">
+            <svg viewBox="0 0 12 12" width="11" height="11"><rect x="2" y="5.5" width="8" height="1" fill="currentColor"/></svg>
+          </button>
+          <button class="win-btn" id="titlebar-max" title="Maximize" aria-label="Maximize">
+            <svg viewBox="0 0 12 12" width="11" height="11"><rect x="2.5" y="2.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+          </button>
+          <button class="win-btn win-close" id="titlebar-close" title="Close" aria-label="Close">
+            <svg viewBox="0 0 12 12" width="11" height="11"><path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
         </div>
       </header>
 
@@ -310,27 +338,6 @@
             <button id="automod-toggle-btn" class="automod-toggle-btn" style="display:none" title="AutoMod queue">
               AutoMod <span id="automod-queue-count" class="automod-queue-count"></span>
             </button>
-            <button id="chat-filter-btn" class="chat-filter-btn" title="Chat filter (block emotes, words, phrases)">
-              <!-- Funnel icon -->
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/></svg>
-            </button>
-            <button id="pin-connect-btn" class="chat-filter-btn" title="Enable pinned messages">
-              <!-- Pin icon -->
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M14 2l6 6-4 1-3 3-1 5-3-3-4.5 4.5-1.4-1.4L10 15.6 7 12.6l5-1 3-3z"/></svg>
-            </button>
-            <button id="modmenu-btn" class="chat-filter-btn" title="Moderator controls" style="display:none">
-              <!-- Shield icon -->
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2l8 3v6c0 5-3.4 8.7-8 11-4.6-2.3-8-6-8-11V5l8-3zm0 2.2L6 6.3V11c0 3.9 2.5 6.9 6 8.8 3.5-1.9 6-4.9 6-8.8V6.3l-6-2.1z"/></svg>
-            </button>
-            <button id="modlog-btn" class="chat-filter-btn" title="Mod actions log">
-              <!-- Gavel icon -->
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M2 20h10v2H2zM14.3 2.3l-2.1 2.1 5.4 5.4 2.1-2.1zM11.5 5.1 9.4 7.2l5.4 5.4 2.1-2.1zM7.9 8.7 6.5 10.1a1 1 0 0 0 0 1.4l4 4a1 1 0 0 0 1.4 0l1.4-1.4z"/></svg>
-            </button>
-            <button id="rewards-btn" class="chat-filter-btn" title="Channel points & drops">
-              <!-- Gift icon -->
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4 11h7v10H5a1 1 0 0 1-1-1v-9zm9 0h7v9a1 1 0 0 1-1 1h-6V11zM3 7h18a1 1 0 0 1 1 1v2H2V8a1 1 0 0 1 1-1zm6.5-2A1.5 1.5 0 0 1 11 6.5V7H9.5a1.5 1.5 0 0 1 0-3zm5 0a1.5 1.5 0 0 1 0 3H13v-.5A1.5 1.5 0 0 1 14.5 5z"/></svg>
-              <span id="rewards-balance" class="rewards-balance"></span>
-            </button>
           </div>
           <span id="chat-status" class="chat-status">connecting…</span>
         </div>
@@ -343,7 +350,27 @@
           <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>
           <span id="jump-to-latest-count"></span> Chat paused due to scroll
         </button>
+        <div id="resub-banner" class="resub-banner" style="display:none"></div>
         <div class="chat-input-row" id="chat-input-row">
+          <div class="chat-mode-row" id="chat-mode-row">
+            <div id="chat-mode-indicators" class="chat-mode-indicators" style="display:none"></div>
+            <div class="chat-mode-actions">
+              <button id="modmenu-btn" class="chat-mode-mod-btn" title="Moderator controls" style="display:none">
+                <!-- Shield icon -->
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2l8 3v6c0 5-3.4 8.7-8 11-4.6-2.3-8-6-8-11V5l8-3zm0 2.2L6 6.3V11c0 3.9 2.5 6.9 6 8.8 3.5-1.9 6-4.9 6-8.8V6.3l-6-2.1z"/></svg>
+              </button>
+              <button id="modlog-btn" class="chat-mode-mod-btn" title="Mod actions log">
+                <!-- Gavel icon -->
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M2 20h10v2H2zM14.3 2.3l-2.1 2.1 5.4 5.4 2.1-2.1zM11.5 5.1 9.4 7.2l5.4 5.4 2.1-2.1zM7.9 8.7 6.5 10.1a1 1 0 0 0 0 1.4l4 4a1 1 0 0 0 1.4 0l1.4-1.4z"/></svg>
+              </button>
+              <button id="rewards-btn" class="chat-mode-rewards-btn" title="Channel points & drops">
+                <!-- Gift icon -->
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M4 11h7v10H5a1 1 0 0 1-1-1v-9zm9 0h7v9a1 1 0 0 1-1 1h-6V11zM3 7h18a1 1 0 0 1 1 1v2H2V8a1 1 0 0 1 1-1zm6.5-2A1.5 1.5 0 0 1 11 6.5V7H9.5a1.5 1.5 0 0 1 0-3zm5 0a1.5 1.5 0 0 1 0 3H13v-.5A1.5 1.5 0 0 1 14.5 5z"/></svg>
+                <span id="rewards-balance" class="rewards-balance"></span>
+              </button>
+            </div>
+          </div>
+          <div id="chat-timeout-panel" class="chat-timeout-panel" style="display:none"></div>
           <div class="chat-input-wrapper" id="chat-input-wrapper">
             <div id="chat-input-badge" class="chat-input-badge"></div>
             <textarea id="chat-input" class="chat-input" rows="1" placeholder="Send a message" disabled></textarea>
@@ -353,6 +380,11 @@
               browsable-grid-of-emotes button the official Twitch site and
               the 7TV browser extension both put here.
             -->
+            <!-- Chat settings: opens a small popup menu combining the chat filter and pinned-messages
+                 setup (formerly two separate buttons up in the chat header). Menu built in main.js. -->
+            <button id="chat-settings-btn" class="chat-settings-btn" type="button" title="Chat settings">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
             <button id="chat-emote-btn" class="chat-emote-btn" type="button" title="Emotes" disabled>
               <svg viewBox="0 0 24 24" width="18" height="18">
                 <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
@@ -406,6 +438,19 @@
       overflow/scroll container.
     -->
     <div id="emote-picker-menu" class="emote-picker-menu"></div>
+
+    <!-- Chat settings popup: small menu opened by #chat-settings-btn, launches the chat-filter and
+         pinned-messages modals (which formerly had their own toolbar buttons). Positioned in JS. -->
+    <div id="chat-settings-menu" class="chat-settings-menu" style="display:none">
+      <button class="chat-settings-menu-item" data-action="filter">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5z"/></svg>
+        <span>Chat filter</span>
+      </button>
+      <button class="chat-settings-menu-item" data-action="pins">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M14 2l6 6-4 1-3 3-1 5-3-3-4.5 4.5-1.4-1.4L10 15.6 7 12.6l5-1 3-3z"/></svg>
+        <span>Enable pinned messages</span>
+      </button>
+    </div>
 
     <script type="module" src="/src/main.js"></script>
       <div id="clip-toast" class="clip-toast" style="display:none"></div>

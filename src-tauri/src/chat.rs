@@ -34,6 +34,10 @@ pub struct ChatMessageEvent {
     pub reply_parent_user: Option<String>,
     // truncated body of the parent message (reply-parent-msg-body tag). IRC escapes (\s -> space, \: -> semicolon) are unescaped before sending
     pub reply_parent_body: Option<String>,
+    // id of the parent message (reply-parent-msg-id tag), so the UI can jump to the original if it's still in the buffer
+    pub reply_parent_msg_id: Option<String>,
+    // id of the thread's ROOT message (reply-thread-parent-msg-id tag), used to group a whole reply thread
+    pub reply_thread_parent_msg_id: Option<String>,
     // true when the message was a /me (CTCP ACTION) command
     pub is_action: bool,
     // raw IRC @emotes tag value (e.g. "25:0-4/86:6-11"). used by the frontend to render Twitch native emotes by position
@@ -57,6 +61,17 @@ pub struct ChatSystemEvent {
 #[derive(Serialize, Clone)]
 pub struct ChatRoomEvent {
     pub room_id: String,
+}
+
+// fired on ROOMSTATE. carries the channel's chat modes; each field is None when that tag wasn't in this
+// particular ROOMSTATE (deltas only include what changed), so the frontend merges into its running state.
+#[derive(serde::Serialize, Clone)]
+pub struct ChatRoomStateEvent {
+    pub emote_only: Option<bool>,
+    pub followers_only: Option<i64>, // -1 = off, 0 = any follower, N = N minutes required
+    pub subs_only: Option<bool>,
+    pub slow: Option<i64>, // seconds between messages, 0 = off
+    pub r9k: Option<bool>, // "unique chat"
 }
 
 // fired on USERSTATE (after JOIN and each sent message). carries the logged-in user's current badge
@@ -420,6 +435,15 @@ async fn handle_irc_line<S>(
                     let _ = app.emit("chat-room", ChatRoomEvent { room_id: room_id.clone() });
                 }
             }
+            // ROOMSTATE carries the chat modes: on join all are present, on a change only the changed
+            // tag(s) are, so the frontend merges. emit whatever is present this message.
+            let _ = app.emit("chat-roomstate", ChatRoomStateEvent {
+                emote_only: tags.get("emote-only").map(|v| v == "1"),
+                followers_only: tags.get("followers-only").and_then(|v| v.parse::<i64>().ok()),
+                subs_only: tags.get("subs-only").map(|v| v == "1"),
+                slow: tags.get("slow").and_then(|v| v.parse::<i64>().ok()),
+                r9k: tags.get("r9k").map(|v| v == "1"),
+            });
         }
         "PRIVMSG" => {
             let username = tags
@@ -440,6 +464,10 @@ async fn handle_irc_line<S>(
                     // unescape IRC tag value encoding: \s -> space, \: -> semicolon, \\ -> backslash
                     s.replace("\\s", " ").replace("\\:", ";").replace("\\\\", "\\")
                 });
+            let reply_parent_msg_id = tags.get("reply-parent-msg-id")
+                .cloned().filter(|s| !s.is_empty());
+            let reply_thread_parent_msg_id = tags.get("reply-thread-parent-msg-id")
+                .cloned().filter(|s| !s.is_empty());
             let msg_id    = tags.get("id").cloned().filter(|s| !s.is_empty());
             let emotes_tag = tags.get("emotes").cloned().filter(|s| !s.is_empty());
             let user_id = tags.get("user-id").cloned().filter(|s| !s.is_empty());
@@ -466,6 +494,8 @@ async fn handle_irc_line<S>(
                     message,
                     badges, bits, custom_reward_id,
                     reply_parent_user, reply_parent_body,
+                    reply_parent_msg_id,
+                    reply_thread_parent_msg_id,
                     msg_id, user_id, is_action, emotes_tag,
                     is_first_msg,
                     is_highlighted,

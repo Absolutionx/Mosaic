@@ -1782,3 +1782,124 @@ pub async fn redeem_reward(
     }
     Ok(true)
 }
+
+// Bulk "does this channel have an active hype train right now" for lists (sidebar/home/browse), so we
+// badge live rows without one request per channel. BulkAllActiveHypeTrainStatusesQuery, web client id,
+// no auth. Mirrors StreamNook's get_bulk_hype_train_status.
+#[tauri::command]
+pub async fn get_active_hype_trains(channel_ids: Vec<String>) -> Result<serde_json::Value, String> {
+    if channel_ids.is_empty() {
+        return Ok(serde_json::json!([]));
+    }
+    const HASH: &str = "88e62c2cbd13b7bdce93cc8934727003a5cadd821938538f74848199fbfe84a0";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        .json(&serde_json::json!({
+            "operationName": "BulkAllActiveHypeTrainStatusesQuery",
+            "variables": { "channelIDs": channel_ids },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    if let Some(arr) = json
+        .pointer("/data/allActiveHypeTrainStatuses")
+        .and_then(|v| v.as_array())
+    {
+        for t in arr {
+            let cid = t
+                .pointer("/channel/id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let Some(cid) = cid else { continue };
+            out.push(serde_json::json!({
+                "channel_id": cid,
+                "level": t.get("level").and_then(|v| v.as_i64()).unwrap_or(0),
+                "golden": t.get("isGoldenKappaTrain").and_then(|v| v.as_bool()).unwrap_or(false),
+            }));
+        }
+    }
+    Ok(serde_json::json!(out))
+}
+
+// Sub-anniversary ("resub") share: detect a pending anniversary the user can share in chat, and share it.
+// Mirrors StreamNook's resub commands (Chat_ShareResub_ChannelData / Chat_ShareResub_UseResubToken).
+#[tauri::command]
+pub async fn get_resub_notification(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::Value::Null),
+    };
+    const HASH: &str = "beb55e2ecdbae3dd29c51a60597014d526466bc8f94fb88f3c3482110f4da1aa";
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "Chat_ShareResub_ChannelData",
+            "variables": { "channelLogin": channel_login.to_lowercase() },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let r = json.pointer("/data/user/self/resubNotification");
+    match r {
+        Some(r) if r.is_object() => Ok(serde_json::json!({
+            "token": r.get("token").and_then(|v| v.as_str()).unwrap_or(""),
+            "cumulative_months": r.get("cumulativeTenureMonths").and_then(|v| v.as_i64()).unwrap_or(0),
+            "streak_months": r.get("streakTenureMonths").and_then(|v| v.as_i64()).unwrap_or(0),
+            "months": r.get("months").and_then(|v| v.as_i64()).unwrap_or(0),
+        })),
+        _ => Ok(serde_json::Value::Null),
+    }
+}
+
+#[tauri::command]
+pub async fn share_resub(
+    channel_login: String,
+    message: Option<String>,
+    include_streak: bool,
+    app: tauri::AppHandle,
+) -> Result<bool, String> {
+    let token = crate::twitch_device_auth::get_device_token(&app)
+        .await
+        .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
+    const HASH: &str = "61045d4a4bb10d25080bc0a01a74232f1fa67a6a530e0f2ebf05df2f1ba3fa59";
+    let mut input = serde_json::json!({
+        "channelLogin": channel_login.to_lowercase(),
+        "includeStreak": include_streak,
+    });
+    if let Some(msg) = message {
+        if !msg.trim().is_empty() {
+            input["message"] = serde_json::Value::String(msg);
+        }
+    }
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({
+            "operationName": "Chat_ShareResub_UseResubToken",
+            "variables": { "input": input },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if json.get("errors").and_then(|v| v.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+        return Err("Twitch rejected the share.".into());
+    }
+    Ok(true)
+}

@@ -2,6 +2,7 @@
 // files may carry a stale close_pref key; serde ignores unknown fields, so they still load
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager};
 
 const PREFS_FILE: &str = "notify_channels.json";
@@ -10,6 +11,9 @@ const PREFS_FILE: &str = "notify_channels.json";
 struct PersistedPrefs {
     // lowercase channel logins the user wants go-live notifications for
     channels: Vec<String>,
+    // login -> the specific category (game) name to notify on when the channel switches TO it
+    #[serde(default)]
+    category_targets: HashMap<String, String>,
 }
 
 fn prefs_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -41,5 +45,20 @@ pub fn get_notify_channels(app: AppHandle) -> Vec<String> {
 pub fn set_notify_channels(app: AppHandle, channels: Vec<String>) -> Result<(), String> {
     let mut prefs = load_prefs(&app);
     prefs.channels = channels;
+    save_prefs(&app, &prefs)
+}
+
+#[tauri::command]
+pub fn get_notify_category_targets(app: AppHandle) -> HashMap<String, String> {
+    load_prefs(&app).category_targets
+}
+
+#[tauri::command]
+pub fn set_notify_category_targets(
+    app: AppHandle,
+    targets: HashMap<String, String>,
+) -> Result<(), String> {
+    let mut prefs = load_prefs(&app);
+    prefs.category_targets = targets;
     save_prefs(&app, &prefs)
 }

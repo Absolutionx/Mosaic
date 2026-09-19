@@ -499,6 +499,12 @@ export class TwitchChat {
     clearModLog(); // mod-action log is per-channel
     this._stopHypePoll();
     this._stopPredictionPoll();
+    this._stopResubPoll();
+    this.closeThread();
+    this._roomModes = {};
+    this._renderChatModes();
+    this._hideTimeoutPanel();
+    if (this._msgStore) this._msgStore.clear();
     this.userScrolledUp = false;
     // leaving any prior Kick-chat session behind, back on Twitch IRC now
     this._isKickChat = false;
@@ -589,8 +595,12 @@ export class TwitchChat {
     this._stopPinPoll();
     this._stopHypePoll();
     this._stopPointsPoll();
+    this._stopResubPoll();
     invoke("heartbeat_clear_target").catch(() => {});
     invoke("pubsub_clear").catch(() => {});
+    invoke("seventv_cosmetics_clear").catch(() => {});
+    if (this._userPaints) this._userPaints.clear();
+    if (this._userBadges) this._userBadges.clear();
     this._stopPredictionPoll();
     // always dismiss the emote autocomplete popup, it's position:fixed on body, so it can strand over unrelated UI after a channel switch or stop
     this._hideEmotePopup();
@@ -755,7 +765,8 @@ export class TwitchChat {
       await listen("chat-message", (event) => {
         const { username, color, message, badges, bits, custom_reward_id,
                 reply_parent_user, reply_parent_body, msg_id, user_id, is_action,
-                emotes_tag, is_first_msg, is_highlighted } = event.payload;
+                emotes_tag, is_first_msg, is_highlighted, reply_parent_msg_id,
+                reply_thread_parent_msg_id } = event.payload;
         // track chatters for @mention autocomplete (cap at 500 to avoid memory bloat)
         if (username) {
           this._chatUsers.set(username.toLowerCase(), username);
@@ -765,7 +776,8 @@ export class TwitchChat {
         }
         this.renderMessage(username, color || "#9147ff", message, badges, bits, custom_reward_id,
                            reply_parent_user, reply_parent_body, msg_id, user_id, is_action,
-                           emotes_tag, is_first_msg, is_highlighted);
+                           emotes_tag, is_first_msg, is_highlighted, reply_parent_msg_id,
+                           reply_thread_parent_msg_id);
       })
     );
 
@@ -835,11 +847,19 @@ export class TwitchChat {
         this._startHypePoll(this.channel);
         // begin polling for an active prediction (see _startPredictionPoll)
         this._startPredictionPoll(this.channel);
+        // check for a shareable sub-anniversary (see _startResubPoll)
+        this._startResubPoll(this.channel);
         // watch heartbeat: report minute-watched so Twitch drops + channel points accrue for this
         // channel (needs the device login; no-ops without it)
         invoke("heartbeat_set_target", { channelId: this.roomId, login: this.channel }).catch(() => {});
         // real-time channel-point redemptions + balance for ANY channel (device login required)
         invoke("pubsub_set_channel", { channelLogin: this.channel }).catch(() => {});
+        // 7TV cosmetics (username paints) for this channel
+        this._ensurePaintDefs();
+        this._ensureBadgeDefs();
+        this._setupCosmeticsListener();
+        this._setupRoomListeners();
+        invoke("seventv_cosmetics_set_channel", { channelId: this.roomId }).catch(() => {});
         // persistent channel-points pill by the chatbox (device login required; hides otherwise)
         this._startPointsPoll(this.channel);
         // load the set of user ids that have a note, for the in-chat indicator (see user_notes.rs)
@@ -987,6 +1007,450 @@ export class TwitchChat {
   // Twitch pinned message: poll GetPinnedChat (via Rust get_pinned_chat_messages) every 30s and show
   // a banner atop the chat pane. Twitch-only; Kick has no equivalent. failures are logged loudly so a
   // rejected token/client pairing is obvious (see the Rust command's comment)
+  // Sub-anniversary: check once on join (and re-check occasionally) for a shareable resub, show a banner
+  // matching twitch.tv's "It's your N month sub anniversary!" with a Share button.
+  // Threaded reply view: a panel over the chat pane showing a whole reply thread (grouped by Twitch's
+  // reply-thread-parent-msg-id), with a reply box that posts back into the thread. Shows the messages
+  // received this session that belong to the thread (IRC only carries live messages).
+  // --- 7TV cosmetics (paints) ---
+  async _ensurePaintDefs() {
+    if (this._paintDefs) return;
+    this._paintDefs = new Map();
+    try {
+      const paints = await invoke("get_all_seventv_paints");
+      if (Array.isArray(paints)) for (const p of paints) if (p && p.id) this._paintDefs.set(p.id, p);
+      console.log(`Loaded ${this._paintDefs.size} 7TV paints.`);
+    } catch (err) {
+      console.warn("Failed to load 7TV paints:", err);
+    }
+  }
+
+  _setupCosmeticsListener() {
+    if (this._cosmeticsBound) return;
+    this._cosmeticsBound = true;
+    this._userPaints = this._userPaints || new Map();
+    this._userBadges = this._userBadges || new Map();
+    listen("seventv-cosmetic", (e) => {
+      const p = e.payload || {};
+      if (!p.twitch_id) return;
+      if (p.kind === "PAINT") {
+        if (p.action === "delete") this._userPaints.delete(p.twitch_id);
+        else if (p.ref_id) this._userPaints.set(p.twitch_id, p.ref_id);
+        this._reapplyPaintForUser(p.twitch_id);
+      } else if (p.kind === "BADGE") {
+        if (p.action === "delete") this._userBadges.delete(p.twitch_id);
+        else if (p.ref_id) this._userBadges.set(p.twitch_id, p.ref_id);
+        this._reapplyBadgeForUser(p.twitch_id);
+      }
+    }).catch(() => {});
+  }
+
+  async _ensureBadgeDefs() {
+    if (this._badgeDefs) return;
+    this._badgeDefs = new Map();
+    try {
+      const badges = await invoke("get_all_seventv_badges");
+      if (Array.isArray(badges)) {
+        for (const b of badges) {
+          if (!b || !b.id || !Array.isArray(b.images) || !b.images.length) continue;
+          const img = b.images.slice().sort((a, c) => (a.scale || 99) - (c.scale || 99))[0];
+          if (img && img.url) this._badgeDefs.set(b.id, { name: b.name || "7TV Badge", url: img.url });
+        }
+      }
+      console.log(`Loaded ${this._badgeDefs.size} 7TV badges.`);
+    } catch (err) {
+      console.warn("Failed to load 7TV badges:", err);
+    }
+  }
+
+  _seventvBadgeEl(userId) {
+    if (!userId || !this._userBadges || !this._badgeDefs) return null;
+    const badgeId = this._userBadges.get(userId);
+    if (!badgeId) return null;
+    const def = this._badgeDefs.get(badgeId);
+    if (!def) return null;
+    const img = document.createElement("img");
+    img.className = "chat-badge seventv-badge";
+    img.src = def.url;
+    img.alt = def.name;
+    img.title = def.name;
+    return img;
+  }
+
+  _reapplyBadgeForUser(twitchId) {
+    if (!this.container) return;
+    let sel;
+    try { sel = `.chat-line[data-msg-user-id="${CSS.escape(twitchId)}"]`; }
+    catch { return; }
+    for (const line of this.container.querySelectorAll(sel)) {
+      const existing = line.querySelector(".seventv-badge");
+      if (existing) existing.remove();
+      const name = line.querySelector(".chat-username");
+      const el = this._seventvBadgeEl(twitchId);
+      if (el && name) line.insertBefore(el, name);
+    }
+  }
+
+  _applyPaint(el, userId) {
+    if (!userId || !this._userPaints || !this._paintDefs) return;
+    const paintId = this._userPaints.get(userId);
+    if (!paintId) return;
+    const paint = this._paintDefs.get(paintId);
+    if (!paint) return;
+    const css = this._paintCss(paint);
+    if (!css) return;
+    el.classList.add("has-7tv-paint");
+    el.style.backgroundImage = css.backgroundImage;
+    el.style.filter = css.filter || "";
+  }
+
+  // re-apply (or clear) a user's paint on already-rendered messages when their cosmetic changes
+  _reapplyPaintForUser(twitchId) {
+    if (!this.container) return;
+    let sel;
+    try { sel = `.chat-line[data-msg-user-id="${CSS.escape(twitchId)}"] .chat-username`; }
+    catch { return; }
+    for (const el of this.container.querySelectorAll(sel)) {
+      el.classList.remove("has-7tv-paint");
+      el.style.backgroundImage = "";
+      el.style.filter = "";
+      this._applyPaint(el, twitchId);
+    }
+  }
+
+  _paintCss(paint) {
+    const data = paint && paint.data;
+    if (!data || !Array.isArray(data.layers) || !data.layers.length) return null;
+    const rgba = (c) => (c ? `rgba(${c.r || 0},${c.g || 0},${c.b || 0},${(c.a == null ? 255 : c.a) / 255})` : "rgba(0,0,0,1)");
+    const stopsStr = (stops) => (stops || []).map((s) => `${rgba(s.color)} ${Math.round((s.at || 0) * 100)}%`).join(", ");
+    const images = [];
+    for (const layer of data.layers) {
+      const ty = layer.ty || {};
+      switch (ty.__typename) {
+        case "PaintLayerTypeLinearGradient": {
+          const s = stopsStr(ty.stops);
+          if (s) images.push(`${ty.repeating ? "repeating-" : ""}linear-gradient(${ty.angle || 0}deg, ${s})`);
+          break;
+        }
+        case "PaintLayerTypeRadialGradient": {
+          const s = stopsStr(ty.stops);
+          if (s) images.push(`${ty.repeating ? "repeating-" : ""}radial-gradient(circle, ${s})`);
+          break;
+        }
+        case "PaintLayerTypeSingleColor": {
+          const c = rgba(ty.color);
+          images.push(`linear-gradient(${c}, ${c})`);
+          break;
+        }
+        default: break; // image layers deferred
+      }
+    }
+    if (!images.length) return null;
+    let filter = "";
+    if (Array.isArray(data.shadows) && data.shadows.length) {
+      filter = data.shadows
+        .map((s) => `drop-shadow(${s.offsetX || 0}px ${s.offsetY || 0}px ${s.blur || 0}px ${rgba(s.color)})`)
+        .join(" ");
+    }
+    return { backgroundImage: images.join(", "), filter };
+  }
+
+  // --- chat mode indicators (emote-only / subs-only / followers / slow / unique) + timeout panel ---
+  _setupRoomListeners() {
+    if (this._roomListenersBound) return;
+    this._roomListenersBound = true;
+    listen("chat-roomstate", (e) => this._onRoomState(e.payload || {})).catch(() => {});
+    listen("chat-clearchat", (e) => this._onClearChat(e.payload || {})).catch(() => {});
+  }
+
+  _onRoomState(p) {
+    if (!this._roomModes) this._roomModes = {};
+    const m = this._roomModes;
+    if (p.emote_only != null) m.emoteOnly = p.emote_only;
+    if (p.subs_only != null) m.subsOnly = p.subs_only;
+    if (p.r9k != null) m.r9k = p.r9k;
+    if (p.followers_only != null) m.followersOnly = p.followers_only; // -1 off, 0 all, N min
+    if (p.slow != null) m.slow = p.slow; // seconds, 0 off
+    this._renderChatModes();
+  }
+
+  _renderChatModes() {
+    const wrap = document.getElementById("chat-mode-indicators");
+    if (!wrap) return;
+    const m = this._roomModes || {};
+    const chips = [];
+    if (m.emoteOnly) chips.push("Emote Only");
+    if (m.subsOnly) chips.push("Subscriber Only");
+    if (m.followersOnly != null && m.followersOnly >= 0) {
+      chips.push(m.followersOnly > 0 ? `Followers Only (${this._fmtFollowDur(m.followersOnly)})` : "Followers Only");
+    }
+    if (m.slow && m.slow > 0) chips.push(`Slow Mode (${m.slow}s)`);
+    if (m.r9k) chips.push("Unique Chat");
+    wrap.innerHTML = "";
+    if (!chips.length) { wrap.style.display = "none"; return; }
+    for (const label of chips) {
+      const chip = document.createElement("span");
+      chip.className = "chat-mode-chip";
+      chip.textContent = label;
+      wrap.appendChild(chip);
+    }
+    wrap.style.display = "";
+  }
+
+  _fmtFollowDur(min) {
+    if (min >= 1440) return `${Math.round(min / 1440)}d`;
+    if (min >= 60) return `${Math.round(min / 60)}h`;
+    return `${min}m`;
+  }
+
+  _onClearChat(p) {
+    // a CLEARCHAT targeting our own user id means we were timed out / banned
+    if (!this.ownUserId || !p) return;
+    if (String(p.target_user_id) !== String(this.ownUserId)) return;
+    this._showTimeoutPanel(p.ban_duration_secs && p.ban_duration_secs > 0 ? p.ban_duration_secs : null);
+  }
+
+  _showTimeoutPanel(secs) {
+    const panel = document.getElementById("chat-timeout-panel");
+    const wrapper = document.getElementById("chat-input-wrapper");
+    if (!panel || !wrapper) return;
+    if (this._timeoutTicker) { clearInterval(this._timeoutTicker); this._timeoutTicker = null; }
+    const banned = secs == null;
+    if (!banned) this._timeoutEnds = Date.now() + secs * 1000;
+    wrapper.style.display = "none";
+    panel.style.display = "";
+    const render = () => {
+      let body;
+      if (banned) {
+        body = "You are permanently banned from this chat.";
+      } else {
+        const remain = Math.max(0, Math.ceil((this._timeoutEnds - Date.now()) / 1000));
+        if (remain <= 0) { this._hideTimeoutPanel(); return; }
+        body = `You are currently timed out from Chat, you can chat again in ${this._fmtCountdown(remain)}.`;
+      }
+      panel.innerHTML =
+        `<div class="chat-timeout-title">\u23F1 ${banned ? "BANNED" : "TIMEOUT"}</div>` +
+        `<div class="chat-timeout-body">${body}</div>`;
+    };
+    render();
+    if (!banned) this._timeoutTicker = setInterval(render, 1000);
+  }
+
+  _hideTimeoutPanel() {
+    if (this._timeoutTicker) { clearInterval(this._timeoutTicker); this._timeoutTicker = null; }
+    const panel = document.getElementById("chat-timeout-panel");
+    const wrapper = document.getElementById("chat-input-wrapper");
+    if (panel) { panel.style.display = "none"; panel.innerHTML = ""; }
+    if (wrapper && !this._isVodMode) wrapper.style.display = "";
+  }
+
+  _fmtCountdown(s) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    if (m > 0) return `${m} minute${m > 1 ? "s" : ""} ${sec} second${sec !== 1 ? "s" : ""}`;
+    return `${sec} second${sec !== 1 ? "s" : ""}`;
+  }
+
+  openThread(rootId) {
+    if (!rootId) return;
+    this._openThreadRoot = rootId;
+    const pane = document.getElementById("chat-pane");
+    if (!pane) return;
+    let panel = document.getElementById("thread-panel");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "thread-panel";
+      panel.className = "thread-panel";
+      panel.innerHTML =
+        '<div class="thread-panel-header">' +
+        '<span class="thread-panel-title">Thread</span>' +
+        '<button class="thread-panel-close" title="Close">\u2715</button>' +
+        '</div>' +
+        '<div class="thread-panel-body" id="thread-panel-body"></div>' +
+        '<div class="thread-panel-replyctx">Replying to <span class="thread-panel-replyuser"></span> \u00b7 ' +
+        '<button class="thread-panel-cancel">Cancel</button></div>' +
+        '<div class="thread-panel-inputrow">' +
+        '<input type="text" class="thread-panel-input" placeholder="Reply\u2026" maxlength="500" />' +
+        '<button class="thread-panel-send">Reply</button>' +
+        '</div>';
+      pane.appendChild(panel);
+      panel.querySelector(".thread-panel-close").addEventListener("click", () => this.closeThread());
+      panel.querySelector(".thread-panel-cancel").addEventListener("click", () => this.closeThread());
+      const input = panel.querySelector(".thread-panel-input");
+      const send = panel.querySelector(".thread-panel-send");
+      const doSend = async () => {
+        const text = input.value.trim();
+        if (!text || !this.isLoggedIn || this._isKickChat) return;
+        // reply into the thread: parent = the latest message in the thread, falling back to the root
+        const inThread = this._msgStore
+          ? [...this._msgStore.values()].filter((m) => m.threadRootId === this._openThreadRoot)
+          : [];
+        const target = inThread.length ? inThread[inThread.length - 1].id : this._openThreadRoot;
+        send.disabled = true;
+        try {
+          await invoke("send_chat_message", { message: text, replyToMsgId: target });
+          input.value = "";
+        } catch (err) {
+          this.systemLine(`Couldn't send: ${err}`);
+        } finally {
+          send.disabled = false;
+          input.focus();
+        }
+      };
+      send.addEventListener("click", doSend);
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSend(); } });
+    }
+
+    const body = panel.querySelector(".thread-panel-body");
+    body.innerHTML = "";
+    const msgs = this._msgStore
+      ? [...this._msgStore.values()].filter((m) => m.threadRootId === rootId)
+      : [];
+    if (!msgs.length) {
+      body.innerHTML = '<div class="thread-panel-empty">This thread\u2019s messages aren\u2019t in view. Only messages received since you joined this channel are shown.</div>';
+    } else {
+      for (const m of msgs) body.appendChild(this._buildThreadLine(m));
+    }
+    const canReply = this.isLoggedIn && !this._isKickChat;
+    panel.querySelector(".thread-panel-inputrow").style.display = canReply ? "" : "none";
+    panel.querySelector(".thread-panel-replyctx").style.display = canReply ? "" : "none";
+    this._updateThreadReplyCtx();
+    panel.style.display = "flex";
+    body.scrollTop = body.scrollHeight;
+  }
+
+  // reflect who a thread reply will go to (the latest message in the thread)
+  _updateThreadReplyCtx() {
+    const panel = document.getElementById("thread-panel");
+    if (!panel || !this._openThreadRoot) return;
+    const inThread = this._msgStore
+      ? [...this._msgStore.values()].filter((m) => m.threadRootId === this._openThreadRoot)
+      : [];
+    const last = inThread.length ? inThread[inThread.length - 1] : null;
+    const who = panel.querySelector(".thread-panel-replyuser");
+    if (who) who.textContent = last ? `@${last.user}` : "thread";
+  }
+
+  closeThread() {
+    this._openThreadRoot = null;
+    const panel = document.getElementById("thread-panel");
+    if (panel) panel.style.display = "none";
+  }
+
+  _buildThreadLine(m) {
+    const line = document.createElement("div");
+    line.className = "thread-line";
+    if (m.id === this._openThreadRoot) line.classList.add("thread-root");
+    const user = document.createElement("span");
+    user.className = "thread-line-user";
+    user.style.color = m.color || "#9147ff";
+    user.textContent = m.user;
+    line.appendChild(user);
+    line.appendChild(document.createTextNode(": "));
+    const bodyEl = document.createElement("span");
+    bodyEl.className = "thread-line-body";
+    try { bodyEl.appendChild(this.renderMessageBody(m.body, m.emotesTag || null)); }
+    catch { bodyEl.textContent = m.body; }
+    line.appendChild(bodyEl);
+    return line;
+  }
+
+  _appendThreadLine(m) {
+    const body = document.getElementById("thread-panel-body");
+    if (!body) return;
+    const empty = body.querySelector(".thread-panel-empty");
+    if (empty) empty.remove();
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    body.appendChild(this._buildThreadLine(m));
+    if (atBottom) body.scrollTop = body.scrollHeight;
+    this._updateThreadReplyCtx();
+  }
+
+  _startResubPoll(login) {
+    this._stopResubPoll();
+    if (!login) return;
+    const check = async () => {
+      if (this.channel !== login) return;
+      let info = null;
+      try { info = await invoke("get_resub_notification", { channelLogin: login }); } catch { return; }
+      if (this.channel !== login) return;
+      const el = document.getElementById("resub-banner");
+      if (!el) return;
+      const months = info ? (info.cumulative_months || info.months || 0) : 0;
+      if (!info || months <= 0) { el.style.display = "none"; return; }
+      this._renderResubBanner(el, info, login, months);
+    };
+    check();
+    this._resubTimer = setInterval(check, 5 * 60 * 1000); // anniversaries don't appear often
+  }
+
+  _stopResubPoll() {
+    if (this._resubTimer) { clearInterval(this._resubTimer); this._resubTimer = null; }
+    const el = document.getElementById("resub-banner");
+    if (el) { el.style.display = "none"; el.innerHTML = ""; }
+  }
+
+  _renderResubBanner(el, info, login, months) {
+    el.innerHTML = "";
+    const text = document.createElement("span");
+    text.className = "resub-banner-text";
+    text.textContent = `It's your ${months} month sub anniversary!`;
+    const share = document.createElement("button");
+    share.className = "resub-banner-share";
+    share.textContent = "Share";
+    const dismiss = document.createElement("button");
+    dismiss.className = "resub-banner-dismiss";
+    dismiss.textContent = "\u2715";
+    dismiss.title = "Dismiss";
+    dismiss.addEventListener("click", () => { el.style.display = "none"; });
+
+    const doShare = async (message, btn) => {
+      btn.disabled = true;
+      btn.textContent = "Sharing\u2026";
+      try {
+        await invoke("share_resub", {
+          channelLogin: login,
+          message: (message && message.trim()) ? message.trim() : null,
+          includeStreak: (info.streak_months || 0) > 1,
+        });
+        el.style.display = "none";
+        el.innerHTML = "";
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "Retry";
+        btn.title = typeof e === "string" ? e : "Failed";
+      }
+    };
+
+    // clicking Share swaps in a message box (like twitch.tv), so the anniversary can carry a message
+    share.addEventListener("click", () => {
+      text.style.display = "none";
+      share.style.display = "none";
+      const wrap = document.createElement("span");
+      wrap.className = "resub-banner-inputwrap";
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "resub-banner-input";
+      input.placeholder = "Add a message (optional)";
+      input.maxLength = 500;
+      const send = document.createElement("button");
+      send.className = "resub-banner-share";
+      send.textContent = "Send";
+      wrap.appendChild(input);
+      wrap.appendChild(send);
+      el.insertBefore(wrap, dismiss);
+      input.focus();
+      send.addEventListener("click", () => doShare(input.value, send));
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") doShare(input.value, send); });
+    });
+
+    el.appendChild(text);
+    el.appendChild(share);
+    el.appendChild(dismiss);
+    el.style.display = "";
+  }
+
+
   _startPinPoll(channelId) {
     this._stopPinPoll();
     if (!channelId) return;
@@ -1251,9 +1715,25 @@ export class TwitchChat {
 
   renderMessage(username, color, message, badgesTag, bits, customRewardId,
                 replyParentUser, replyParentBody, msgId, userId, isAction = false,
-                emotesTag = null, isFirstMsg = false, isHighlighted = false) {
+                emotesTag = null, isFirstMsg = false, isHighlighted = false, replyParentMsgId = null,
+                replyThreadParentMsgId = null) {
     // words/phrases hide the whole message (see reloadChatFilter / the Chat Filter modal)
     if (this._shouldFilterMessage(username, message, emotesTag)) return;
+
+    // keep a bounded store of recent messages for the threaded reply view (Twitch only; needs a msg id)
+    if (msgId && !this._isKickChat) {
+      const threadRootId = replyThreadParentMsgId || msgId;
+      if (!this._msgStore) this._msgStore = new Map();
+      this._msgStore.set(msgId, {
+        id: msgId, user: username, color, body: message, emotesTag, isAction,
+        threadRootId, parentUser: replyParentUser || null,
+      });
+      if (this._msgStore.size > 1000) this._msgStore.delete(this._msgStore.keys().next().value);
+      // if this belongs to the thread currently open, append it live
+      if (this._openThreadRoot && threadRootId === this._openThreadRoot) {
+        this._appendThreadLine(this._msgStore.get(msgId));
+      }
+    }
     // blocked emotes: stripped from the body but the message still shows, UNLESS it's only blocked
     // emotes (then hide it). own messages are never filtered or stripped
     const _own = (this._isKickChat ? this._kickLogin : this.ownLogin) || this.ownDisplayName;
@@ -1316,6 +1796,13 @@ export class TwitchChat {
       const replyHeader = document.createElement("div");
       replyHeader.className = "reply-header";
       replyHeader.textContent = `↩ ${replyParentUser}: ${replyParentBody}`;
+      replyHeader.title = `Replying to ${replyParentUser}: ${replyParentBody}`;
+      replyHeader.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const rootId = replyThreadParentMsgId || replyParentMsgId;
+        if (rootId) this.openThread(rootId);
+        else replyHeader.classList.toggle("expanded");
+      });
       line.appendChild(replyHeader);
     }
 
@@ -1346,6 +1833,7 @@ export class TwitchChat {
     nameSpan.className = "chat-username";
     nameSpan.style.color = this.normalizeColor(color);
     nameSpan.textContent = username + ":";
+    if (userId) this._applyPaint(nameSpan, userId);
     // clicking the username opens the user card (avatar, account age, timeout/ban, delete). timeout/ban are card-only (like Twitch); delete is also on the hover row. needs the sender's userId, absent only for the local echo. VOD lines have a real userId, so their cards work; timeout/ban stay disabled there (no roomId)
     if (userId) {
       nameSpan.classList.add("chat-username-clickable");
@@ -1354,6 +1842,7 @@ export class TwitchChat {
         this._showUserCard(nameSpan, userId, username, badgesTag, msgId, message);
       });
     }
+    if (userId) { const sb = this._seventvBadgeEl(userId); if (sb) line.appendChild(sb); }
     line.appendChild(nameSpan);
     if (userId && this._noteUserIds && this._noteUserIds.has(userId)) {
       const noteDot = document.createElement("span");

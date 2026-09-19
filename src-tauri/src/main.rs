@@ -22,6 +22,8 @@ mod notify_prefs;
 mod oauth;
 mod pubsub;
 mod drop_prefs;
+mod seventv_cosmetics;
+mod whispers;
 mod stream_relay;
 mod seventv_events;
 mod song_id;
@@ -149,6 +151,9 @@ fn main() {
             let pubsub = std::sync::Arc::new(pubsub::PubSubService::new(app.handle().clone()));
             app.manage(pubsub);
 
+            let seventv = std::sync::Arc::new(seventv_cosmetics::SevenTvCosmetics::new(app.handle().clone()));
+            app.manage(seventv);
+
             Ok(())
         })
         .manage(LaunchState::default())
@@ -165,6 +170,16 @@ fn main() {
             user_notes::get_user_note_ids,
             pubsub::pubsub_set_channel,
             pubsub::pubsub_clear,
+            seventv_cosmetics::seventv_cosmetics_set_channel,
+            seventv_cosmetics::seventv_cosmetics_clear,
+            seventv_cosmetics::get_all_seventv_paints,
+            seventv_cosmetics::get_all_seventv_badges,
+            whispers::send_whisper,
+            whispers::whisper_get_threads,
+            whispers::whisper_get_thread,
+            whispers::whisper_record,
+            whispers::whisper_mark_read,
+            whispers::whisper_total_unread,
             drop_prefs::get_hidden_drops,
             drop_prefs::set_drop_hidden,
             watch_heartbeat::heartbeat_set_target,
@@ -202,6 +217,8 @@ fn main() {
             oauth::start_oauth_login,
             notify_prefs::get_notify_channels,
             notify_prefs::set_notify_channels,
+            notify_prefs::get_notify_category_targets,
+            notify_prefs::set_notify_category_targets,
             vod_progress::get_all_vod_progress,
             vod_progress::get_vod_progress,
             vod_progress::save_vod_progress,
@@ -245,6 +262,9 @@ fn main() {
             helix::redeem_random_emote,
             helix::get_channel_emotes,
             helix::get_available_emotes,
+            helix::get_active_hype_trains,
+            helix::get_resub_notification,
+            helix::share_resub,
             helix::unlock_chosen_emote,
             helix::unlock_modified_emote,
             twitch_device_auth::twitch_device_start,

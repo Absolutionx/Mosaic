@@ -340,6 +340,8 @@ fn handle_frame(app: &AppHandle, txt: &str) -> FrameAction {
                         .map(|id| id.to_string()),
                     is_first_msg: false,
                     is_highlighted: false,
+                    reply_parent_msg_id: None,
+                    reply_thread_parent_msg_id: None,
                 },
             );
             FrameAction::None

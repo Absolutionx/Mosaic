@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
+import { makeHypeBadge } from "./hype-badges.js";
 
 // every category is shown now (see get_top_games pagination in main.rs)
 const CATEGORIES_COLLAPSED_COUNT = 18;
@@ -662,6 +663,7 @@ export class BrowsePage {
   buildStreamCard(s) {
     const card = document.createElement("button");
     card.className = "home-grid-card";
+    card.dataset.hypeId = s.user_id || "";
     card.addEventListener("click", () => this.onChannelSelect(s.user_login, s));
 
     const thumbWrap = document.createElement("div");
@@ -672,6 +674,10 @@ export class BrowsePage {
     thumb.src = thumbnailUrl(s.thumbnail_url, 320, 180);
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
+
+    const hype = makeHypeBadge();
+    hype.classList.add("home-hype-badge");
+    thumbWrap.appendChild(hype);
 
     const liveBadge = document.createElement("span");
     liveBadge.className = "home-live-badge";

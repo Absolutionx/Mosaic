@@ -79,6 +79,8 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
         "moderator:read:blocked_terms",
         "moderator:read:chat_settings",
         "moderator:manage:chat_settings",
+        "user:read:whispers",
+        "user:manage:whispers",
         "moderator:read:unban_requests",
         "moderator:read:warnings",
         "moderator:read:moderators",

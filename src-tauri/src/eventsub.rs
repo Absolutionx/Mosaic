@@ -126,6 +126,17 @@ pub async fn run(
                                             );
                                         }
                                     }
+
+                                    // whispers (Twitch DMs): account-level, needs user:read:whispers.
+                                    // moderator_id is the logged-in user's own id here.
+                                    if let Err(e) = subscribe_user_whispers(
+                                        &session_id, &moderator_id, &access_token,
+                                    ).await {
+                                        eprintln!(
+                                            "[eventsub] whisper subscription skipped \
+                                             (needs user:read:whispers, re-login): {e}"
+                                        );
+                                    }
                                 }
                                 "session_keepalive" => {
                                     // server heartbeat, nothing to do
@@ -315,6 +326,37 @@ async fn subscribe_channel_raid(
     Ok(())
 }
 
+// whispers (Twitch DMs) delivered to the logged-in user. account-level, so conditioned on user_id
+// (the logged-in user's own id). needs the user:read:whispers scope.
+async fn subscribe_user_whispers(
+    session_id: &str,
+    user_id: &str,
+    access_token: &str,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let body = json!({
+        "type":    "user.whisper.message",
+        "version": "1",
+        "condition": { "user_id": user_id },
+        "transport": { "method": "websocket", "session_id": session_id }
+    });
+    let resp = client
+        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
+        .header("Client-ID",     crate::oauth::CLIENT_ID)
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body   = resp.text().await.unwrap_or_default();
+        return Err(format!("{status}: {body}"));
+    }
+    eprintln!("[eventsub] subscribed to whispers for {user_id}");
+    Ok(())
+}
+
 // generic subscribe for events conditioned only on broadcaster_user_id (hype train, predictions).
 // kept separate from the bespoke helpers above, which have distinct conditions. most viewers lack the
 // read scopes these need, so callers treat failure as an expected skip
@@ -385,6 +427,14 @@ fn dispatch_notification(app: &AppHandle, payload: &Value) {
         "channel.moderate" => {
             // pass the whole event through; the frontend renders it into a mod-log line
             let _ = app.emit("eventsub-moderate", event.clone());
+        }
+        "user.whisper.message" => {
+            let _ = app.emit("whisper-received", json!({
+                "from_user_id":    event.get("from_user_id").and_then(|v| v.as_str()).unwrap_or(""),
+                "from_user_login": event.get("from_user_login").and_then(|v| v.as_str()).unwrap_or(""),
+                "from_user_name":  event.get("from_user_name").and_then(|v| v.as_str()).unwrap_or(""),
+                "text": event.pointer("/whisper/text").and_then(|v| v.as_str()).unwrap_or(""),
+            }));
         }
         "automod.message.hold" => {
             let user_name = event.get("user_name")

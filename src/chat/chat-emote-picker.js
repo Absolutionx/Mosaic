@@ -3,6 +3,8 @@
 // TwitchChat (see ../chat.js). reads this.sevenTvEmotes / this.twitchNativeEmotes fresh each
 // render rather than snapshotting, since those maps change live and the picker is open briefly
 
+import { EMOJI_GROUPS } from "../emoji-data.js";
+
 // "All" plus one tab per source, per platform: the last tab is the platform's native global
 // set (Twitch chat gets "Twitch", Kick "Kick"). order mirrors reach: channel emotes first,
 // then the three providers, then native globals last
@@ -13,6 +15,7 @@ const EMOTE_PICKER_TABS_TWITCH = [
   { id: "bttv", label: "BTTV" },
   { id: "ffz", label: "FFZ" },
   { id: "twitch", label: "Twitch" },
+  { id: "emoji", label: "\uD83D\uDE00" },
 ];
 const EMOTE_PICKER_TABS_KICK = [
   { id: "all", label: "All" },
@@ -21,6 +24,7 @@ const EMOTE_PICKER_TABS_KICK = [
   { id: "bttv", label: "BTTV" },
   { id: "ffz", label: "FFZ" },
   { id: "kick", label: "Kick" },
+  { id: "emoji", label: "\uD83D\uDE00" },
 ];
 
 // section headers read better with more context than the tab labels ("7TV Global" vs "7TV")
@@ -31,6 +35,7 @@ const EMOTE_PICKER_SECTIONS = {
   ffz: "FFZ Global",
   twitch: "Twitch Global",
   kick: "Kick Global",
+  emoji: "Emoji",
 };
 
 function bucketForProvider(provider) {
@@ -194,6 +199,14 @@ export const chatEmotePickerMixin = {
 
   _renderEmoteGrid(gridWrap) {
     gridWrap.innerHTML = "";
+    const q = this._emotePickerSearch.trim().toLowerCase();
+
+    // dedicated emoji tab: standard Unicode emoji grouped by category
+    if (this._emotePickerTab === "emoji") {
+      this._renderEmojiSections(gridWrap, q);
+      return;
+    }
+
     const buckets = this._collectEmotePickerBuckets();
     const order = this._emotePickerTab === "all"
       ? (this._isKickChat
@@ -204,7 +217,10 @@ export const chatEmotePickerMixin = {
       .map(id => [id, buckets[id]])
       .filter(([, rows]) => rows.length > 0);
 
-    if (sections.length === 0) {
+    // when searching from "All", also surface matching Unicode emoji so search finds everything
+    const emojiMatches = (this._emotePickerTab === "all" && q) ? this._emojiMatches(q) : [];
+
+    if (sections.length === 0 && emojiMatches.length === 0) {
       const empty = document.createElement("div");
       empty.className = "emote-picker-empty";
       empty.textContent = this._emotePickerSearch.trim()
@@ -241,6 +257,59 @@ export const chatEmotePickerMixin = {
       section.appendChild(grid);
       gridWrap.appendChild(section);
     }
+
+    if (emojiMatches.length) gridWrap.appendChild(this._makeEmojiSection("Emoji", emojiMatches));
+  },
+
+  _renderEmojiSections(gridWrap, q) {
+    let any = false;
+    for (const g of EMOJI_GROUPS) {
+      const list = q ? g.emojis.filter(([, name]) => name.toLowerCase().includes(q)) : g.emojis;
+      if (!list.length) continue;
+      any = true;
+      gridWrap.appendChild(this._makeEmojiSection(g.name, list));
+    }
+    if (!any) {
+      const empty = document.createElement("div");
+      empty.className = "emote-picker-empty";
+      empty.textContent = "No emoji match your search.";
+      gridWrap.appendChild(empty);
+    }
+  },
+
+  _makeEmojiSection(title, list) {
+    const section = document.createElement("div");
+    section.className = "emote-picker-section";
+    const t = document.createElement("div");
+    t.className = "emote-picker-section-title";
+    t.textContent = `${title} · ${list.length}`;
+    section.appendChild(t);
+    const grid = document.createElement("div");
+    grid.className = "emote-picker-grid emote-picker-grid-emoji";
+    for (const [emoji, name] of list) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "emote-picker-item emote-picker-emoji-item";
+      item.title = name;
+      item.textContent = emoji;
+      item.addEventListener("click", () => this._insertEmoteAtCursor(emoji));
+      grid.appendChild(item);
+    }
+    section.appendChild(grid);
+    return section;
+  },
+
+  _emojiMatches(q) {
+    const out = [];
+    for (const g of EMOJI_GROUPS) {
+      for (const e of g.emojis) {
+        if (e[1].toLowerCase().includes(q)) {
+          out.push(e);
+          if (out.length >= 60) return out;
+        }
+      }
+    }
+    return out;
   },
 
   // pad with spaces only where needed. distinct from _commitEmoteByName (chat-emotes.js), which

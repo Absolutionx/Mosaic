@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { getKickFollows, onKickFollowsChange } from "./kick-follows.js";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { makeHypeBadge } from "./hype-badges.js";
 import { streamHasDropsEnabled } from "./drops.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
@@ -27,6 +28,10 @@ export class ChannelsSidebar {
 
     // logins opted into go-live notifications, loaded in init() from notify_prefs.rs
     this.notifyChannels = new Set();
+    // login -> specific category (game) name to notify on when the channel switches to it
+    this.categoryTargets = new Map();
+    // last-seen game per channel, to detect the transition into the target category
+    this._lastGame = new Map();
     // login -> live state as of the last refresh, compared next tick to catch offline->live.
     // without it, every refresh would re-notify all already-live channels every 60s
     this._lastLiveState = new Map();
@@ -58,6 +63,10 @@ export class ChannelsSidebar {
     try {
       const channels = await invoke("get_notify_channels");
       this.notifyChannels = new Set(channels);
+      try {
+        const targets = await invoke("get_notify_category_targets");
+        this.categoryTargets = new Map(Object.entries(targets || {}));
+      } catch { /* older backend without category targets */ }
     } catch (err) {
       console.error("Failed to load notification preferences:", err);
     }
@@ -160,7 +169,7 @@ export class ChannelsSidebar {
   async _pollTwitchGoLive() {
     // needs the Twitch follow list, which requires a Twitch login; and skip the round-trip when
     // nothing is opted in (a later opt-in seeds its own baseline on the first tick after it's added)
-    if (!this.loggedIn || this.notifyChannels.size === 0) return;
+    if (!this.loggedIn || (this.notifyChannels.size === 0 && this.categoryTargets.size === 0)) return;
 
     let followedRows;
     try {
@@ -200,22 +209,40 @@ export class ChannelsSidebar {
   // (rather than reading this.followed) so the caller controls WHICH set is checked - the go-live
   // poller passes its own platform-independent Twitch fetch, not whatever the sidebar is displaying
   async _checkForNewlyLiveChannels(channels) {
-    if (this.notifyChannels.size === 0) {
+    if (this.notifyChannels.size === 0 && this.categoryTargets.size === 0) {
       // nothing opted in, but still update the tracked state so a later opt-in has a correct
       // baseline instead of misreading first-seen as a transition
-      for (const ch of channels) this._lastLiveState.set(ch.login, ch.live);
+      for (const ch of channels) {
+        this._lastLiveState.set(ch.login, ch.live);
+        if (ch.live) this._lastGame.set(ch.login, ch.game);
+      }
       return;
     }
 
     const newlyLive = [];
+    const categoryHits = [];
     for (const ch of channels) {
       const wasLive = this._lastLiveState.get(ch.login);
       if (ch.live && wasLive === false && this.notifyChannels.has(ch.login)) {
         newlyLive.push(ch);
       }
+      // target-category notification: fire when the channel switches INTO the specific category the
+      // user asked for. requires a known previous game (so we don't fire on first sighting) that wasn't
+      // already the target.
+      const target = this.categoryTargets.get(ch.login);
+      if (ch.live && target) {
+        const prevGame = this._lastGame.get(ch.login);
+        const now = (ch.game || "").toLowerCase();
+        const want = target.toLowerCase();
+        if (now === want && prevGame !== undefined && (prevGame || "").toLowerCase() !== want) {
+          categoryHits.push({ ...ch, target });
+        }
+      }
       this._lastLiveState.set(ch.login, ch.live);
+      if (ch.live) this._lastGame.set(ch.login, ch.game);
+      else this._lastGame.delete(ch.login); // reset when offline so the next go-live isn't a transition
     }
-    if (newlyLive.length === 0) return;
+    if (newlyLive.length === 0 && categoryHits.length === 0) return;
 
     // request permission lazily, only when there's something to notify, so a user opted into nothing never gets a prompt
     try {
@@ -237,6 +264,16 @@ export class ChannelsSidebar {
         });
       } catch (err) {
         console.error(`Failed to send go-live notification for ${ch.login}:`, err);
+      }
+    }
+    for (const ch of categoryHits) {
+      try {
+        sendNotification({
+          title: `${ch.name} is now playing ${ch.game}`,
+          body: ch.title || `Switched to ${ch.game}`,
+        });
+      } catch (err) {
+        console.error(`Failed to send category notification for ${ch.login}:`, err);
       }
     }
   }
@@ -445,6 +482,9 @@ export class ChannelsSidebar {
     avatar.alt = "";
     avatarWrap.appendChild(avatar);
 
+    // tag live rows for the hype-train poller; the icon itself sits next to the viewer count below
+    if (ch.live && ch.id) btn.dataset.hypeId = ch.id;
+
     btn.appendChild(avatarWrap);
 
     const info = document.createElement("div");
@@ -471,6 +511,9 @@ export class ChannelsSidebar {
       dot.className = "sidebar-live-dot";
       viewerRow.appendChild(dot);
       viewerRow.appendChild(document.createTextNode(formatViewerCount(ch.viewers)));
+      const hype = makeHypeBadge();
+      hype.classList.add("sidebar-hype-inline");
+      viewerRow.appendChild(hype);
       status.appendChild(viewerRow);
 
       if (ch.dropsEnabled) {
@@ -494,49 +537,149 @@ export class ChannelsSidebar {
     row.appendChild(btn);
 
     const notifyBtn = document.createElement("button");
-    const isOn = this.notifyChannels.has(ch.login);
+    const isOn = this.notifyChannels.has(ch.login) || this.categoryTargets.has(ch.login);
     notifyBtn.className = `sidebar-notify-toggle${isOn ? " active" : ""}`;
     notifyBtn.title = isOn
-      ? `Notifications on - click to turn off for ${ch.name || ch.login}`
-      : `Notify me when ${ch.name || ch.login} goes live`;
+      ? `Notifications on for ${ch.name || ch.login} - click to change`
+      : `Notify me about ${ch.name || ch.login}`;
     notifyBtn.innerHTML =
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>';
     notifyBtn.addEventListener("click", (e) => {
-      // stop this also triggering btn's click (channel select), cheap insurance now that they're siblings
       e.stopPropagation();
-      this.toggleNotify(ch.login, notifyBtn, ch.name || ch.login);
+      this.openNotifyMenu(notifyBtn, ch);
     });
     row.appendChild(notifyBtn);
 
     return row;
   }
 
-  async toggleNotify(login, btnEl, displayName) {
-    const turningOn = !this.notifyChannels.has(login);
-    if (turningOn) {
-      this.notifyChannels.add(login);
-    } else {
-      this.notifyChannels.delete(login);
-    }
-    btnEl.classList.toggle("active", turningOn);
-    btnEl.title = turningOn
-      ? `Notifications on - click to turn off for ${displayName}`
-      : `Notify me when ${displayName} goes live`;
+  // small menu on the bell: opt into "when live", and/or name a specific category to be told about
+  openNotifyMenu(anchor, ch) {
+    document.querySelector(".sidebar-notify-menu")?.remove();
+    const menu = document.createElement("div");
+    menu.className = "sidebar-notify-menu";
 
+    // "When live" toggle
+    const liveRow = document.createElement("label");
+    liveRow.className = "sidebar-notify-item";
+    const liveCb = document.createElement("input");
+    liveCb.type = "checkbox";
+    liveCb.checked = this.notifyChannels.has(ch.login);
+    liveCb.addEventListener("change", async () => {
+      if (liveCb.checked) this.notifyChannels.add(ch.login);
+      else this.notifyChannels.delete(ch.login);
+      await this._saveNotifyPrefs();
+      this._refreshBellState(anchor, ch);
+      if (liveCb.checked) await this._ensureNotifyPermission();
+    });
+    liveRow.appendChild(liveCb);
+    liveRow.appendChild(document.createTextNode("When live"));
+    menu.appendChild(liveRow);
+
+    // "Notify when playing: [category]" — with live category suggestions so the name matches Twitch exactly
+    const catWrap = document.createElement("div");
+    catWrap.className = "sidebar-notify-cat";
+    const catLabel = document.createElement("div");
+    catLabel.className = "sidebar-notify-cat-label";
+    catLabel.textContent = "Notify when playing:";
+    const inputWrap = document.createElement("div");
+    inputWrap.className = "sidebar-notify-cat-inputwrap";
+    const catInput = document.createElement("input");
+    catInput.type = "text";
+    catInput.className = "sidebar-notify-cat-input";
+    catInput.placeholder = "Search a category…";
+    catInput.value = this.categoryTargets.get(ch.login) || "";
+    const suggestBox = document.createElement("div");
+    suggestBox.className = "sidebar-notify-suggest";
+    suggestBox.style.display = "none";
+    inputWrap.appendChild(catInput);
+    inputWrap.appendChild(suggestBox);
+    catWrap.appendChild(catLabel);
+    catWrap.appendChild(inputWrap);
+    menu.appendChild(catWrap);
+
+    const commit = async () => {
+      const v = catInput.value.trim();
+      if (v) this.categoryTargets.set(ch.login, v);
+      else this.categoryTargets.delete(ch.login);
+      await this._saveNotifyPrefs();
+      this._refreshBellState(anchor, ch);
+      if (v) await this._ensureNotifyPermission();
+    };
+
+    let debounce;
+    const runSearch = async () => {
+      const q = catInput.value.trim();
+      if (q.length < 2) { suggestBox.style.display = "none"; return; }
+      let results = [];
+      try { results = JSON.parse(await invoke("search_categories", { query: q })); } catch { return; }
+      if (!Array.isArray(results) || !results.length) { suggestBox.style.display = "none"; return; }
+      suggestBox.innerHTML = "";
+      for (const cat of results.slice(0, 8)) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "sidebar-notify-suggest-item";
+        const img = document.createElement("img");
+        img.src = (cat.box_art_url || "").replace("{width}", "36").replace("{height}", "48");
+        img.alt = "";
+        img.addEventListener("error", () => { img.style.visibility = "hidden"; });
+        const nm = document.createElement("span");
+        nm.textContent = cat.name;
+        item.appendChild(img);
+        item.appendChild(nm);
+        item.addEventListener("click", async () => {
+          catInput.value = cat.name;
+          suggestBox.style.display = "none";
+          await commit();
+        });
+        suggestBox.appendChild(item);
+      }
+      suggestBox.style.display = "";
+    };
+    catInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(runSearch, 250); });
+    catInput.addEventListener("change", commit);
+    catInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { suggestBox.style.display = "none"; commit(); catInput.blur(); }
+      else if (e.key === "Escape") { suggestBox.style.display = "none"; }
+    });
+
+    document.body.appendChild(menu);
+    const r = anchor.getBoundingClientRect();
+    const mw = menu.offsetWidth || 210;
+    menu.style.top = `${r.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.left - mw + 20))}px`;
+    const close = (ev) => {
+      if (!menu.contains(ev.target) && ev.target !== anchor) {
+        menu.remove();
+        document.removeEventListener("mousedown", close);
+      }
+    };
+    setTimeout(() => document.addEventListener("mousedown", close), 0);
+  }
+
+  _refreshBellState(btn, ch) {
+    const on = this.notifyChannels.has(ch.login) || this.categoryTargets.has(ch.login);
+    btn.classList.toggle("active", on);
+    btn.title = on
+      ? `Notifications on for ${ch.name || ch.login} - click to change`
+      : `Notify me about ${ch.name || ch.login}`;
+  }
+
+  async _saveNotifyPrefs() {
     try {
       await invoke("set_notify_channels", { channels: [...this.notifyChannels] });
+      await invoke("set_notify_category_targets", { targets: Object.fromEntries(this.categoryTargets) });
     } catch (err) {
       console.error("Failed to save notification preferences:", err);
     }
+  }
 
-    // request permission on the FIRST opt-in, not when it goes live, so a denial gives immediate feedback instead of a silent failure hours later
-    if (turningOn) {
-      try {
-        let granted = await isPermissionGranted();
-        if (!granted) await requestPermission();
-      } catch (err) {
-        console.error("Notification permission request failed:", err);
-      }
+  async _ensureNotifyPermission() {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) await requestPermission();
+    } catch (err) {
+      console.error("Notification permission request failed:", err);
     }
   }
 }

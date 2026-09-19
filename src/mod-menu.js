@@ -25,10 +25,11 @@ export async function openModMenu(anchorBtn, chat) {
   overlay.appendChild(menu);
   document.body.appendChild(overlay);
 
-  // position under the shield button
-  const r = anchorBtn.getBoundingClientRect();
-  menu.style.top = `${r.bottom + 6}px`;
-  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  // Anchor to the shield button. The button now lives in the chat-mode row near the bottom of the
+  // window, so opening straight down would push the menu off-screen (the original always-below
+  // behaviour). positionModMenu flips it above the button when there isn't room below. Called now with
+  // the "Loading…" body and again after the real content renders, since the height changes.
+  positionModMenu(menu, anchorBtn);
 
   const onEsc = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onEsc); } };
   document.addEventListener("keydown", onEsc);
@@ -38,10 +39,30 @@ export async function openModMenu(anchorBtn, chat) {
   catch (err) {
     const body = menu.querySelector(".modmenu-body");
     if (body) body.innerHTML = `<div class="chat-filter-intro">Couldn't load room settings: ${String(err)}</div>`;
+    positionModMenu(menu, anchorBtn);
     return;
   }
   if (!overlay) return; // closed while loading
   renderMenu(menu, broadcasterId, settings, chat);
+  positionModMenu(menu, anchorBtn);
+}
+
+// Places the menu relative to its anchor, flipping above when there's not enough room below (and more
+// room above). Safe to call repeatedly as the menu's height changes.
+function positionModMenu(menu, anchorBtn) {
+  const r = anchorBtn.getBoundingClientRect();
+  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  const prevVis = menu.style.visibility;
+  menu.style.visibility = "hidden";
+  const menuH = menu.offsetHeight || 0;
+  const spaceBelow = window.innerHeight - r.bottom;
+  const spaceAbove = r.top;
+  if (spaceBelow < menuH + 12 && spaceAbove > spaceBelow) {
+    menu.style.top = `${Math.max(8, r.top - menuH - 6)}px`;
+  } else {
+    menu.style.top = `${r.bottom + 6}px`;
+  }
+  menu.style.visibility = prevVis || "";
 }
 
 function renderMenu(menu, broadcasterId, s, chat) {

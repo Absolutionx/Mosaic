@@ -56,8 +56,11 @@ Each time you want to push a new version to everyone:
    ```
 3. The **Release Windows** workflow builds, signs, and publishes the
    release with a `latest.json`.
-4. Windows users' apps check that `latest.json` on startup, see the higher
-   version, and show the in-app **Update now** button. Clicking it
+4. Windows users' apps check that `latest.json` on startup **and then keep
+   checking while the app stays open** (every 15 minutes, and whenever the
+   window regains focus). When a check sees the higher version, the in-app
+   **Update now** button appears live — the user doesn't have to restart the
+   app to be notified. Clicking it
    downloads, installs, and relaunches - no leaving the app.
 
 ## Notes

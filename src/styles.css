@@ -57,7 +57,7 @@ html, body {
      always win outright over the other instead of both applying. */
   --sidebar-width: 240px;
   --chat-width: 320px;
-  --header-height: 58px;
+  --header-height: 80px;
   display: grid;
   grid-template-columns: var(--sidebar-width) 1fr var(--chat-width);
   grid-template-rows: var(--header-height) 1fr;
@@ -136,6 +136,18 @@ html, body {
   overflow: hidden;
   border-bottom: none;
 }
+
+/* Keep the native-style window controls reachable after theater mode hides the
+   header. Take them out of the collapsed header layout and pin them to the
+   OS window's top-right corner. */
+#app.theater-mode.header-collapsed .win-controls {
+  position: fixed;
+  top: 0;
+  right: 0;
+  visibility: visible;
+  overflow: visible;
+  z-index: 2000;
+}
 /* Fullscreen: collapse all three grid dimensions to zero so the
    video fills the entire OS window. Unlike theater mode (sidebar
    only) or chat-collapsed/header-collapsed (one dimension each),
@@ -186,7 +198,7 @@ header {
   position: relative;
   display: flex;
   align-items: center;
-  margin: 6px 10px;
+  margin: 26px 10px 6px;
   padding: 0;
   height: 46px;
   background: transparent;
@@ -960,7 +972,9 @@ header #login-btn.logged-in { border-radius: 7px; }
   white-space: nowrap;
 }
 .channel-info-tag.channel-info-drops-tag {
-  background: var(--accent);
+  background: var(--m-surface-2);
+  color: var(--m-text);
+  border: 1px solid var(--m-border-soft);
   font-weight: 700;
 }
 
@@ -1392,6 +1406,23 @@ header #login-btn.logged-in { border-radius: 7px; }
   text-overflow: ellipsis;
   max-width: 100%;
   padding-left: 1px;
+  cursor: pointer;
+}
+.reply-header:hover { color: var(--m-text, #e7ebf2); }
+/* clicking expands the quoted message to its full text when the original isn't in view */
+.reply-header.expanded {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+/* flash the original message when you jump to it from a reply */
+.chat-line.reply-jump-flash {
+  animation: reply-jump-flash 1.6s ease-out;
+  border-radius: 4px;
+}
+@keyframes reply-jump-flash {
+  0%, 30% { background: rgba(145, 71, 255, 0.28); }
+  100% { background: transparent; }
 }
 
 /* --- Channel Point Messages (IRC custom-reward-id tag) --- */
@@ -3101,6 +3132,56 @@ body.kick-mode .sidebar-channel-name {
   cursor: not-allowed;
 }
 
+/* Chat settings gear in the composer (next to the emote button). Matches the emote button's
+   ghost-icon look so the two sit together as a pair. */
+.chat-settings-btn {
+  background: none;
+  border: none;
+  color: #adadb8;
+  padding: 9px 0;
+  margin-right: 2px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.chat-settings-btn:hover { color: #efeff1; }
+.chat-settings-btn.open { color: var(--m-accent, #9147ff); }
+.chat-settings-btn svg { transition: transform .25s ease; }
+.chat-settings-btn:hover svg { transform: rotate(35deg); }
+
+/* Chat settings popup menu (launched by the gear). Fixed-position flyout, positioned in main.js. */
+.chat-settings-menu {
+  position: fixed;
+  flex-direction: column;
+  min-width: 200px;
+  background: var(--m-surface, #18181b);
+  border: 1px solid var(--m-border, #3a3a3d);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  z-index: 12000;
+  padding: 5px;
+}
+.chat-settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--m-text, #e7ebf2);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-settings-menu-item:hover { background: var(--m-surface-2, #1c222c); }
+.chat-settings-menu-item svg { flex: 0 0 auto; color: var(--m-muted, #9aa5b4); }
+.chat-settings-menu-item:hover svg { color: var(--m-text, #e7ebf2); }
+
 /* --- Chat message hover actions (copy / reply / mod tools) --- */
 .chat-line {
   position: relative; /* anchor for the action buttons */
@@ -4025,7 +4106,6 @@ header #kick-login-btn.logged-in:hover {
 body.kick-mode .back-to-stream-btn,
 body.kick-mode .deps-banner-install-btn,
 body.kick-mode .channel-info-follow-btn,
-body.kick-mode .channel-info-tag.channel-info-drops-tag,
 body.kick-mode .browse-pill,
 body.kick-mode .home-drops-badge,
 body.kick-mode .user-card-timeout-preset:hover:not(:disabled) {
@@ -5145,7 +5225,7 @@ body.kick-mode {
 #app {
   --sidebar-width: 252px;
   --chat-width: 336px;
-  --header-height: 58px;
+  --header-height: 80px;
   background: var(--m-bg);
   grid-template-columns: var(--sidebar-width) minmax(0,1fr) var(--chat-width);
   grid-template-rows: var(--header-height) minmax(0,1fr);
@@ -5155,7 +5235,7 @@ body.kick-mode {
 header {
   grid-column: 1 / -1;
   height: 54px;
-  margin: 0;
+  margin: 26px 0 0;
   padding: 0 16px;
   display: flex;
   align-items: center;
@@ -5461,16 +5541,19 @@ header #kick-login-btn {
 .stream-info-title { color: var(--m-text); }
 .stream-info-meta { color: var(--m-muted); }
 
+/* Clean in-video overlay: no glued-on panel. Uses the base .controls-bar gradient (transparent at
+   top → subtle dark at the bottom edge) which keeps the controls legible over bright/busy footage
+   without reading as a separate bar. Full-width and bottom-anchored (inherited from the base rule) so
+   the fade blends into the video's bottom edge like a normal player. We taller-and-smooth the fade
+   here and drop the old opaque fill, border, shadow, blur, insets, and rounded corners. */
 .controls-bar {
-  left: 10px;
-  right: 10px;
-  bottom: 9px;
-  padding: 7px 9px;
-  border-radius: 10px;
-  background: rgba(14,17,22,.88);
-  border: 1px solid rgba(255,255,255,.08);
-  box-shadow: 0 5px 18px rgba(0,0,0,.32);
-  backdrop-filter: blur(8px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 56px;
+  padding: 0 14px;
+  border-radius: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.45) 45%, rgba(0, 0, 0, 0) 100%);
 }
 .control-btn {
   border-radius: 7px;
@@ -6074,8 +6157,8 @@ button:active { transform: translateY(1px); }
 .chat-points:hover { background: var(--m-raised, #232b36); }
 .chat-points .chat-points-icon { color: var(--m-accent, #9147ff); }
 
-/* Points balance shown inside the header gift button (icon + balance = one control) */
-#rewards-btn { gap: 4px; }
+/* Points balance shown inside the gift button (icon + balance = one control). The button now lives in
+   the chat-mode row (.chat-mode-rewards-btn); has-balance just reveals the number, no accent tint. */
 .rewards-balance {
   display: none;
   font-size: 11.5px;
@@ -6085,8 +6168,7 @@ button:active { transform: translateY(1px); }
 }
 #rewards-btn.has-balance .rewards-balance { display: inline; }
 #rewards-btn.has-balance {
-  background: var(--m-surface-2, #1c222c);
-  padding: 3px 8px;
+  color: var(--m-text, #e7ebf2);
 }
 
 /* Flatten every scrollbar to neutral gray (no purple accent), matching the app theme. Placed last so
@@ -6245,7 +6327,10 @@ button:active { transform: translateY(1px); }
 }
 .emote-picker-back:hover { background: var(--m-raised, #232b36); }
 .emote-picker-title { font-size: 13px; font-weight: 600; }
-.emote-picker-grid {
+/* Rewards (channel-points emote redemption) grid. Its own class so this scroll styling doesn't leak
+   onto the chat emote picker's grid, which lives inside its own scroll container — sharing the
+   .emote-picker-grid class produced a second, nested scrollbar in the emote picker. */
+.rewards-emote-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px;
   max-height: 420px; overflow-y: auto;
 }
@@ -6371,3 +6456,712 @@ button:active { transform: translateY(1px); }
 .header-update-btn.updating { cursor: default; }
 .header-update-btn.updating::before { display: none; }
 .header-update-btn:disabled { opacity: 0.75; cursor: default; }
+/* Brief attention pulse when the button appears while the app is already open (a live-detected
+   update), so it isn't missed. Runs a few times then settles. The dot keeps pulsing gently. */
+@keyframes update-btn-appear {
+  0% { transform: scale(0.9); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes update-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(145, 71, 255, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(145, 71, 255, 0); }
+}
+.header-update-btn.just-appeared { animation: update-btn-appear 0.28s ease both; }
+.header-update-btn.just-appeared::before { animation: update-dot-pulse 1.6s ease-in-out 3; }
+
+/* Bell notification menu (When live / When category changes) */
+.sidebar-notify-menu {
+  position: fixed; z-index: 9999; min-width: 180px;
+  background: var(--m-surface, #14181f); border: 1px solid var(--m-border, #29313d);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.45); padding: 5px;
+}
+.sidebar-notify-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  font-size: 12.5px; color: var(--m-text, #e7ebf2); cursor: pointer;
+}
+.sidebar-notify-item:hover { background: var(--m-surface-2, #1c222c); }
+.sidebar-notify-item input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--m-accent, #9147ff); }
+
+/* Hype train badges on stream lists (sidebar / home / browse) */
+.hype-badge {
+  display: inline-flex; align-items: center; gap: 2px;
+  color: #fff; background: linear-gradient(135deg, #9147ff, #e0338a);
+  font-size: 10px; font-weight: 700; line-height: 1;
+  padding: 2px 5px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+.hype-badge.golden { background: linear-gradient(135deg, #f5b301, #ff7a00); color: #1a1205; }
+.hype-badge-lvl:empty { display: none; }
+/* thumbnail overlay (home + browse cards) */
+.home-hype-badge { position: absolute; top: 6px; left: 6px; z-index: 2; }
+.home-carousel-card, .home-grid-thumb-wrap { position: relative; }
+/* small overlay on the sidebar avatar */
+.sidebar-hype-badge {
+  position: absolute; bottom: -2px; right: -2px; padding: 1px 3px; font-size: 8px; border-radius: 5px;
+}
+.sidebar-channel-avatar-wrap { position: relative; }
+
+/* Bell menu: target-category input */
+.sidebar-notify-cat { padding: 6px 8px 4px; }
+.sidebar-notify-cat-label { font-size: 11px; color: var(--m-muted, #9aa5b4); margin-bottom: 4px; }
+.sidebar-notify-cat-input {
+  width: 100%; box-sizing: border-box; font-family: inherit; font-size: 12.5px;
+  background: var(--m-bg, #0e1116); color: var(--m-text, #e7ebf2);
+  border: 1px solid var(--m-border, #29313d); border-radius: 6px; padding: 4px 7px;
+}
+.sidebar-notify-cat-input:focus { outline: none; border-color: var(--m-accent, #9147ff); }
+
+/* Category autocomplete in the bell menu */
+.sidebar-notify-cat-inputwrap { position: relative; }
+.sidebar-notify-suggest {
+  position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 10000;
+  background: var(--m-surface, #14181f); border: 1px solid var(--m-border, #29313d);
+  border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); max-height: 240px; overflow-y: auto;
+}
+.sidebar-notify-suggest-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  font-family: inherit; font-size: 12.5px; color: var(--m-text, #e7ebf2);
+  background: transparent; border: none; cursor: pointer; padding: 5px 8px;
+}
+.sidebar-notify-suggest-item:hover { background: var(--m-surface-2, #1c222c); }
+.sidebar-notify-suggest-item img { width: 24px; height: 32px; object-fit: cover; border-radius: 3px; flex: 0 0 auto; }
+.sidebar-notify-suggest-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Hype train train-icon next to the sidebar viewer count (plain icon, no level number) */
+.sidebar-channel-viewer-row { display: inline-flex; align-items: center; gap: 5px; }
+.sidebar-hype-inline {
+  background: none; box-shadow: none; padding: 0; border-radius: 0; margin: 0;
+  color: var(--m-accent, #9147ff); line-height: 0; display: inline-flex; align-items: center;
+}
+.sidebar-hype-inline.golden { color: #f5b301; }
+.sidebar-hype-inline .hype-badge-lvl { display: none; }
+.sidebar-hype-inline svg { width: 13px; height: 13px; display: block; }
+
+/* Sub-anniversary (resub) banner — sits as a card just above the chat input */
+.resub-banner {
+  display: flex; align-items: center; gap: 10px;
+  background: linear-gradient(135deg, #772ce8, #9147ff);
+  color: #fff; padding: 8px 12px; font-size: 13px; font-weight: 600;
+  margin: 6px 8px 0; border-radius: 10px; flex: 0 0 auto;
+}
+.resub-banner-text { flex: 1; min-width: 0; }
+.resub-banner-share {
+  flex: 0 0 auto; font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  background: rgba(255,255,255,0.92); color: #772ce8;
+  border: none; border-radius: 6px; padding: 4px 14px;
+}
+.resub-banner-share:hover:not(:disabled) { background: #fff; }
+.resub-banner-share:disabled { opacity: 0.7; cursor: default; }
+.resub-banner-dismiss {
+  flex: 0 0 auto; background: transparent; border: none; color: rgba(255,255,255,0.85);
+  font-size: 13px; cursor: pointer; padding: 2px 4px; line-height: 1;
+}
+.resub-banner-dismiss:hover { color: #fff; }
+
+/* Threaded reply view (docked to the bottom of the chat pane, chat stays visible above) */
+#chat-pane { position: relative; }
+.thread-panel {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 40;
+  display: none; flex-direction: column; max-height: 62%;
+  background: var(--m-surface, #14181f);
+  border-top: 1px solid var(--m-border, #29313d);
+  border-radius: 12px 12px 0 0;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+}
+.thread-panel-header {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  border-bottom: 1px solid var(--m-border, #29313d); flex: 0 0 auto;
+}
+.thread-panel-title { flex: 1; font-size: 13px; font-weight: 700; color: var(--m-text, #e7ebf2); }
+.thread-panel-title::before { content: "\1F4AC"; margin-right: 6px; }
+.thread-panel-close {
+  font-family: inherit; font-size: 13px; cursor: pointer; background: transparent;
+  color: var(--m-muted, #9aa5b4); border: none; padding: 2px 6px; border-radius: 6px; line-height: 1;
+}
+.thread-panel-close:hover { color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); }
+.thread-panel-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px; }
+.thread-line { padding: 3px 0; font-size: 13px; line-height: 1.4; word-break: break-word; }
+.thread-line.thread-root {
+  border-left: 3px solid var(--m-accent, #9147ff); padding-left: 8px; margin-left: -8px;
+  margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--m-border, #29313d);
+}
+.thread-line-user { font-weight: 700; }
+.thread-line-body { color: var(--m-text, #e7ebf2); }
+.thread-line-body img { vertical-align: middle; }
+.thread-panel-empty { color: var(--m-muted, #9aa5b4); font-size: 12.5px; padding: 12px 4px; }
+.thread-panel-replyctx {
+  flex: 0 0 auto; padding: 6px 12px 0; font-size: 12px; color: var(--m-muted, #9aa5b4);
+}
+.thread-panel-replyuser { color: var(--m-text, #e7ebf2); font-weight: 600; }
+.thread-panel-cancel {
+  font-family: inherit; font-size: 12px; cursor: pointer; background: none; border: none;
+  color: var(--m-accent, #9147ff); padding: 0;
+}
+.thread-panel-cancel:hover { text-decoration: underline; }
+.thread-panel-inputrow {
+  display: flex; gap: 6px; padding: 8px 12px; flex: 0 0 auto;
+}
+.thread-panel-input {
+  flex: 1; font-family: inherit; font-size: 13px; background: var(--m-bg, #0e1116);
+  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 8px; padding: 7px 10px;
+}
+.thread-panel-input:focus { outline: none; border-color: var(--m-accent, #9147ff); }
+.thread-panel-send {
+  flex: 0 0 auto; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: var(--m-accent, #9147ff); color: #fff; border: none; border-radius: 8px; padding: 7px 14px;
+}
+.thread-panel-send:disabled { opacity: 0.6; cursor: default; }
+
+/* 7TV paints (animated username colors) */
+.chat-username.has-7tv-paint {
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% auto;
+  animation: seventv-paint-flow 6s linear infinite;
+}
+@keyframes seventv-paint-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* 7TV cosmetic badge (inline, sized like native chat badges) */
+.chat-badge.seventv-badge {
+  height: 18px; width: auto; vertical-align: middle; margin-right: 3px; border-radius: 2px;
+}
+
+/* Emoji items in the emote picker (text glyphs, not images) */
+.emote-picker-emoji-item {
+  font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+
+/* Sub-anniversary message input (revealed when you click Share) */
+.resub-banner-inputwrap { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.resub-banner-input {
+  flex: 1; min-width: 0; font-family: inherit; font-size: 12.5px;
+  background: rgba(255,255,255,0.95); color: #1a1a1f;
+  border: none; border-radius: 6px; padding: 5px 9px;
+}
+.resub-banner-input:focus { outline: none; box-shadow: 0 0 0 2px rgba(255,255,255,0.6); }
+
+/* Chat mode indicators (above the input) */
+/* Chat-mode row: room-mode chips on the left, the points/drops button pinned right. The chips
+   container keeps id="chat-mode-indicators" (JS toggles its own display when empty); the row stays
+   laid out so the rewards button shows even with no active modes. */
+.chat-mode-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+/* Chips fill the left on a SINGLE line: no wrapping (which stacked them vertically and pushed the
+   buttons to their own row in a narrow chat pane). Overflow scrolls horizontally instead, so the row
+   stays one line tall no matter how many modes are active. The right-edge fade hints at more when
+   chips are scrolled off. JS sets inline display:none when there are no chips. */
+.chat-mode-indicators {
+  position: relative;
+  display: flex; flex-wrap: nowrap; gap: 5px; flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent 100%);
+          mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent 100%);
+}
+.chat-mode-indicators::-webkit-scrollbar { height: 0; }
+.chat-mode-chip {
+  flex: 0 0 auto;
+  font-size: 11px; font-weight: 600; color: var(--m-muted, #9aa5b4);
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+  border-radius: 6px; padding: 2px 7px; white-space: nowrap;
+}
+/* Right-side action group: mod buttons + points/drops, pinned to the right of the row. margin-left:auto
+   on the group keeps it hard right whether or not chips are present. */
+.chat-mode-actions { margin-left: auto; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+/* Points/drops button in the chat-mode row. */
+.chat-mode-rewards-btn {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 8px; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+  border-radius: 6px; color: var(--m-muted, #9aa5b4);
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.chat-mode-rewards-btn:hover { background: var(--m-raised, #232b36); color: var(--m-text, #e7ebf2); }
+.chat-mode-rewards-btn svg { flex: 0 0 auto; }
+/* Mod buttons relocated into the chat-mode row. Same pill shape as the rewards button; icon-only,
+   square. modmenu-btn stays display:none until main.js confirms mod status (then set to ""). */
+.chat-mode-mod-btn {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 24px; width: 24px; padding: 0; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+  border-radius: 6px; color: var(--m-muted, #9aa5b4);
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.chat-mode-mod-btn:hover { background: var(--m-raised, #232b36); color: var(--m-text, #e7ebf2); }
+.chat-mode-mod-btn svg { flex: 0 0 auto; }
+
+/* Timeout / ban panel (replaces the input while you can't chat) */
+.chat-timeout-panel { padding: 14px 8px; text-align: center; }
+.chat-timeout-title {
+  font-size: 14px; font-weight: 800; letter-spacing: 0.06em; color: var(--m-text, #e7ebf2); margin-bottom: 7px;
+}
+.chat-timeout-body { font-size: 12.5px; color: var(--m-muted, #9aa5b4); line-height: 1.45; }
+
+/* Whispers header button + unread badge */
+.header-whispers-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  height: 32px; width: 34px; padding: 0; background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d); color: var(--m-text, #e7ebf2);
+  border-radius: 7px; cursor: pointer;
+}
+.header-whispers-btn:hover { background: var(--m-raised, #232b36); }
+.header-whispers-unread {
+  position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px;
+  display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+  background: #e5484d; color: #fff; font-size: 10px; font-weight: 700; border-radius: 8px;
+}
+
+/* Whispers modal */
+.whisper-overlay { position: fixed; inset: 0; z-index: 9998; background: rgba(0,0,0,0.35); }
+.whisper-modal {
+  position: fixed; top: 52px; right: 12px; width: 340px; max-width: calc(100vw - 24px);
+  height: 460px; max-height: calc(100vh - 72px);
+  display: flex; flex-direction: column; z-index: 9999;
+  background: var(--m-surface, #14181f); border: 1px solid var(--m-border, #29313d);
+  border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5); overflow: hidden;
+}
+.whisper-header {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  border-bottom: 1px solid var(--m-border, #29313d); flex: 0 0 auto;
+}
+.whisper-title { flex: 1; font-size: 13px; font-weight: 700; color: var(--m-text, #e7ebf2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whisper-new-btn, .whisper-close, .whisper-back {
+  font-family: inherit; font-size: 12.5px; cursor: pointer; background: var(--m-surface-2, #1c222c);
+  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 6px; padding: 3px 9px;
+}
+.whisper-back { border: none; background: transparent; font-size: 18px; padding: 0 6px; }
+.whisper-new-btn:hover, .whisper-close:hover, .whisper-back:hover { background: var(--m-raised, #232b36); }
+.whisper-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px; }
+.whisper-empty { color: var(--m-muted, #9aa5b4); font-size: 12.5px; padding: 14px 4px; text-align: center; }
+.whisper-thread-row {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
+  background: transparent; border: none; cursor: pointer; padding: 8px; border-radius: 8px;
+}
+.whisper-thread-row:hover { background: var(--m-surface-2, #1c222c); }
+.whisper-thread-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.whisper-thread-name { font-weight: 700; font-size: 13px; color: var(--m-text, #e7ebf2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whisper-thread-time { flex: 0 0 auto; font-size: 11px; color: var(--m-faint, #6b7482); }
+.whisper-thread-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.whisper-thread-last { font-size: 12px; color: var(--m-muted, #9aa5b4);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.whisper-thread-unread {
+  flex: 0 0 auto; background: #e5484d; color: #fff; font-size: 10px; font-weight: 700; border-radius: 8px; padding: 1px 6px;
+}
+.whisper-date-sep {
+  text-align: center; font-size: 10.5px; color: var(--m-faint, #6b7482);
+  margin: 10px 0 4px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.whisper-msg { display: flex; flex-direction: column; align-items: flex-start; margin: 4px 0; }
+.whisper-msg.self { align-items: flex-end; }
+.whisper-bubble {
+  max-width: 82%; padding: 6px 10px; border-radius: 12px; font-size: 13px; line-height: 1.35;
+  background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); word-break: break-word;
+}
+.whisper-msg.self .whisper-bubble { background: var(--m-accent, #9147ff); color: #fff; }
+.whisper-msg-time { font-size: 10px; color: var(--m-faint, #6b7482); margin-top: 2px; }
+.whisper-sys { font-size: 11.5px; color: #e5844d; text-align: center; padding: 4px; }
+.whisper-inputrow { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--m-border, #29313d); flex: 0 0 auto; }
+.whisper-input {
+  flex: 1; font-family: inherit; font-size: 13px; background: var(--m-bg, #0e1116);
+  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 8px; padding: 7px 10px;
+}
+.whisper-input:focus { outline: none; border-color: var(--m-accent, #9147ff); }
+.whisper-send {
+  flex: 0 0 auto; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: var(--m-accent, #9147ff); color: #fff; border: none; border-radius: 8px; padding: 7px 14px;
+}
+.whisper-send:disabled { opacity: 0.6; cursor: default; }
+.whisper-new-form { display: flex; flex-direction: column; gap: 8px; padding: 8px 4px; }
+.whisper-new-label { font-size: 12px; color: var(--m-muted, #9aa5b4); }
+.whisper-new-input {
+  font-family: inherit; font-size: 13px; background: var(--m-bg, #0e1116);
+  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 8px; padding: 7px 10px;
+}
+.whisper-new-go {
+  font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  background: var(--m-accent, #9147ff); color: #fff; border: none; border-radius: 8px; padding: 8px;
+}
+.whisper-new-err { font-size: 12px; color: #e5484d; }
+
+/* ===== Custom window chrome (native decorations off) =====
+   The titlebar is intentionally part of the app surface rather than a
+   separate raised strip. The whole header can be dragged; interactive
+   controls opt out in titlebar.js. */
+header {
+  grid-column: 1 / -1;
+  position: relative;
+  height: var(--header-height, 72px);
+  margin: 0;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: var(--m-bg, #0e1116);
+  border: 0;
+  box-shadow: none;
+  z-index: 20;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Leave room for the native-style controls while keeping the rest of the
+   header visually continuous. */
+.header-actions {
+  /* The window controls occupy the top-right titlebar row; keep the
+     account/platform/whisper controls directly beneath them. */
+  padding-right: 0;
+}
+
+/* Compact controls tucked beneath the native-style window buttons. */
+.header-actions .header-whispers-btn {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  position: relative;
+  top: 20px;
+  z-index: 1002;
+}
+.header-actions .platform-toggle,
+.header-actions #login-btn {
+  height: 30px;
+  padding-left: 9px;
+  padding-right: 9px;
+  border-radius: 7px;
+  font-size: 12px;
+  position: relative;
+  top: 20px;
+  z-index: 1002;
+}
+
+/* ===== Seamless window controls ===== */
+.win-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 132px;
+  height: 40px;
+  z-index: 1001;
+  display: flex;
+  align-items: stretch;
+  background: transparent;
+}
+
+.win-btn {
+  width: 44px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 44px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--m-muted, #9aa5b4);
+  cursor: pointer;
+  padding: 0;
+  transition: background .12s ease, color .12s ease;
+}
+
+.win-btn:hover {
+  background: rgba(255,255,255,.055);
+  color: var(--m-text, #e7ebf2);
+}
+
+.win-btn:active {
+  background: rgba(255,255,255,.09);
+}
+
+.win-close:hover {
+  background: #c42b3a;
+  color: #fff;
+}
+
+.win-close:active {
+  background: #a51f2d;
+  color: #fff;
+}
+
+.win-btn:focus-visible {
+  outline: 1px solid var(--m-accent, #9147ff);
+  outline-offset: -2px;
+}
+
+/* Invisible resize grips for the borderless window. Keep them above the
+   draggable header so resizing always wins at the edges/corners. */
+.resize-grip {
+  position: fixed;
+  z-index: 1100;
+}
+.rg-n { top: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.rg-s { bottom: 0; left: 8px; right: 8px; height: 5px; cursor: ns-resize; }
+.rg-e { top: 8px; bottom: 8px; right: 0; width: 5px; cursor: ew-resize; }
+.rg-w { top: 8px; bottom: 8px; left: 0; width: 5px; cursor: ew-resize; }
+.rg-ne { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.rg-nw { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.rg-se { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.rg-sw { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+
+
+
+/* Final shell geometry for the seamless desktop chrome. */
+#app {
+  --header-height: 72px;
+  grid-template-rows: var(--header-height) minmax(0,1fr);
+}
+
+#app.header-collapsed {
+  --header-height: 0px;
+}
+
+#app.app-fullscreen {
+  --header-height: 0px;
+}
+
+/* Keep the sidebar and chat rail on the same base surface as the main app. */
+#channels-sidebar,
+#chat-pane,
+#chat-pane .chat-header,
+#chat-pane .chat-body,
+#chat-pane .chat-input-row {
+  background: var(--m-bg);
+}
+
+#channels-sidebar::-webkit-scrollbar-track,
+#chat-pane .chat-body::-webkit-scrollbar-track {
+  background: var(--m-bg);
+}
+
+/* Keep the compact titlebar action row clear of the window controls in
+   both Twitch and Kick modes. Kick's shorter platform label changes the
+   flex widths, so reserve the same right-side clearance in every state. */
+header .header-actions {
+  box-sizing: border-box;
+  padding-right: 140px;
+  justify-content: flex-end;
+}
+
+header .header-actions #kick-login-btn,
+header .header-actions #login-btn {
+  flex: 0 0 auto;
+  max-width: 132px;
+  white-space: nowrap;
+}
+
+/* Final titlebar alignment: anchor the compact action cluster to the
+   right edge of the header, immediately left of the window controls.
+   This avoids the hidden status element affecting flex positioning. */
+header .header-actions {
+  position: absolute;
+  top: 20px;
+  right: 140px;
+  margin: 0;
+  padding: 0;
+  width: max-content;
+  max-width: calc(100% - 300px);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  z-index: 1002;
+}
+header .header-actions .header-whispers-btn,
+header .header-actions .platform-toggle,
+header .header-actions #login-btn,
+header .header-actions #kick-login-btn {
+  top: 0;
+}
+
+/* Correct the titlebar layout: keep the action row in the header flow and
+   let the independently-positioned window controls sit above it. */
+header .header-actions {
+  position: static;
+  top: auto;
+  right: auto;
+  width: auto;
+  max-width: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0 140px 0 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  z-index: auto;
+}
+
+header .header-actions .header-whispers-btn,
+header .header-actions .platform-toggle,
+header .header-actions #login-btn,
+header .header-actions #kick-login-btn {
+  top: 20px;
+}
+
+header .win-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1001;
+}
+
+/* Final titlebar layout: the search launcher stays centered while the compact
+   account/platform/whisper controls form one right-anchored row. The row is
+   independent of the removed status pill and of the native-style controls. */
+header .header-actions {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+header .channel-launcher {
+  margin: 0 auto;
+}
+header .titlebar-action-buttons {
+  position: absolute;
+  top: 40px;
+  right: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  z-index: 1002;
+  white-space: nowrap;
+}
+header .titlebar-action-buttons .header-whispers-btn,
+header .titlebar-action-buttons .platform-toggle,
+header .titlebar-action-buttons #login-btn,
+header .titlebar-action-buttons #kick-login-btn {
+  position: static;
+  top: auto;
+  flex: 0 0 auto;
+  height: 30px;
+  min-height: 30px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-radius: 7px;
+  font-size: 12px;
+}
+header .titlebar-action-buttons .header-whispers-btn {
+  width: 30px;
+  padding-left: 0;
+  padding-right: 0;
+}
+header .titlebar-action-buttons .status,
+header .titlebar-action-buttons #update-btn {
+  display: none !important;
+}
+header .win-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1003;
+}
+/* In theater mode the header is collapsed; only the window controls remain
+   pinned to the top-right, as intended. */
+#app.theater-mode.header-collapsed .titlebar-action-buttons {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Definitive titlebar geometry: keep the centered launcher independent from
+   the right-side action cluster and the window controls. */
+header {
+  position: relative;
+  overflow: visible;
+}
+header .header-actions {
+  display: contents;
+}
+header .channel-launcher {
+  position: absolute;
+  left: 50%;
+  top: 19px;
+  transform: translateX(-50%);
+  width: 280px;
+  max-width: min(280px, calc(100% - 520px));
+  margin: 0;
+  z-index: 1000;
+}
+header .titlebar-action-buttons {
+  position: absolute;
+  top: 58px;
+  right: 140px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  z-index: 1002;
+  white-space: nowrap;
+}
+header .titlebar-action-buttons .status,
+header .titlebar-action-buttons #update-btn {
+  display: none !important;
+}
+header .win-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1003;
+}
+@media (max-width: 900px) {
+  header .channel-launcher {
+    left: auto;
+    right: 300px;
+    transform: none;
+    max-width: 260px;
+  }
+}
+
+/* Final correction: the compact action buttons belong to the titlebar's
+   second row. Keep them inside the 72px header and align their right edge
+   with the window-control group, without using the chat column as a spacer. */
+header .titlebar-action-buttons {
+  position: absolute;
+  top: 38px;
+  right: 16px;
+  left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 32px);
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  z-index: 1002;
+  white-space: nowrap;
+}
+
+header .titlebar-action-buttons .header-whispers-btn,
+header .titlebar-action-buttons .platform-toggle,
+header .titlebar-action-buttons #login-btn,
+header .titlebar-action-buttons #kick-login-btn {
+  position: static;
+  top: auto;
+  flex: 0 0 auto;
+  height: 30px;
+  min-height: 30px;
+  box-sizing: border-box;
+}
+
+/* The action row must never paint over the content row below the header. */
+header { overflow: hidden; }

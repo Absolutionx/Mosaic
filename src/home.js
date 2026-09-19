@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
+import { makeHypeBadge } from "./hype-badges.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 // the fetches return far more (Twitch 100, Kick 40, category rows hundreds), capped here
@@ -219,6 +220,7 @@ export class HomeFeed {
   buildCarouselCard(s) {
     const card = document.createElement("button");
     card.className = "home-carousel-card";
+    card.dataset.hypeId = s.user_id || "";
     card.addEventListener("click", () => this.onChannelSelect(s.user_login, s));
 
     const thumb = document.createElement("img");
@@ -226,6 +228,10 @@ export class HomeFeed {
     thumb.src = thumbnailUrl(s.thumbnail_url, 440, 248);
     thumb.alt = "";
     card.appendChild(thumb);
+
+    const hype = makeHypeBadge();
+    hype.classList.add("home-hype-badge");
+    card.appendChild(hype);
 
     const liveBadge = document.createElement("span");
     liveBadge.className = "home-live-badge";
@@ -322,6 +328,7 @@ export class HomeFeed {
   buildGridCard(s) {
     const card = document.createElement("button");
     card.className = "home-grid-card";
+    card.dataset.hypeId = s.user_id || "";
     card.addEventListener("click", () => this.onChannelSelect(s.user_login, s));
 
     const thumbWrap = document.createElement("div");
@@ -332,6 +339,10 @@ export class HomeFeed {
     thumb.src = thumbnailUrl(s.thumbnail_url, 320, 180);
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
+
+    const hype = makeHypeBadge();
+    hype.classList.add("home-hype-badge");
+    thumbWrap.appendChild(hype);
 
     const liveBadge = document.createElement("span");
     liveBadge.className = "home-live-badge";

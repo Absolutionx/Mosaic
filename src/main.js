@@ -1,3 +1,4 @@
+import "./titlebar.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -10,10 +11,13 @@ import { openPinAuthModal } from "./pin-auth.js";
 import { openRewardsModal } from "./rewards.js";
 import { initModLog, openModLogModal } from "./mod-log.js";
 import { initModMenu } from "./mod-menu.js";
+import { initWhispers } from "./whispers.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { TwitchAuth } from "./auth.js";
 import { ChannelsSidebar } from "./sidebar.js";
+import { startHypeBadgePolling } from "./hype-badges.js";
+import { startDropsAutoClaim } from "./drops-autoclaim.js";
 import { isKickFollowed, toggleKickFollow } from "./kick-follows.js";
 import { getKickAlias, setKickAlias, kickSlugFor } from "./kick-aliases.js";
 import { HomeFeed } from "./home.js";
@@ -361,16 +365,68 @@ const playbackControls = new PlaybackControls({
 });
 // Track ID button: identifies the music playing off the same <video> the controls drive
 const trackId = new TrackId(playbackControls.videoEl);
-// Chat filter: opens the block-list settings; recompiles the live filter after any edit
-document.getElementById("chat-filter-btn")?.addEventListener("click", () => {
-  openChatFilterModal(() => chat.reloadChatFilter());
-});
-// Pinned messages: one-time device login; on success re-poll pins immediately for the current channel
-document.getElementById("pin-connect-btn")?.addEventListener("click", () => {
-  openPinAuthModal(() => {
-    if (chat.roomId) chat._startPinPoll(chat.roomId);
-  });
-});
+// Chat settings gear (in the composer, next to the emote button): a small popup menu that launches
+// the chat-filter and pinned-messages flows, which used to be two separate toolbar buttons. The menu
+// is a fixed-position flyout anchored to the gear, same pattern as the emote picker.
+{
+  const gearBtn = document.getElementById("chat-settings-btn");
+  const menu = document.getElementById("chat-settings-menu");
+  if (gearBtn && menu) {
+    const openFilter = () => openChatFilterModal(() => chat.reloadChatFilter());
+    const openPins = () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); });
+
+    const positionMenu = () => {
+      const r = gearBtn.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return;
+      // measure after making it visible so offsetHeight/Width are real
+      const mh = menu.offsetHeight || 88;
+      const mw = menu.offsetWidth || 200;
+      // prefer above the gear; if the window's too short, drop below instead of off-screen
+      let top = r.top - mh - 6;
+      if (top < 6) top = r.bottom + 6;
+      // right-align the menu to the gear, clamped to the viewport
+      let left = r.right - mw;
+      if (left < 6) left = 6;
+      menu.style.top = top + "px";
+      menu.style.left = left + "px";
+    };
+
+    const closeMenu = () => {
+      menu.style.display = "none";
+      gearBtn.classList.remove("open");
+      document.removeEventListener("mousedown", onDocDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("resize", positionMenu);
+    };
+    const onDocDown = (e) => { if (!menu.contains(e.target) && e.target !== gearBtn && !gearBtn.contains(e.target)) closeMenu(); };
+    const onKeyDown = (e) => { if (e.key === "Escape") closeMenu(); };
+
+    const openMenu = () => {
+      menu.style.visibility = "hidden";
+      menu.style.display = "flex";
+      positionMenu();
+      menu.style.visibility = "";
+      gearBtn.classList.add("open");
+      document.addEventListener("mousedown", onDocDown, true);
+      document.addEventListener("keydown", onKeyDown, true);
+      window.addEventListener("resize", positionMenu);
+    };
+
+    gearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (menu.style.display === "none" || !menu.style.display) openMenu(); else closeMenu();
+    });
+
+    menu.querySelectorAll(".chat-settings-menu-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        const action = item.dataset.action;
+        closeMenu();
+        if (action === "filter") openFilter();
+        else if (action === "pins") openPins();
+      });
+    });
+  }
+}
 document.getElementById("rewards-btn")?.addEventListener("click", () => {
   openRewardsModal(chat.channel, chat.roomId, () => {
     openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); });
@@ -380,6 +436,9 @@ document.getElementById("rewards-btn")?.addEventListener("click", () => {
 initModLog(chat);
 document.getElementById("modlog-btn")?.addEventListener("click", () => openModLogModal());
 initModMenu(chat);
+initWhispers(chat);
+startHypeBadgePolling();
+startDropsAutoClaim();
 // the shield (room controls) only makes sense where you can moderate
 {
   const modmenuBtn = document.getElementById("modmenu-btn");
@@ -710,10 +769,14 @@ function setStatus(text) {
   // the input reading "x" and a Stop button). Playing lights a small live dot in the launcher instead,
   // so the pill is reserved for real info: resolving, reconnecting, DVR, errors
   const isPlayingStatus = /^Playing: /.test(text);
+  // Startup and failure messages are intentionally kept out of the titlebar pill.
+  // The player/placeholder and console still provide the relevant feedback without
+  // shifting the titlebar controls.
+  const isTransientStreamStatus = /^(Starting stream for |Resolving |Couldn't play |Error(?::| switching)|Stream connection lost|Failed to start:)/.test(text);
   // a bare channel indicator ("#xqc", "#xqc (Kick)") is redundant next to the search field, chat
   // header, and channel info bar, so it gets no pill either
   const isChannelPill = /^#/.test(text);
-  statusText.textContent = (text === "Idle" || isPlayingStatus || isChannelPill) ? "" : text;
+  statusText.textContent = (text === "Idle" || isPlayingStatus || isChannelPill || isTransientStreamStatus) ? "" : text;
   document.querySelector(".channel-launcher")?.classList.toggle("playing", isPlayingStatus);
 }
 

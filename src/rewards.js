@@ -17,7 +17,7 @@ async function openEmotePicker(body, channelLogin, channelId, reward) {
   body.innerHTML = `<div class="emote-picker-head">
       <button class="emote-picker-back">‹ Back</button>
       <span class="emote-picker-title">${isModified ? "Modify an emote" : "Choose an emote"} · <span class="muted">◈ ${Number(reward.cost).toLocaleString()}</span></span>
-    </div><div class="emote-picker-grid"><div class="rewards-empty">Loading emotes…</div></div>`;
+    </div><div class="rewards-emote-grid"><div class="rewards-empty">Loading emotes…</div></div>`;
   body.querySelector(".emote-picker-back").addEventListener("click", () => render(body, channelLogin, channelId));
 
   let emotes = [];
@@ -31,7 +31,7 @@ async function openEmotePicker(body, channelLogin, channelId, reward) {
     for (const e of emotes) tiles.push({ id: e.id, token: e.token });
   }
 
-  const grid = body.querySelector(".emote-picker-grid");
+  const grid = body.querySelector(".rewards-emote-grid");
   if (!grid) return;
   if (!tiles.length) {
     grid.innerHTML = `<div class="rewards-empty">No unlockable emotes available on this channel.</div>`;
