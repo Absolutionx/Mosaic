@@ -1906,14 +1906,17 @@ export class TwitchChat {
 
       actions.appendChild(copyBtn);
 
-      // the one mod action kept on hover (timeout/ban moved to the card). always rendered, disabled+grayed for non-mods/self rather than hidden; enforcement is server-side
-      {
+      // Mod-only hover actions (delete / timeout / ban): rendered only when you're a mod of this
+      // channel. Non-mods don't see them at all (previously they showed greyed-out and disabled).
+      // Enforcement is still server-side; this is purely to declutter chat for non-mods.
+      if (this.isMod && this.roomId) {
         const targetUsername = line.dataset.msgUsername || "";
         const isSelf = this._isSelf(targetUsername);
-        const canDelete = this.isMod && Boolean(line.dataset.msgId) && Boolean(this.roomId) && !isSelf;
+
+        const canDelete = Boolean(line.dataset.msgId) && !isSelf;
         const deleteBtn = document.createElement("button");
         deleteBtn.className = "chat-line-action-btn mod-action-btn";
-        deleteBtn.title = canDelete ? "Delete message" : "Delete message (mod only)";
+        deleteBtn.title = canDelete ? "Delete message" : "Delete message (unavailable)";
         deleteBtn.disabled = !canDelete;
         deleteBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
           <path d="M5.5 1a1 1 0 0 0-1 1v1H2v1h12V3h-2.5V2a1 1 0 0 0-1-1h-3zM3 5l.7 8.4A1 1 0 0 0 4.7 14h6.6a1 1 0 0 0 1-.94L13 5H3zm3 2h1v5H6V7zm3 0h1v5H9V7z"/>
@@ -1926,10 +1929,10 @@ export class TwitchChat {
         actions.appendChild(deleteBtn);
 
         // Timeout (with a duration menu) + Ban, matching StreamNook's per-message dock
-        const canMod = this.isMod && Boolean(line.dataset.msgUserId) && Boolean(this.roomId) && !isSelf;
+        const canMod = Boolean(line.dataset.msgUserId) && !isSelf;
         const toBtn = document.createElement("button");
         toBtn.className = "chat-line-action-btn mod-action-btn";
-        toBtn.title = canMod ? "Timeout" : "Timeout (mod only)";
+        toBtn.title = canMod ? "Timeout" : "Timeout (unavailable)";
         toBtn.disabled = !canMod;
         toBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5a5.5 5.5 0 0 1 0 11zM7.25 4v4.31l3.4 2 .75-1.25-2.65-1.56V4h-1.5z"/></svg>`;
         toBtn.addEventListener("click", (e) => {
@@ -1941,7 +1944,7 @@ export class TwitchChat {
 
         const banBtn = document.createElement("button");
         banBtn.className = "chat-line-action-btn mod-action-btn";
-        banBtn.title = canMod ? "Ban" : "Ban (mod only)";
+        banBtn.title = canMod ? "Ban" : "Ban (unavailable)";
         banBtn.disabled = !canMod;
         banBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM2.5 8a5.5 5.5 0 0 1 8.9-4.32l-7.72 7.72A5.47 5.47 0 0 1 2.5 8zm5.5 5.5c-1.28 0-2.46-.44-3.4-1.18l7.72-7.72A5.5 5.5 0 0 1 8 13.5z"/></svg>`;
         banBtn.addEventListener("click", (e) => {
@@ -2258,6 +2261,12 @@ export class TwitchChat {
     if (this.isMod !== wasMod) {
       // the AutoMod toggle's visibility depends on isMod, refresh even with an empty queue so the button appears the moment USERSTATE confirms mod status
       this._renderAutomodPanel();
+      // Hover action bars are built lazily and cached per line; the mod buttons (delete/timeout/ban)
+      // are only added when isMod. If mod status flips mid-session, drop the cached bars so each line
+      // rebuilds its correct button set on the next hover.
+      try {
+        this.container?.querySelectorAll(".chat-line-actions").forEach((el) => el.remove());
+      } catch { /* container may not exist yet */ }
       for (const fn of this._modStatusListeners) {
         try { fn(this.isMod); } catch (err) { console.error("mod status listener error:", err); }
       }

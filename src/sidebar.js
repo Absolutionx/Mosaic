@@ -28,7 +28,7 @@ export class ChannelsSidebar {
 
     // logins opted into go-live notifications, loaded in init() from notify_prefs.rs
     this.notifyChannels = new Set();
-    // login -> specific category (game) name to notify on when the channel switches to it
+    // login -> array of category (game) names to notify on when the channel switches to one of them
     this.categoryTargets = new Map();
     // last-seen game per channel, to detect the transition into the target category
     this._lastGame = new Map();
@@ -65,7 +65,14 @@ export class ChannelsSidebar {
       this.notifyChannels = new Set(channels);
       try {
         const targets = await invoke("get_notify_category_targets");
-        this.categoryTargets = new Map(Object.entries(targets || {}));
+        // Backend now returns login -> array. Older backends/files returned a bare string per login;
+        // normalize either shape to an array so the rest of the code only deals with arrays.
+        this.categoryTargets = new Map(
+          Object.entries(targets || {}).map(([login, v]) => [
+            login,
+            Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []),
+          ]).filter(([, arr]) => arr.length)
+        );
       } catch { /* older backend without category targets */ }
     } catch (err) {
       console.error("Failed to load notification preferences:", err);
@@ -226,16 +233,18 @@ export class ChannelsSidebar {
       if (ch.live && wasLive === false && this.notifyChannels.has(ch.login)) {
         newlyLive.push(ch);
       }
-      // target-category notification: fire when the channel switches INTO the specific category the
-      // user asked for. requires a known previous game (so we don't fire on first sighting) that wasn't
-      // already the target.
-      const target = this.categoryTargets.get(ch.login);
-      if (ch.live && target) {
-        const prevGame = this._lastGame.get(ch.login);
+      // target-category notification: fire when the channel switches INTO any of the categories the
+      // user asked for. requires a known previous game (so we don't fire on first sighting) that
+      // wasn't already the matched target.
+      const targets = this.categoryTargets.get(ch.login);
+      if (ch.live && targets && targets.length) {
+        const prevGame = (this._lastGame.get(ch.login) || "").toLowerCase();
         const now = (ch.game || "").toLowerCase();
-        const want = target.toLowerCase();
-        if (now === want && prevGame !== undefined && (prevGame || "").toLowerCase() !== want) {
-          categoryHits.push({ ...ch, target });
+        const wants = targets.map((t) => t.toLowerCase());
+        const prevSeen = this._lastGame.get(ch.login) !== undefined;
+        // fire only when the current game matches a target AND we didn't already count it last tick
+        if (wants.includes(now) && prevSeen && prevGame !== now) {
+          categoryHits.push({ ...ch, target: ch.game });
         }
       }
       this._lastLiveState.set(ch.login, ch.live);
@@ -553,18 +562,32 @@ export class ChannelsSidebar {
     return row;
   }
 
-  // small menu on the bell: opt into "when live", and/or name a specific category to be told about
+  // Fleshed-out popup on the bell, in two sections: "Notify when live" (a toggle) and "Notify for
+  // categories" (multiple categories as removable chips, added via a searchable input).
   openNotifyMenu(anchor, ch) {
     document.querySelector(".sidebar-notify-menu")?.remove();
     const menu = document.createElement("div");
     menu.className = "sidebar-notify-menu";
 
-    // "When live" toggle
+    // ---- header ----
+    const header = document.createElement("div");
+    header.className = "sidebar-notify-header";
+    header.textContent = ch.name || ch.login;
+    menu.appendChild(header);
+
+    // ---- Section 1: Notify when live ----
+    const liveSection = document.createElement("div");
+    liveSection.className = "sidebar-notify-section";
     const liveRow = document.createElement("label");
-    liveRow.className = "sidebar-notify-item";
+    liveRow.className = "sidebar-notify-liverow";
     const liveCb = document.createElement("input");
     liveCb.type = "checkbox";
     liveCb.checked = this.notifyChannels.has(ch.login);
+    const liveText = document.createElement("div");
+    liveText.className = "sidebar-notify-liverow-text";
+    liveText.innerHTML =
+      '<div class="sidebar-notify-liverow-title">Notify when live</div>' +
+      '<div class="sidebar-notify-liverow-sub">Get a notification when they start streaming</div>';
     liveCb.addEventListener("change", async () => {
       if (liveCb.checked) this.notifyChannels.add(ch.login);
       else this.notifyChannels.delete(ch.login);
@@ -573,38 +596,99 @@ export class ChannelsSidebar {
       if (liveCb.checked) await this._ensureNotifyPermission();
     });
     liveRow.appendChild(liveCb);
-    liveRow.appendChild(document.createTextNode("When live"));
-    menu.appendChild(liveRow);
+    liveRow.appendChild(liveText);
+    liveSection.appendChild(liveRow);
+    menu.appendChild(liveSection);
 
-    // "Notify when playing: [category]" — with live category suggestions so the name matches Twitch exactly
-    const catWrap = document.createElement("div");
-    catWrap.className = "sidebar-notify-cat";
-    const catLabel = document.createElement("div");
-    catLabel.className = "sidebar-notify-cat-label";
-    catLabel.textContent = "Notify when playing:";
+    // ---- Section 2: Notify for categories ----
+    const catSection = document.createElement("div");
+    catSection.className = "sidebar-notify-section";
+    const catTitle = document.createElement("div");
+    catTitle.className = "sidebar-notify-section-title";
+    catTitle.textContent = "Notify for categories";
+    const catSub = document.createElement("div");
+    catSub.className = "sidebar-notify-section-sub";
+    catSub.textContent = "Get pinged when they switch to any of these";
+    catSection.appendChild(catTitle);
+    catSection.appendChild(catSub);
+
+    // current categories, as an array we mutate then persist
+    const current = [...(this.categoryTargets.get(ch.login) || [])];
+
+    // chips container
+    const chips = document.createElement("div");
+    chips.className = "sidebar-notify-chips";
+    catSection.appendChild(chips);
+
+    const persist = async () => {
+      if (current.length) this.categoryTargets.set(ch.login, [...current]);
+      else this.categoryTargets.delete(ch.login);
+      await this._saveNotifyPrefs();
+      this._refreshBellState(anchor, ch);
+      if (current.length) await this._ensureNotifyPermission();
+    };
+
+    const renderChips = () => {
+      chips.innerHTML = "";
+      if (!current.length) {
+        const empty = document.createElement("div");
+        empty.className = "sidebar-notify-chips-empty";
+        empty.textContent = "No categories yet";
+        chips.appendChild(empty);
+        return;
+      }
+      current.forEach((name, idx) => {
+        const chip = document.createElement("span");
+        chip.className = "sidebar-notify-chip";
+        const label = document.createElement("span");
+        label.textContent = name;
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "sidebar-notify-chip-x";
+        x.setAttribute("aria-label", `Remove ${name}`);
+        x.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+        x.addEventListener("click", async () => {
+          current.splice(idx, 1);
+          renderChips();
+          await persist();
+        });
+        chip.appendChild(label);
+        chip.appendChild(x);
+        chips.appendChild(chip);
+      });
+    };
+    renderChips();
+
+    // search input + suggestions
     const inputWrap = document.createElement("div");
     inputWrap.className = "sidebar-notify-cat-inputwrap";
     const catInput = document.createElement("input");
     catInput.type = "text";
     catInput.className = "sidebar-notify-cat-input";
-    catInput.placeholder = "Search a category…";
-    catInput.value = this.categoryTargets.get(ch.login) || "";
+    catInput.placeholder = "Add a category…";
     const suggestBox = document.createElement("div");
     suggestBox.className = "sidebar-notify-suggest";
     suggestBox.style.display = "none";
     inputWrap.appendChild(catInput);
     inputWrap.appendChild(suggestBox);
-    catWrap.appendChild(catLabel);
-    catWrap.appendChild(inputWrap);
-    menu.appendChild(catWrap);
+    catSection.appendChild(inputWrap);
+    menu.appendChild(catSection);
 
-    const commit = async () => {
-      const v = catInput.value.trim();
-      if (v) this.categoryTargets.set(ch.login, v);
-      else this.categoryTargets.delete(ch.login);
-      await this._saveNotifyPrefs();
-      this._refreshBellState(anchor, ch);
-      if (v) await this._ensureNotifyPermission();
+    const addCategory = async (name) => {
+      const clean = (name || "").trim();
+      if (!clean) return;
+      // case-insensitive dedupe
+      if (current.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+        catInput.value = "";
+        suggestBox.style.display = "none";
+        return;
+      }
+      current.push(clean);
+      renderChips();
+      catInput.value = "";
+      suggestBox.style.display = "none";
+      await persist();
+      catInput.focus();
     };
 
     let debounce;
@@ -615,7 +699,11 @@ export class ChannelsSidebar {
       try { results = JSON.parse(await invoke("search_categories", { query: q })); } catch { return; }
       if (!Array.isArray(results) || !results.length) { suggestBox.style.display = "none"; return; }
       suggestBox.innerHTML = "";
-      for (const cat of results.slice(0, 8)) {
+      // hide ones already added
+      const added = new Set(current.map((c) => c.toLowerCase()));
+      const filtered = results.filter((c) => !added.has((c.name || "").toLowerCase())).slice(0, 8);
+      if (!filtered.length) { suggestBox.style.display = "none"; return; }
+      for (const cat of filtered) {
         const item = document.createElement("button");
         item.type = "button";
         item.className = "sidebar-notify-suggest-item";
@@ -627,26 +715,31 @@ export class ChannelsSidebar {
         nm.textContent = cat.name;
         item.appendChild(img);
         item.appendChild(nm);
-        item.addEventListener("click", async () => {
-          catInput.value = cat.name;
-          suggestBox.style.display = "none";
-          await commit();
-        });
+        item.addEventListener("click", () => addCategory(cat.name));
         suggestBox.appendChild(item);
       }
       suggestBox.style.display = "";
     };
     catInput.addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(runSearch, 250); });
-    catInput.addEventListener("change", commit);
     catInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { suggestBox.style.display = "none"; commit(); catInput.blur(); }
-      else if (e.key === "Escape") { suggestBox.style.display = "none"; }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        // add the first suggestion if present, else the raw typed text
+        const first = suggestBox.querySelector(".sidebar-notify-suggest-item span");
+        addCategory(first ? first.textContent : catInput.value);
+      } else if (e.key === "Escape") {
+        suggestBox.style.display = "none";
+      }
     });
 
     document.body.appendChild(menu);
     const r = anchor.getBoundingClientRect();
-    const mw = menu.offsetWidth || 210;
-    menu.style.top = `${r.bottom + 4}px`;
+    const mw = menu.offsetWidth || 260;
+    const mh = menu.offsetHeight || 240;
+    // prefer below the bell; flip above if it would overflow the viewport bottom
+    let top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    menu.style.top = `${top}px`;
     menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.left - mw + 20))}px`;
     const close = (ev) => {
       if (!menu.contains(ev.target) && ev.target !== anchor) {

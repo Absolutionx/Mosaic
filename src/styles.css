@@ -5091,9 +5091,10 @@ body.multiview-active .deps-banner {
   background: rgba(255, 255, 255, 0.1);
 }
 .chat-filter-intro {
-  color: #adadb8;
-  font-size: 12px;
-  line-height: 1.4;
+  color: var(--m-text, #e7ebf2);
+  opacity: 0.82;
+  font-size: 12.5px;
+  line-height: 1.5;
   margin-bottom: 14px;
 }
 .chat-filter-section {
@@ -5105,9 +5106,10 @@ body.multiview-active .deps-banner {
   margin-bottom: 2px;
 }
 .chat-filter-hint {
-  color: #8c8c96;
-  font-size: 11px;
-  line-height: 1.35;
+  color: var(--m-text, #e7ebf2);
+  opacity: 0.68;
+  font-size: 12px;
+  line-height: 1.45;
   margin-bottom: 8px;
 }
 .chat-filter-input-row {
@@ -6526,6 +6528,44 @@ button:active { transform: translateY(1px); }
 .sidebar-notify-suggest-item img { width: 24px; height: 32px; object-fit: cover; border-radius: 3px; flex: 0 0 auto; }
 .sidebar-notify-suggest-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Fleshed-out bell popup: header + two sections (when-live toggle, category chips). */
+.sidebar-notify-menu { min-width: 260px; max-width: 300px; }
+.sidebar-notify-header {
+  font-size: 13px; font-weight: 800; color: var(--m-text, #e7ebf2);
+  padding: 6px 8px 8px; border-bottom: 1px solid var(--m-border-soft, #212832); margin-bottom: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar-notify-section { padding: 6px 8px; }
+.sidebar-notify-section + .sidebar-notify-section { border-top: 1px solid var(--m-border-soft, #212832); }
+.sidebar-notify-section-title { font-size: 12px; font-weight: 700; color: var(--m-text, #e7ebf2); }
+.sidebar-notify-section-sub { font-size: 12px; color: var(--m-muted, #9aa5b4); margin: 2px 0 9px; line-height: 1.45; }
+/* when-live row: checkbox + title/subtitle */
+.sidebar-notify-liverow {
+  display: flex; align-items: flex-start; gap: 9px; padding: 4px 2px; cursor: pointer;
+}
+.sidebar-notify-liverow input {
+  width: 15px; height: 15px; margin-top: 1px; cursor: pointer; flex: 0 0 auto;
+  accent-color: var(--m-accent, #9147ff);
+}
+.sidebar-notify-liverow-title { font-size: 12.5px; font-weight: 600; color: var(--m-text, #e7ebf2); }
+.sidebar-notify-liverow-sub { font-size: 12px; color: var(--m-text, #e7ebf2); opacity: 0.72; margin-top: 2px; line-height: 1.45; }
+/* category chips */
+.sidebar-notify-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+.sidebar-notify-chips-empty { font-size: 11.5px; color: var(--m-faint, #697386); font-style: italic; padding: 2px 0; }
+.sidebar-notify-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+  color: var(--m-text, #e7ebf2); font-size: 11.5px; font-weight: 600;
+  border-radius: 999px; padding: 3px 5px 3px 9px; max-width: 100%;
+}
+.sidebar-notify-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-notify-chip-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; flex: 0 0 auto; padding: 0; cursor: pointer;
+  background: transparent; border: none; border-radius: 50%; color: var(--m-muted, #9aa5b4);
+}
+.sidebar-notify-chip-x:hover { background: var(--m-raised, #232b36); color: var(--m-text, #e7ebf2); }
+
 /* Hype train train-icon next to the sidebar viewer count (plain icon, no level number) */
 .sidebar-channel-viewer-row { display: inline-flex; align-items: center; gap: 5px; }
 .sidebar-hype-inline {
@@ -7063,8 +7103,7 @@ header .titlebar-action-buttons .header-whispers-btn {
   padding-left: 0;
   padding-right: 0;
 }
-header .titlebar-action-buttons .status,
-header .titlebar-action-buttons #update-btn {
+header .titlebar-action-buttons .status {
   display: none !important;
 }
 header .win-controls {
@@ -7111,8 +7150,7 @@ header .titlebar-action-buttons {
   z-index: 1002;
   white-space: nowrap;
 }
-header .titlebar-action-buttons .status,
-header .titlebar-action-buttons #update-btn {
+header .titlebar-action-buttons .status {
   display: none !important;
 }
 header .win-controls {
@@ -7151,6 +7189,7 @@ header .titlebar-action-buttons {
   white-space: nowrap;
 }
 
+header .titlebar-action-buttons #update-btn,
 header .titlebar-action-buttons .header-whispers-btn,
 header .titlebar-action-buttons .platform-toggle,
 header .titlebar-action-buttons #login-btn,

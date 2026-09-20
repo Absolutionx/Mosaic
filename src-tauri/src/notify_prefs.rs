@@ -7,13 +7,44 @@ use tauri::{AppHandle, Manager};
 
 const PREFS_FILE: &str = "notify_channels.json";
 
+// Category targets moved from one category per login (a String) to many (a Vec<String>). The custom
+// deserialize below accepts BOTH shapes so existing files keep working: a bare "Just Chatting" is
+// read as ["Just Chatting"], and a list is read as-is. New writes are always lists.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CategoryTargetsIn {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl From<CategoryTargetsIn> for Vec<String> {
+    fn from(v: CategoryTargetsIn) -> Self {
+        match v {
+            CategoryTargetsIn::One(s) => {
+                if s.trim().is_empty() { Vec::new() } else { vec![s] }
+            }
+            CategoryTargetsIn::Many(list) => list,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct PersistedPrefs {
     // lowercase channel logins the user wants go-live notifications for
     channels: Vec<String>,
-    // login -> the specific category (game) name to notify on when the channel switches TO it
-    #[serde(default)]
-    category_targets: HashMap<String, String>,
+    // login -> the category (game) names to notify on when the channel switches TO one of them.
+    // Deserializes from either the old String form or the new list form (see CategoryTargetsIn).
+    #[serde(default, deserialize_with = "de_category_targets")]
+    category_targets: HashMap<String, Vec<String>>,
+}
+
+// Reads the whole map allowing each value to be a String (old) or a Vec<String> (new).
+fn de_category_targets<'de, D>(d: D) -> Result<HashMap<String, Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: HashMap<String, CategoryTargetsIn> = HashMap::deserialize(d)?;
+    Ok(raw.into_iter().map(|(k, v)| (k, v.into())).collect())
 }
 
 fn prefs_path(app: &AppHandle) -> Option<std::path::PathBuf> {
@@ -49,16 +80,17 @@ pub fn set_notify_channels(app: AppHandle, channels: Vec<String>) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn get_notify_category_targets(app: AppHandle) -> HashMap<String, String> {
+pub fn get_notify_category_targets(app: AppHandle) -> HashMap<String, Vec<String>> {
     load_prefs(&app).category_targets
 }
 
 #[tauri::command]
 pub fn set_notify_category_targets(
     app: AppHandle,
-    targets: HashMap<String, String>,
+    targets: HashMap<String, Vec<String>>,
 ) -> Result<(), String> {
     let mut prefs = load_prefs(&app);
-    prefs.category_targets = targets;
+    // drop empty lists so a channel with no categories doesn't linger in the file
+    prefs.category_targets = targets.into_iter().filter(|(_, v)| !v.is_empty()).collect();
     save_prefs(&app, &prefs)
 }
