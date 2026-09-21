@@ -80,7 +80,7 @@ export class TwitchAuth {
 
       const result = await invoke("restore_session");
       if (result) {
-        const { access_token, login, user_id } = result;
+        const { access_token, login, user_id, missing_scopes } = result;
         await invoke("set_oauth_credentials", { accessToken: access_token, login, userId: user_id });
         this.login = login;
         const displayName = await this._resolveDisplayName(login, user_id);
@@ -88,6 +88,7 @@ export class TwitchAuth {
         this.loginBtn.classList.add("logged-in");
         this.loginBtn.disabled = false;
         this.statusCallback(login, user_id, displayName);
+        this._checkScopes(missing_scopes);
       } else {
         this._setLoginLabel("Log in with Twitch");
         this.loginBtn.disabled = false;
@@ -115,6 +116,8 @@ export class TwitchAuth {
     try {
       await invoke("logout");
       await invoke("set_oauth_credentials", { accessToken: "", login: "", userId: "" });
+      // tear down the persistent whisper connection — no account to receive whispers for anymore
+      await invoke("stop_account_eventsub").catch(() => {});
     } catch (err) {
       console.error("Logout failed:", err);
     }
@@ -127,7 +130,7 @@ export class TwitchAuth {
 
   async handleToken(accessToken) {
     try {
-      const { login, user_id } = await invoke("validate_oauth_token", { accessToken });
+      const { login, user_id, missing_scopes } = await invoke("validate_oauth_token", { accessToken });
       await invoke("set_oauth_credentials", { accessToken, login, userId: user_id });
       this.login = login;
       const displayName = await this._resolveDisplayName(login, user_id);
@@ -135,10 +138,51 @@ export class TwitchAuth {
       this.loginBtn.classList.add("logged-in");
       this.loginBtn.disabled = false;
       this.statusCallback(login, user_id, displayName);
+      // a fresh login should have every scope; clear any stale banner from a previous old-token session
+      this._checkScopes(missing_scopes);
     } catch (err) {
       console.error("Token validation failed:", err);
       this._setLoginLabel("Log in with Twitch");
       this.loginBtn.disabled = false;
+    }
+  }
+
+  // Shows (or hides) a re-login banner based on which required scopes the current token is missing.
+  // Older tokens created before a scope was added will be missing it, so the user is prompted to sign
+  // out and back in to unlock the features that need it (e.g. whispers need user:read:whispers).
+  _checkScopes(missingScopes) {
+    const banner = document.getElementById("scope-relogin-banner");
+    if (!banner) return;
+    const missing = Array.isArray(missingScopes) ? missingScopes : [];
+    if (!missing.length) {
+      banner.style.display = "none";
+      document.getElementById("app")?.classList.remove("scope-banner-visible");
+      return;
+    }
+
+    // human-friendly summary of what's affected, without dumping raw scope strings
+    const affected = [];
+    if (missing.some((s) => s.includes("whispers"))) affected.push("whispers");
+    if (missing.some((s) => s.startsWith("moderator:"))) affected.push("some mod tools");
+    const what = affected.length ? affected.join(" and ") : "some features";
+
+    const msgEl = banner.querySelector(".scope-relogin-text");
+    if (msgEl) msgEl.textContent = `New permissions are needed for ${what}. Sign out and back in to enable them.`;
+    banner.style.display = "";
+    document.getElementById("app")?.classList.add("scope-banner-visible");
+
+    const btn = banner.querySelector(".scope-relogin-btn");
+    if (btn && !btn._wired) {
+      btn._wired = true;
+      btn.addEventListener("click", async () => { await this.logout(); this.startLogin(); });
+    }
+    const dismiss = banner.querySelector(".scope-relogin-dismiss");
+    if (dismiss && !dismiss._wired) {
+      dismiss._wired = true;
+      dismiss.addEventListener("click", () => {
+        banner.style.display = "none";
+        document.getElementById("app")?.classList.remove("scope-banner-visible");
+      });
     }
   }
 }

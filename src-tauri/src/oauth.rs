@@ -50,6 +50,31 @@ pub const CLIENT_ID: &str = "i2tkeryeipoljcoh8sjtxtcfd43guv";
 const REDIRECT_URI: &str = "http://localhost:17543";
 const REDIRECT_PORT: &str = "17543";
 
+// The OAuth scopes the app requests at login. This is the single source of truth: start_oauth_login
+// requests exactly these, and the frontend compares a token's granted scopes against these to decide
+// whether a re-login is needed (an older token, from before a scope was added, will be missing some).
+// Add new scopes HERE when a feature needs them, and existing users will be prompted to re-login.
+pub const REQUIRED_SCOPES: &[&str] = &[
+    "chat:read",
+    "chat:edit",
+    "channel:read:redemptions",
+    "user:read:follows",
+    "moderator:manage:banned_users",
+    "moderator:manage:chat_messages",
+    "moderator:manage:automod",
+    "moderator:read:chatters",
+    "clips:edit",
+    "moderator:read:blocked_terms",
+    "moderator:read:chat_settings",
+    "moderator:manage:chat_settings",
+    "user:read:whispers",
+    "user:manage:whispers",
+    "moderator:read:unban_requests",
+    "moderator:read:warnings",
+    "moderator:read:moderators",
+    "moderator:read:vips",
+];
+
 #[derive(Serialize, Clone)]
 pub struct OAuthTokenEvent {
     pub access_token: String,
@@ -59,34 +84,14 @@ pub struct OAuthTokenEvent {
 struct ValidateResponse {
     login: String,
     user_id: String,
-    #[allow(dead_code)]
+    #[serde(default)]
     scopes: Vec<String>,
 }
 
 // opens the Twitch login page in the default browser and starts a local HTTP server to catch the OAuth redirect. on success it emits "oauth-token" to the main window and shuts down
 #[tauri::command]
 pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
-    let scope = [
-        "chat:read",
-        "chat:edit",
-        "channel:read:redemptions",
-        "user:read:follows",
-        "moderator:manage:banned_users",
-        "moderator:manage:chat_messages",
-        "moderator:manage:automod",
-        "moderator:read:chatters",
-        "clips:edit",
-        "moderator:read:blocked_terms",
-        "moderator:read:chat_settings",
-        "moderator:manage:chat_settings",
-        "user:read:whispers",
-        "user:manage:whispers",
-        "moderator:read:unban_requests",
-        "moderator:read:warnings",
-        "moderator:read:moderators",
-        "moderator:read:vips",
-    ]
-    .join(" ");
+    let scope = REQUIRED_SCOPES.join(" ");
 
     let auth_url = format!(
         "https://id.twitch.tv/oauth2/authorize\
@@ -307,7 +312,22 @@ pub async fn validate_oauth_token(
 
     save_token(&app, &access_token);
 
-    Ok(serde_json::json!({ "login": parsed.login, "user_id": parsed.user_id }))
+    let missing = missing_scopes(&parsed.scopes);
+    Ok(serde_json::json!({
+        "login": parsed.login,
+        "user_id": parsed.user_id,
+        "missing_scopes": missing,
+    }))
+}
+
+// Which required scopes this token is missing (empty = all present). Used by the frontend to decide
+// whether to prompt a re-login after a new feature added a scope.
+fn missing_scopes(granted: &[String]) -> Vec<String> {
+    REQUIRED_SCOPES
+        .iter()
+        .filter(|req| !granted.iter().any(|g| g == *req))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[tauri::command]
@@ -331,7 +351,8 @@ pub async fn restore_session(app: AppHandle) -> Result<serde_json::Value, String
             Ok(parsed) => Ok(serde_json::json!({
                 "access_token": token,
                 "login": parsed.login,
-                "user_id": parsed.user_id
+                "user_id": parsed.user_id,
+                "missing_scopes": missing_scopes(&parsed.scopes),
             })),
             Err(e) => {
                 clear_token(&app);

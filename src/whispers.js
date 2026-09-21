@@ -46,6 +46,9 @@ function dayLabel(ts) {
 
 export function initWhispers(chat) {
   chatRef = chat;
+  // make sure the global emote sets are available for the whisper picker even before any stream is
+  // opened (chat.loadGlobalEmotesOnce is idempotent)
+  try { chatRef.loadGlobalEmotesOnce?.(); } catch { /* ignore */ }
   document.getElementById("whispers-btn")?.addEventListener("click", () => openWhispers());
 
   listen("whisper-received", async (e) => {
@@ -157,7 +160,14 @@ async function renderThread(modal) {
     '<button class="whisper-close">\u2715</button></div>' +
     '<div class="whisper-body" id="whisper-body"></div>' +
     '<div class="whisper-inputrow">' +
+    '<div class="whisper-input-wrap">' +
     '<input type="text" class="whisper-input" placeholder="Send a whisper\u2026" maxlength="500" />' +
+    '<button class="whisper-emote-btn" title="Emotes" type="button">' +
+    '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="8.7" cy="9.8" r="1.15" fill="currentColor"/><circle cx="15.3" cy="9.8" r="1.15" fill="currentColor"/><path d="M8 14.2c1 1.3 2.4 2 4 2s3-.7 4-2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
+    '</button>' +
+    '<div class="whisper-emote-menu" style="display:none"></div>' +
+    '<div class="whisper-ac" style="display:none"></div>' +
+    '</div>' +
     '<button class="whisper-send">Send</button></div>';
   modal.querySelector(".whisper-close").addEventListener("click", close);
   modal.querySelector(".whisper-back").addEventListener("click", () => { view = "list"; activeContact = null; render(); });
@@ -198,7 +208,145 @@ async function renderThread(modal) {
     }
   };
   send.addEventListener("click", doSend);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); doSend(); } });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !acVisible()) { e.preventDefault(); doSend(); } });
+
+  // ---- emotes: picker button + tab/type autocomplete, reusing the chat instance's emote maps ----
+  const emoteBtn = modal.querySelector(".whisper-emote-btn");
+  const emoteMenu = modal.querySelector(".whisper-emote-menu");
+  const acBox = modal.querySelector(".whisper-ac");
+
+  // flat, de-duped, sorted list of {name, url} from the live emote maps (7TV/BTTV/FFZ + Twitch native)
+  function allEmotes() {
+    const out = [];
+    const seen = new Set();
+    if (chatRef && chatRef.sevenTvEmotes) {
+      for (const [name, e] of chatRef.sevenTvEmotes) {
+        if (e?.url && !seen.has(name)) { seen.add(name); out.push({ name, url: e.url }); }
+      }
+    }
+    if (chatRef && chatRef.twitchNativeEmotes) {
+      for (const [name, t] of chatRef.twitchNativeEmotes) {
+        if (!seen.has(name) && t?.id) {
+          seen.add(name);
+          out.push({ name, url: `https://static-cdn.jtvnw.net/emoticons/v2/${t.id}/default/dark/1.0` });
+        }
+      }
+    }
+    return out;
+  }
+
+  function insertEmote(name) {
+    // replace the word being typed (if any) with the emote name, else append at cursor
+    const v = input.value;
+    const caret = input.selectionStart ?? v.length;
+    const before = v.slice(0, caret);
+    const after = v.slice(caret);
+    const m = before.match(/(\S+)$/);
+    const start = m ? caret - m[1].length : caret;
+    const insert = name + " ";
+    input.value = before.slice(0, start) + insert + after;
+    const pos = start + insert.length;
+    input.setSelectionRange(pos, pos);
+    input.focus();
+  }
+
+  // --- picker menu ---
+  function buildEmoteMenu() {
+    // make sure globals are loaded (idempotent) in case whispers opened very early
+    try { chatRef.loadGlobalEmotesOnce?.(); } catch { /* ignore */ }
+    const list = allEmotes();
+    emoteMenu.innerHTML = "";
+    if (!list.length) {
+      emoteMenu.innerHTML = '<div class="whisper-emote-empty">Emotes are still loading\u2026 try again in a moment.</div>';
+      return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "whisper-emote-grid";
+    for (const e of list.slice(0, 300)) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "whisper-emote-cell";
+      b.title = e.name;
+      const img = document.createElement("img");
+      img.src = e.url; img.alt = e.name; img.loading = "lazy";
+      b.appendChild(img);
+      b.addEventListener("click", () => { insertEmote(e.name); emoteMenu.style.display = "none"; });
+      grid.appendChild(b);
+    }
+    emoteMenu.appendChild(grid);
+  }
+  emoteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (emoteMenu.style.display === "none") { buildEmoteMenu(); emoteMenu.style.display = ""; acBox.style.display = "none"; }
+    else emoteMenu.style.display = "none";
+  });
+  document.addEventListener("mousedown", (e) => {
+    if (!emoteMenu.contains(e.target) && e.target !== emoteBtn && !emoteBtn.contains(e.target)) emoteMenu.style.display = "none";
+  });
+
+  // --- inline autocomplete (type ":" or 2+ chars of a word) ---
+  let acItems = [];
+  let acIndex = 0;
+  function acVisible() { return acBox.style.display !== "none"; }
+  function currentWord() {
+    const caret = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, caret);
+    const m = before.match(/(\S+)$/);
+    return m ? m[1] : "";
+  }
+  function refreshAc() {
+    const raw = currentWord();
+    const q = raw.replace(/^:/, "");
+    if (q.length < 2) { acBox.style.display = "none"; return; }
+    const ql = q.toLowerCase();
+    const all = allEmotes();
+    // prefix matches first, then substring; cap the list
+    const pref = [], sub = [];
+    for (const e of all) {
+      const n = e.name.toLowerCase();
+      if (n.startsWith(ql)) pref.push(e);
+      else if (n.includes(ql)) sub.push(e);
+      if (pref.length >= 8) break;
+    }
+    acItems = [...pref, ...sub].slice(0, 8);
+    if (!acItems.length) { acBox.style.display = "none"; return; }
+    acIndex = 0;
+    renderAc();
+    acBox.style.display = "";
+  }
+  function renderAc() {
+    acBox.innerHTML = "";
+    acItems.forEach((e, i) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "whisper-ac-item" + (i === acIndex ? " active" : "");
+      const img = document.createElement("img"); img.src = e.url; img.alt = ""; img.loading = "lazy";
+      const nm = document.createElement("span"); nm.textContent = e.name;
+      row.appendChild(img); row.appendChild(nm);
+      row.addEventListener("click", () => { insertEmote(e.name); acBox.style.display = "none"; });
+      acBox.appendChild(row);
+    });
+  }
+  input.addEventListener("input", refreshAc);
+  input.addEventListener("keydown", (e) => {
+    if (!acVisible()) {
+      // Tab with a typed word completes the top match even without the dropdown open
+      if (e.key === "Tab") {
+        const all = allEmotes();
+        const q = currentWord().replace(/^:/, "").toLowerCase();
+        if (q.length >= 2) {
+          const hit = all.find((x) => x.name.toLowerCase().startsWith(q)) || all.find((x) => x.name.toLowerCase().includes(q));
+          if (hit) { e.preventDefault(); insertEmote(hit.name); }
+        }
+      }
+      return;
+    }
+    if (e.key === "ArrowDown") { e.preventDefault(); acIndex = (acIndex + 1) % acItems.length; renderAc(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); acIndex = (acIndex - 1 + acItems.length) % acItems.length; renderAc(); }
+    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertEmote(acItems[acIndex].name); acBox.style.display = "none"; }
+    else if (e.key === "Escape") { acBox.style.display = "none"; }
+  });
+
   input.focus();
 }
 
@@ -237,6 +385,36 @@ function renderNew(modal) {
   input.focus();
 }
 
+// Renders whisper text with inline emotes, reusing the live chat instance's already-loaded emote maps
+// (7TV / BTTV / FFZ via sevenTvEmotes, plus Twitch native by name). Everything that isn't a known
+// emote word is inserted as an escaped text node, so this is XSS-safe. Falls back to plain text if the
+// chat emote maps aren't available yet.
+function renderTextWithEmotes(container, text) {
+  const map = chatRef && chatRef.sevenTvEmotes;
+  const twitchByName = chatRef && chatRef.twitchNativeEmotes;
+  if (!text) return;
+  if (!map && !twitchByName) { container.textContent = text; return; }
+  const parts = text.split(" ");
+  parts.forEach((word, i) => {
+    if (i > 0) container.appendChild(document.createTextNode(" "));
+    const emote = map ? map.get(word) : null;
+    const tw = !emote && twitchByName ? twitchByName.get(word) : null;
+    const url = emote?.url
+      ?? (tw ? `https://static-cdn.jtvnw.net/emoticons/v2/${tw.id}/default/dark/2.0` : null);
+    if (url) {
+      const img = document.createElement("img");
+      img.className = "chat-emote whisper-emote";
+      img.src = url;
+      img.alt = word;
+      img.title = word;
+      img.loading = "lazy";
+      container.appendChild(img);
+    } else {
+      container.appendChild(document.createTextNode(word));
+    }
+  });
+}
+
 function appendMessageEl(fromSelf, text, ts, bodyEl) {
   const body = bodyEl || (overlay && overlay.querySelector("#whisper-body"));
   if (!body) return;
@@ -253,7 +431,7 @@ function appendMessageEl(fromSelf, text, ts, bodyEl) {
   line.className = "whisper-msg" + (fromSelf ? " self" : "");
   const bubble = document.createElement("div");
   bubble.className = "whisper-bubble";
-  bubble.textContent = text;
+  renderTextWithEmotes(bubble, text);
   const time = document.createElement("div");
   time.className = "whisper-msg-time";
   time.textContent = fmtTime(ts);

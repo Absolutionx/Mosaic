@@ -355,10 +355,6 @@ header #login-btn.logged-in:hover {
 .user-menu-item:hover {
   background: rgba(255, 255, 255, 0.1);
 }
-.user-menu-item.destructive:hover {
-  color: #eb4034;
-  background: rgba(235, 64, 52, 0.1);
-}
 /* VOD chapters panel */
 .chapters-menu {
   position: fixed;
@@ -560,6 +556,26 @@ header #login-btn.logged-in { border-radius: 7px; }
   position: relative;
   overflow: hidden;
 }
+/* Twitch-style top-edge fade: a full-width gradient that darkens the very top of the player and
+   fades to transparent, so the channel-info overlay (name/title/viewers) reads clearly without a
+   box of its own. Mirrors the bottom controls-bar fade. Only visible on hover, alongside the
+   controls (controls-visible on #video-frame), and never while the info overlay is empty. */
+#video-region::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 96px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.32) 45%, rgba(0, 0, 0, 0) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 1;
+}
+#video-frame.controls-visible #video-region::before {
+  opacity: 1;
+}
 /* The actual decoded stream (see playback-controls.js's hls.js
    setup). object-fit:contain matches mpv's old default behavior of
    preserving source aspect ratio with letterboxing rather than
@@ -711,6 +727,20 @@ header #login-btn.logged-in { border-radius: 7px; }
 #app.deps-banner-visible {
   padding-top: 38px;
 }
+/* The re-login banner reuses .deps-banner layout but reads as informational (accent), not an error. */
+.scope-relogin-banner {
+  background: var(--m-accent-soft, rgba(145, 71, 255, 0.12));
+  border-bottom: 1px solid var(--m-accent, #9147ff);
+  color: var(--m-text, #e7ebf2);
+}
+.scope-relogin-banner .deps-banner-icon { color: var(--m-accent, #9147ff); }
+.scope-relogin-banner .scope-relogin-btn {
+  background: var(--m-accent, #9147ff);
+  color: var(--m-accent-fg, #fff);
+  border: none;
+}
+.scope-relogin-banner .scope-relogin-btn:hover { background: var(--m-accent-hover, #772ce8); }
+#app.scope-banner-visible { padding-top: 38px; }
 .deps-banner-icon {
   color: #ff6b6b;
   flex-shrink: 0;
@@ -1441,11 +1471,14 @@ header #login-btn.logged-in { border-radius: 7px; }
    two don't read as the same thing at a glance if they ever
    overlap (a first-time chatter's first message redeeming a
    channel point reward, however unlikely, gets both classes). */
+/* First-time chatter: the most subtle of the two — a whisper of accent fading out with a thin edge,
+   no inner glow, so it marks them gently without competing with a highlighted message. */
 .chat-line.is-first-msg {
-  background: rgba(145, 71, 255, 0.15);
-  border-left: 2px solid #9146ff;
-  padding-left: 5px;
-  margin-left: -5px;
+  background: linear-gradient(90deg, rgba(145, 71, 255, 0.06), transparent 65%);
+  box-shadow: inset 2px 0 0 0 rgba(145, 71, 255, 0.35);
+  border-radius: 7px;
+  padding-left: 8px;
+  margin-left: -4px;
   padding-top: 2px;
 }
 .first-msg-label {
@@ -1483,6 +1516,12 @@ header #login-btn.logged-in { border-radius: 7px; }
 .redeem-info {
   font-size: 0.85em;
   line-height: 1.4;
+  /* shrinkable flex child so a long unbroken string (e.g. a pasted URL) wraps inside the bubble
+     instead of overflowing past its right edge */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .redeem-username {
   color: var(--accent-text);
@@ -1500,6 +1539,8 @@ header #login-btn.logged-in { border-radius: 7px; }
   color: #dedee3;
   margin-top: 2px;
   font-style: italic;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pip-btn.pip-active svg rect:last-child {
@@ -1569,11 +1610,11 @@ header #login-btn.logged-in { border-radius: 7px; }
   position: fixed;
   display: none;
   flex-direction: column;
-  background: #18181b;
-  border: 1px solid #3a3a3d;
-  border-radius: 6px;
-  padding: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  background: var(--m-surface, #18181b);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 8px;
+  padding: 5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   z-index: 1000;
 }
 .quality-menu.open {
@@ -1589,24 +1630,28 @@ header #login-btn.logged-in { border-radius: 7px; }
 .quality-menu-item {
   background: none;
   border: none;
-  color: #efeff1;
+  color: var(--m-text, #e7ebf2);
   font-size: 13px;
+  font-family: inherit;
   text-align: left;
   padding: 7px 12px;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
   width: 100%;
 }
 .quality-menu-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--m-surface-2, #1c222c);
 }
+/* current selection: bold, in normal text color (not the platform accent, which read as an odd
+   lone purple item against the rest of the neutral menu) */
 .quality-menu-item.active {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--m-text, #e7ebf2);
+  font-weight: 700;
+  background: var(--m-surface-2, #1c222c);
 }
 .quality-menu-empty {
-  color: #777;
+  color: var(--m-muted, #9aa5b4);
   font-size: 12px;
   padding: 6px 10px;
   font-style: italic;
@@ -1615,41 +1660,42 @@ header #login-btn.logged-in { border-radius: 7px; }
 /* Thin rule between Auto and the manual quality options. */
 .quality-menu-sep {
   height: 1px;
-  background: #2c2c30;
-  margin: 3px 2px;
+  background: var(--m-border-soft, #212832);
+  margin: 4px 2px;
 }
 /* Thin rule between quality pills and the low-latency toggle. */
 .quality-menu-divider {
   height: 1px;
-  background: #2c2c30;
-  margin: 3px 2px;
+  background: var(--m-border-soft, #212832);
+  margin: 4px 2px;
 }
 /* Full-width row for the low-latency on/off toggle. */
 .quality-menu-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
+  padding: 7px 10px;
   background: none;
   border: none;
-  color: #adadb8;
-  font-size: 12px;
+  color: var(--m-text, #e7ebf2);
+  font-size: 13px;
+  font-family: inherit;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 6px;
   width: 100%;
   text-align: left;
   white-space: nowrap;
 }
 .quality-menu-toggle:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #efeff1;
+  background: var(--m-surface-2, #1c222c);
 }
 /* Pill-style toggle switch, same visual idiom as OS toggles. */
 .quality-toggle-switch {
   width: 28px;
   height: 16px;
   border-radius: 8px;
-  background: #3a3a3d;
+  background: var(--m-raised, #232b36);
+  border: 1px solid var(--m-border, #29313d);
   position: relative;
   flex-shrink: 0;
   transition: background 0.15s;
@@ -1663,15 +1709,16 @@ header #login-btn.logged-in { border-radius: 7px; }
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #adadb8;
+  background: var(--m-muted, #9aa5b4);
   transition: transform 0.15s, background 0.15s;
 }
 .quality-menu-toggle.on .quality-toggle-switch {
-  background: var(--accent);
+  background: var(--m-accent, #9147ff);
+  border-color: var(--m-accent, #9147ff);
 }
 .quality-menu-toggle.on .quality-toggle-switch::after {
   transform: translateX(12px);
-  background: #fff;
+  background: var(--m-accent-fg, #fff);
 }
 
 #chat-pane {
@@ -2946,8 +2993,9 @@ body.kick-mode .sidebar-channel-name {
 .jump-to-latest-btn {
   display: none;
   position: absolute;
-  left: 10px;
-  right: 10px;
+  /* Compact pill, centered — no longer spanning the full chat width. */
+  left: 50%;
+  transform: translateX(-50%);
   /* Rides the input row's REAL height (published by _autosizeChatInput
      as --chat-input-row-h) rather than a hardcoded offset - the old
      fixed 50px assumed a one-line input, so the auto-growing textarea
@@ -2958,14 +3006,15 @@ body.kick-mode .sidebar-channel-name {
   backdrop-filter: blur(4px);
   border: none;
   color: #efeff1;
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 600;
-  padding: 8px 14px;
+  padding: 4px 10px;
   border-radius: 20px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
+  white-space: nowrap;
   z-index: 5;
 }
 .jump-to-latest-btn.visible {
@@ -3154,7 +3203,7 @@ body.kick-mode .sidebar-channel-name {
 .chat-settings-menu {
   position: fixed;
   flex-direction: column;
-  min-width: 200px;
+  min-width: 230px;
   background: var(--m-surface, #18181b);
   border: 1px solid var(--m-border, #3a3a3d);
   border-radius: 8px;
@@ -3181,6 +3230,18 @@ body.kick-mode .sidebar-channel-name {
 .chat-settings-menu-item:hover { background: var(--m-surface-2, #1c222c); }
 .chat-settings-menu-item svg { flex: 0 0 auto; color: var(--m-muted, #9aa5b4); }
 .chat-settings-menu-item:hover svg { color: var(--m-text, #e7ebf2); }
+/* divider + toggle row (e.g. "Minimize to tray on close") */
+.chat-settings-menu-divider {
+  height: 1px; margin: 4px 8px; background: var(--m-border-soft, #212832);
+}
+.chat-settings-menu-toggle {
+  cursor: pointer;
+}
+.chat-settings-menu-toggle span { flex: 1; }
+.chat-settings-menu-toggle input[type="checkbox"] {
+  width: 15px; height: 15px; flex: 0 0 auto; cursor: pointer;
+  accent-color: var(--m-accent, #9147ff); margin: 0;
+}
 
 /* --- Chat message hover actions (copy / reply / mod tools) --- */
 .chat-line {
@@ -3600,12 +3661,14 @@ body.kick-mode .sidebar-channel-name {
 .chat-reply-indicator {
   display: none; /* block when active, set by JS */
   flex-direction: column;
-  padding: 6px 10px 5px;
-  background: #18181b;
-  border-top: 1px solid #2c2c30;
-  font-size: 12px;
+  padding: 8px 12px;
+  margin: 8px 10px 0;
+  background: var(--m-bg, #0e1116);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 10px;
+  font-size: 13px;
   flex-shrink: 0;
-  gap: 2px;
+  gap: 3px;
 }
 /* Row 1: arrow + "Replying to @user" + X */
 .chat-reply-indicator-header {
@@ -3615,12 +3678,13 @@ body.kick-mode .sidebar-channel-name {
   min-width: 0;
 }
 .chat-reply-indicator-arrow {
-  color: #adadb8;
+  color: var(--m-accent, #9147ff);
   flex-shrink: 0;
   font-size: 13px;
 }
 .chat-reply-indicator-header-label {
-  color: #adadb8;
+  color: var(--m-text, #e7ebf2);
+  opacity: 0.85;
   flex: 1;
   min-width: 0;
   white-space: nowrap;
@@ -3630,29 +3694,41 @@ body.kick-mode .sidebar-channel-name {
 .chat-reply-indicator-cancel {
   background: none;
   border: none;
-  color: #adadb8;
+  color: var(--m-muted, #9aa5b4);
   cursor: pointer;
   font-size: 14px;
   padding: 0 2px;
   line-height: 1;
   flex-shrink: 0;
 }
-.chat-reply-indicator-cancel:hover { color: #efeff1; }
-/* Row 2: quoted message */
+.chat-reply-indicator-cancel:hover { color: var(--m-text, #e7ebf2); }
+/* Row 2: quoted message — shown in full, but capped in height with an internal scroll so a rare very
+   long (up to 500-char) message can't push the composer way up. Short messages stay their natural size. */
 .chat-reply-indicator-body {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #adadb8;
+  color: var(--m-text, #e7ebf2);
+  font-size: 13px;
+  line-height: 1.45;
   padding-left: 18px; /* indent under the arrow */
+  overflow-wrap: anywhere;
+  max-height: 5.2em; /* ~3 lines before it scrolls */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--m-raised, #232b36) transparent;
 }
+.chat-reply-indicator-body::-webkit-scrollbar { width: 7px; }
+.chat-reply-indicator-body::-webkit-scrollbar-track { background: transparent; }
+.chat-reply-indicator-body::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.chat-reply-indicator-body::-webkit-scrollbar-thumb:hover { background: var(--m-border, #29313d); }
 .chat-reply-indicator-user {
-  color: #efeff1;
-  font-weight: 600;
+  color: var(--m-text, #e7ebf2);
+  font-weight: 700;
 }
 .chat-reply-indicator-text {
-  color: #adadb8;
+  color: var(--m-text, #e7ebf2);
+  opacity: 0.9;
 }
+/* keep emotes in the quote small and inline so the banner stays compact */
+.chat-reply-indicator-body .chat-emote { height: 1.5em; width: auto; vertical-align: middle; }
 /* --- Emote Autocomplete Popup --- */
 .emote-autocomplete {
   /* position/top/left/width set dynamically in JS via getBoundingClientRect */
@@ -5530,13 +5606,21 @@ header #kick-login-btn {
 .center-play-btn:hover { background: rgba(145,71,255,.9); color: #fff; }
 
 .stream-info-overlay {
-  top: 16px;
+  top: 12px;
   left: 16px;
   bottom: auto;
   max-width: min(520px,70%);
-  padding: 12px;
-  border-radius: 10px;
-  background: linear-gradient(90deg,rgba(8,10,13,.88),rgba(8,10,13,.45),transparent);
+  padding: 0;
+  border-radius: 0;
+  /* No box of its own — it sits on the full-width top-edge fade (#video-region::before), the way
+     Twitch's player does it. The text-shadow below keeps it legible over that fade. */
+  background: none;
+  z-index: 2;
+}
+.stream-info-overlay .stream-info-name,
+.stream-info-overlay .stream-info-title,
+.stream-info-overlay .stream-info-meta {
+  text-shadow: 0 1px 3px rgba(0,0,0,0.85);
 }
 .stream-info-avatar { width: 38px; height: 38px; border-radius: 9px; }
 .stream-info-name { font-weight: 700; }
@@ -5689,9 +5773,13 @@ header #kick-login-btn {
   color: var(--m-accent);
 }
 .jump-to-latest-btn {
-  border-radius: 8px;
-  background: var(--m-raised);
-  border: 1px solid var(--m-border);
+  border-radius: 14px;
+  background: rgba(14, 17, 22, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(6px);
+}
+.jump-to-latest-btn:hover {
+  background: rgba(14, 17, 22, 0.62);
 }
 
 /* ---- Home / Browse ---- */
@@ -6347,11 +6435,21 @@ button:active { transform: translateY(1px); }
 .emote-tile:disabled { cursor: default; }
 
 /* "Highlight My Message" reward — stronger accent than a channel-point message, matching twitch.tv */
+/* Highlighted message (channel-point redeem): a subtle purple glow rather than a heavy filled block —
+   a faint wash fading right, a soft inner glow, and a thin accent edge. Same refined language as the
+   hype-train glow, so it reads as special without shouting. */
 .chat-line.is-highlighted-message {
-  background: rgba(145, 71, 255, 0.14);
-  border-left: 4px solid rgba(145, 71, 255, 0.9);
-  padding-left: 6px;
-  margin-left: -6px;
+  background: linear-gradient(90deg, rgba(145, 71, 255, 0.10), rgba(145, 71, 255, 0.02) 70%, transparent);
+  box-shadow: inset 2px 0 0 0 rgba(145, 71, 255, 0.55), inset 0 0 12px rgba(145, 71, 255, 0.10);
+  border-radius: 7px;
+  padding-left: 8px;
+  padding-right: 8px;
+  margin-left: -4px;
+  overflow-wrap: anywhere;
+}
+.chat-line.is-highlighted-message .highlight-redeem-header {
+  color: var(--m-accent, #9147ff);
+  opacity: 0.85;
 }
 
 /* Header line on a highlighted message: "<user> redeemed Highlight My Message" */
@@ -6485,20 +6583,58 @@ button:active { transform: translateY(1px); }
 .sidebar-notify-item input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--m-accent, #9147ff); }
 
 /* Hype train badges on stream lists (sidebar / home / browse) */
-.hype-badge {
-  display: inline-flex; align-items: center; gap: 2px;
-  color: #fff; background: linear-gradient(135deg, #9147ff, #e0338a);
-  font-size: 10px; font-weight: 700; line-height: 1;
-  padding: 2px 5px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+/* Hype-train glow (set by hype-badges.js) — a subtle aura on the row/card of a channel with an active
+   train: purple for a normal train, gold for Golden Kappa, gently pulsing so it reads as "something's
+   happening" without being distracting. This fully replaces the old hype badges. */
+.sidebar-channel.hype-active {
+  background: linear-gradient(90deg, rgba(145, 71, 255, 0.16), rgba(145, 71, 255, 0.05) 60%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.45), 0 0 12px rgba(145, 71, 255, 0.28);
+  animation: hype-glow-pulse 2.4s ease-in-out infinite;
 }
-.hype-badge.golden { background: linear-gradient(135deg, #f5b301, #ff7a00); color: #1a1205; }
-.hype-badge-lvl:empty { display: none; }
-/* thumbnail overlay (home + browse cards) */
-.home-hype-badge { position: absolute; top: 6px; left: 6px; z-index: 2; }
-.home-carousel-card, .home-grid-thumb-wrap { position: relative; }
-/* small overlay on the sidebar avatar */
-.sidebar-hype-badge {
-  position: absolute; bottom: -2px; right: -2px; padding: 1px 3px; font-size: 8px; border-radius: 5px;
+.sidebar-channel.hype-active:hover {
+  background: linear-gradient(90deg, rgba(145, 71, 255, 0.24), rgba(145, 71, 255, 0.08) 60%, var(--m-surface-2));
+}
+.sidebar-channel.hype-active.hype-golden {
+  background: linear-gradient(90deg, rgba(245, 179, 1, 0.18), rgba(245, 179, 1, 0.05) 60%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.5), 0 0 12px rgba(245, 179, 1, 0.3);
+  animation: hype-glow-pulse-gold 2.4s ease-in-out infinite;
+}
+.sidebar-channel.hype-active.hype-golden:hover {
+  background: linear-gradient(90deg, rgba(245, 179, 1, 0.26), rgba(245, 179, 1, 0.08) 60%, var(--m-surface-2));
+}
+@keyframes hype-glow-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.40), 0 0 8px rgba(145, 71, 255, 0.20); }
+  50%      { box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.55), 0 0 16px rgba(145, 71, 255, 0.38); }
+}
+@keyframes hype-glow-pulse-gold {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.45), 0 0 8px rgba(245, 179, 1, 0.22); }
+  50%      { box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.60), 0 0 18px rgba(245, 179, 1, 0.42); }
+}
+
+/* Same glow on Home / Browse thumbnail cards. Ring + outer glow (no background wash — the thumbnail
+   fills the card), pulsing like the sidebar. */
+.home-carousel-card, .home-grid-thumb-wrap, .home-grid-card { position: relative; }
+.home-carousel-card.hype-active,
+.home-grid-card.hype-active {
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.6), 0 0 14px rgba(145, 71, 255, 0.35);
+  animation: hype-card-pulse 2.4s ease-in-out infinite;
+}
+.home-carousel-card.hype-active.hype-golden,
+.home-grid-card.hype-active.hype-golden {
+  box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.65), 0 0 14px rgba(245, 179, 1, 0.38);
+  animation: hype-card-pulse-gold 2.4s ease-in-out infinite;
+}
+@keyframes hype-card-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.50), 0 0 10px rgba(145, 71, 255, 0.28); }
+  50%      { box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.70), 0 0 20px rgba(145, 71, 255, 0.45); }
+}
+@keyframes hype-card-pulse-gold {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.55), 0 0 10px rgba(245, 179, 1, 0.30); }
+  50%      { box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.75), 0 0 22px rgba(245, 179, 1, 0.48); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hype-active { animation: none !important; }
 }
 .sidebar-channel-avatar-wrap { position: relative; }
 
@@ -6566,15 +6702,8 @@ button:active { transform: translateY(1px); }
 }
 .sidebar-notify-chip-x:hover { background: var(--m-raised, #232b36); color: var(--m-text, #e7ebf2); }
 
-/* Hype train train-icon next to the sidebar viewer count (plain icon, no level number) */
+/* viewer count row on sidebar live rows */
 .sidebar-channel-viewer-row { display: inline-flex; align-items: center; gap: 5px; }
-.sidebar-hype-inline {
-  background: none; box-shadow: none; padding: 0; border-radius: 0; margin: 0;
-  color: var(--m-accent, #9147ff); line-height: 0; display: inline-flex; align-items: center;
-}
-.sidebar-hype-inline.golden { color: #f5b301; }
-.sidebar-hype-inline .hype-badge-lvl { display: none; }
-.sidebar-hype-inline svg { width: 13px; height: 13px; display: block; }
 
 /* Sub-anniversary (resub) banner — sits as a card just above the chat input */
 .resub-banner {
@@ -6754,6 +6883,7 @@ button:active { transform: translateY(1px); }
   position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px;
   display: flex; align-items: center; justify-content: center; box-sizing: border-box;
   background: #e5484d; color: #fff; font-size: 10px; font-weight: 700; border-radius: 8px;
+  z-index: 5; pointer-events: none;
 }
 
 /* Whispers modal */
@@ -6777,7 +6907,12 @@ button:active { transform: translateY(1px); }
 }
 .whisper-back { border: none; background: transparent; font-size: 18px; padding: 0 6px; }
 .whisper-new-btn:hover, .whisper-close:hover, .whisper-back:hover { background: var(--m-raised, #232b36); }
-.whisper-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px; }
+.whisper-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px;
+  scrollbar-width: thin; scrollbar-color: var(--m-raised, #232b36) transparent; }
+.whisper-body::-webkit-scrollbar { width: 8px; }
+.whisper-body::-webkit-scrollbar-track { background: transparent; }
+.whisper-body::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.whisper-body::-webkit-scrollbar-thumb:hover { background: var(--m-border, #29313d); }
 .whisper-empty { color: var(--m-muted, #9aa5b4); font-size: 12.5px; padding: 14px 4px; text-align: center; }
 .whisper-thread-row {
   display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left;
@@ -6808,11 +6943,53 @@ button:active { transform: translateY(1px); }
 .whisper-msg-time { font-size: 10px; color: var(--m-faint, #6b7482); margin-top: 2px; }
 .whisper-sys { font-size: 11.5px; color: #e5844d; text-align: center; padding: 4px; }
 .whisper-inputrow { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--m-border, #29313d); flex: 0 0 auto; }
+/* the input + emote button share one rounded field; the picker/autocomplete float above it */
+.whisper-input-wrap { flex: 1; position: relative; display: flex; align-items: center;
+  background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d); border-radius: 8px; }
+.whisper-input-wrap:focus-within { border-color: var(--m-accent, #9147ff); }
 .whisper-input {
-  flex: 1; font-family: inherit; font-size: 13px; background: var(--m-bg, #0e1116);
-  color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); border-radius: 8px; padding: 7px 10px;
+  flex: 1; font-family: inherit; font-size: 13px; background: transparent;
+  color: var(--m-text, #e7ebf2); border: none; padding: 7px 10px; min-width: 0;
 }
-.whisper-input:focus { outline: none; border-color: var(--m-accent, #9147ff); }
+.whisper-input:focus { outline: none; }
+.whisper-emote-btn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; padding: 0; background: none; border: none; color: var(--m-muted, #9aa5b4); cursor: pointer;
+}
+.whisper-emote-btn:hover { color: var(--m-text, #e7ebf2); }
+/* inline emotes in message bubbles */
+.whisper-emote { height: 1.6em; width: auto; vertical-align: middle; }
+/* emote picker menu */
+.whisper-emote-menu {
+  position: absolute; bottom: calc(100% + 6px); right: 0; width: 260px; max-height: 300px; overflow-y: auto;
+  background: var(--m-surface, #18181b); border: 1px solid var(--m-border, #29313d); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5); z-index: 20; padding: 8px;
+  scrollbar-width: thin; scrollbar-color: var(--m-raised, #232b36) transparent;
+}
+.whisper-emote-menu::-webkit-scrollbar { width: 8px; }
+.whisper-emote-menu::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.whisper-emote-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 4px; }
+.whisper-emote-cell {
+  display: flex; align-items: center; justify-content: center; height: 38px; padding: 2px;
+  background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer;
+}
+.whisper-emote-cell:hover { background: var(--m-surface-2, #1c222c); border-color: var(--m-border, #29313d); }
+.whisper-emote-cell img { max-width: 100%; max-height: 30px; }
+.whisper-emote-empty { font-size: 12px; color: var(--m-muted, #9aa5b4); padding: 8px; text-align: center; }
+/* type-ahead autocomplete */
+.whisper-ac {
+  position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 200px; max-width: 280px;
+  background: var(--m-surface, #18181b); border: 1px solid var(--m-border, #29313d); border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5); z-index: 21; padding: 4px;
+}
+.whisper-ac-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px;
+  background: none; border: none; border-radius: 6px; color: var(--m-text, #e7ebf2);
+  font-family: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.whisper-ac-item:hover, .whisper-ac-item.active { background: var(--m-surface-2, #1c222c); }
+.whisper-ac-item img { width: 24px; height: 24px; object-fit: contain; flex: 0 0 auto; }
+.whisper-ac-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .whisper-send {
   flex: 0 0 auto; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
   background: var(--m-accent, #9147ff); color: #fff; border: none; border-radius: 8px; padding: 7px 14px;
@@ -7204,3 +7381,108 @@ header .titlebar-action-buttons #kick-login-btn {
 
 /* The action row must never paint over the content row below the header. */
 header { overflow: hidden; }
+
+/* The whisper button holds an absolutely-positioned unread badge, so it must stay a positioned
+   ancestor. The action-row sizing rules above set position:static on it (to normalize layout), which
+   detached the badge and let it escape to the header — landing it over on the username pill. Restore
+   relative positioning here (after those rules) so the badge sits on the button's own corner. */
+header .titlebar-action-buttons .header-whispers-btn {
+  position: relative;
+}
+/* keep the badge (top:-5px) from being clipped by header's overflow:hidden */
+header .titlebar-action-buttons { overflow: visible; }
+
+/* ============================================================
+   In-app mini player (floating stream preview)
+   When #app has .mini-player-active, the SAME #video-frame is lifted out of
+   its column and pinned as a small floating box (bottom-right by default,
+   draggable via mini-player.js). !important is required because the page
+   modules set an inline display:none on #video-frame when they show; this
+   forces it back to a visible floating element without editing those modules.
+   ============================================================ */
+#app.mini-player-active #video-frame {
+  display: flex !important;
+  position: fixed !important;
+  right: 20px;
+  bottom: 20px;
+  left: auto;
+  top: auto;
+  width: 340px !important;
+  max-width: 42vw !important;
+  height: auto !important;
+  max-height: none !important;
+  z-index: 9500;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--m-border, #29313d);
+  background: #000;
+}
+/* the 16:9 region keeps its ratio; drops any leftover sizing from theater/full layouts */
+#app.mini-player-active #video-region {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 16 / 9;
+}
+/* hide the big controls bar inside the mini box — the mini overlay provides its own */
+#app.mini-player-active .controls-bar {
+  display: none !important;
+}
+/* hide the in-video stream-info overlay (name/title/viewers) in the mini box — it's meant for the
+   full player and just clutters the small preview */
+#app.mini-player-active #stream-info-overlay {
+  display: none !important;
+}
+/* and its top-edge fade */
+#app.mini-player-active #video-region::before {
+  display: none !important;
+}
+
+/* Controls overlay layered on top of the floating video */
+.mini-player-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  /* let clicks fall through to the clickcatch except on the bar buttons */
+  pointer-events: none;
+}
+.mini-player-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: auto;
+}
+#video-frame:hover .mini-player-bar { opacity: 1; }
+.mini-player-drag {
+  flex: 1;
+  height: 24px;
+  cursor: move;
+}
+.mini-player-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+}
+.mini-player-btn:hover { background: rgba(0, 0, 0, 0.75); }
+.mini-player-close:hover { background: rgba(220, 60, 60, 0.85); border-color: rgba(220, 60, 60, 0.9); }
+/* the video area below the bar returns to the stream on click */
+.mini-player-clickcatch {
+  flex: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}

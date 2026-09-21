@@ -21,6 +21,9 @@ let homeFeed, browsePage, vodsPage;
 // injected as a getter, not imported, since playbackControls' callbacks reach back into
 // layout (a cycle)
 let getCurrentChannel = () => "";
+// mini-player hooks, injected from main.js (avoids a layout <-> mini-player import cycle)
+let miniPlayerOn = () => {};
+let miniPlayerOff = () => {};
 
 // must run before any nav tab can be clicked
 export function initLayout(deps) {
@@ -28,6 +31,8 @@ export function initLayout(deps) {
   browsePage = deps.browsePage;
   vodsPage = deps.vodsPage;
   getCurrentChannel = deps.getCurrentChannel;
+  if (deps.miniPlayerOn) miniPlayerOn = deps.miniPlayerOn;
+  if (deps.miniPlayerOff) miniPlayerOff = deps.miniPlayerOff;
 }
 
 // true OS fullscreen (no title bar), distinct from theater mode which only collapses the
@@ -68,6 +73,8 @@ export function switchPage(page) {
   if (session.playing) setTheaterMode(false);
   updateBackToStreamBtn();
   resyncChannelInfoBarVisibility();
+  // A stream is playing but we've navigated to a menu page: show the floating preview of it.
+  if (session.playing && session.pageVisible) miniPlayerOn();
 }
 
 export function updateBackToStreamBtn() {

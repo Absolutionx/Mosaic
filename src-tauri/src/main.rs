@@ -7,7 +7,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 mod chat;
 mod chat_commands;
@@ -61,6 +61,39 @@ pub(crate) struct EventSubState {
 impl Default for EventSubState {
     fn default() -> Self {
         EventSubState { stop_tx: Mutex::new(None) }
+    }
+}
+
+// account-level EventSub connection (whispers): started at login/startup and kept alive regardless of
+// what's being watched, so whispers arrive app-wide. Separate from EventSubState, whose connection is
+// per-channel and torn down on every channel switch.
+pub(crate) struct WhisperEventSubState {
+    pub(crate) stop_tx: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+}
+
+impl Default for WhisperEventSubState {
+    fn default() -> Self {
+        WhisperEventSubState { stop_tx: Mutex::new(None) }
+    }
+}
+
+// Runtime flags shared with the window-close handler.
+//   close_to_tray: when true, the window's X hides to the tray (app keeps running to receive whispers
+//     and live/category notifications) instead of quitting. Set from the frontend setting.
+//   quitting: set true when the user chooses Quit (tray menu / real exit) so the close handler lets
+//     the window actually close instead of hiding it.
+pub(crate) struct AppFlags {
+    pub(crate) close_to_tray: std::sync::atomic::AtomicBool,
+    pub(crate) quitting: std::sync::atomic::AtomicBool,
+}
+
+impl Default for AppFlags {
+    fn default() -> Self {
+        AppFlags {
+            // default ON: minimize to tray (the requested default). the frontend can flip it off.
+            close_to_tray: std::sync::atomic::AtomicBool::new(true),
+            quitting: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 }
 
@@ -159,6 +192,8 @@ fn main() {
         .manage(LaunchState::default())
         .manage(ChatState::default())
         .manage(EventSubState::default())
+        .manage(WhisperEventSubState::default())
+        .manage(AppFlags::default())
         .manage(SevenTvEventsState::default())
         .manage(kick_chat::KickChatState::default())
         .manage(std::sync::Arc::new(stream_relay::StreamRelayState::default()))
@@ -242,6 +277,9 @@ fn main() {
             chat_commands::get_user_id_for_login,
             chat_commands::start_eventsub,
             chat_commands::stop_eventsub,
+            chat_commands::start_account_eventsub,
+            chat_commands::stop_account_eventsub,
+            chat_commands::set_close_to_tray,
             chat_commands::start_seventv_events,
             chat_commands::stop_seventv_events,
             chat_commands::send_chat_message,
@@ -291,19 +329,37 @@ fn main() {
         .on_window_event(|window, event| {
             if window.label() != "main" { return; }
             match event {
-                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed => {
-                    // close every PiP window (labels "pip" and "pip-*") when the main window dies. the PiP is an
-                    // independent OS window with its own copy of the stream, fed by the in-process relay, and Tauri exits
-                    // only when ALL windows are gone, so without this closing the main window leaves the app running
-                    // headless with the PiP as its only window. both events are belt-and-braces: CloseRequested for the
-                    // user's X, Destroyed for programmatic teardown
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    use std::sync::atomic::Ordering;
+                    let flags = window.app_handle().state::<AppFlags>();
+                    let want_tray = flags.close_to_tray.load(Ordering::Relaxed);
+                    let quitting = flags.quitting.load(Ordering::Relaxed);
+
+                    if want_tray && !quitting {
+                        // minimize to tray instead of quitting: keep the process alive so whispers and
+                        // live/category notifications keep arriving. Cancel the real close, hide the
+                        // window, and tell the frontend to stop playback so it's lightweight/quiet.
+                        api.prevent_close();
+                        let _ = window.hide();
+                        let _ = window.emit("hidden-to-tray", ());
+                        return;
+                    }
+
+                    // real quit path: close every PiP window (labels "pip" and "pip-*") so the app
+                    // doesn't linger headless with a PiP as its only window
                     for (label, w) in window.app_handle().webview_windows() {
                         if label == "pip" || label.starts_with("pip-") {
                             let _ = w.close();
                         }
                     }
-                    // (the old streamlink/mpv child-process cleanup that lived here is gone, playback runs inside the
-                    // webview and tears down with the window)
+                }
+                tauri::WindowEvent::Destroyed => {
+                    // programmatic teardown: same PiP cleanup as the real-quit path above
+                    for (label, w) in window.app_handle().webview_windows() {
+                        if label == "pip" || label.starts_with("pip-") {
+                            let _ = w.close();
+                        }
+                    }
                 }
                 _ => {}
             }

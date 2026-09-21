@@ -32,6 +32,7 @@ import { checkStreamDeps } from "./deps-banner.js";
 import { checkForUpdate } from "./update-banner.js";
 import { MultiView } from "./multiview.js";
 import { updateDropsBanner, hideDropsBanner, resetDropsDismissal } from "./drops-banner.js";
+import { initMiniPlayer, activateMiniPlayer, deactivateMiniPlayer, resetMiniPlayerDismissal } from "./mini-player.js";
 import {
   initLayout, switchPage, updateBackToStreamBtn, setTheaterMode,
   toggleTheaterModeAndResync, toggleChatCollapse, toggleFullscreen,
@@ -418,6 +419,9 @@ const trackId = new TrackId(playbackControls.videoEl);
     });
 
     menu.querySelectorAll(".chat-settings-menu-item").forEach((item) => {
+      // the tray toggle is a settings row, not a launcher — it manages its own checkbox and shouldn't
+      // close the menu or dispatch an action
+      if (item.classList.contains("chat-settings-menu-toggle")) return;
       item.addEventListener("click", () => {
         const action = item.dataset.action;
         closeMenu();
@@ -425,6 +429,19 @@ const trackId = new TrackId(playbackControls.videoEl);
         else if (action === "pins") openPins();
       });
     });
+
+    // Minimize-to-tray toggle inside the chat settings menu: keeps the setting, backend flag, and
+    // localStorage in sync. (Moved here from the account menu.)
+    const trayToggle = menu.querySelector("#close-to-tray-toggle");
+    if (trayToggle) {
+      const on = localStorage.getItem("closeToTray") !== "0"; // default on
+      trayToggle.checked = on;
+      trayToggle.addEventListener("change", () => {
+        const enabled = trayToggle.checked;
+        localStorage.setItem("closeToTray", enabled ? "1" : "0");
+        invoke("set_close_to_tray", { enabled }).catch(() => {});
+      });
+    }
   }
 }
 document.getElementById("rewards-btn")?.addEventListener("click", () => {
@@ -705,6 +722,8 @@ initLayout({
   browsePage,
   vodsPage,
   getCurrentChannel: () => playbackControls.currentChannel,
+  miniPlayerOn: () => activateMiniPlayer(),
+  miniPlayerOff: () => deactivateMiniPlayer(),
 });
 initChannelInfoBar({ watchChannel, switchPage, setStatus });
 
@@ -734,8 +753,12 @@ homeFeed.show();
 homeTab.addEventListener("click", () => switchPage("home"));
 browseTab.addEventListener("click", () => switchPage("browse"));
 
-backToStreamBtn.addEventListener("click", () => {
+function returnToFullStream() {
   if (!session.playing) return;
+  // leaving the mini-player: restore the frame to full view. deactivate first so its floating
+  // inline styles are cleared before the pages' hide() restores normal visibility.
+  deactivateMiniPlayer();
+  resetMiniPlayerDismissal(); // available again next time they navigate away
   // homeFeed.hide()/browsePage.hide() each restore #video-frame visibility as a side effect, so no need to touch it here. both are no-ops if that page wasn't showing
   homeFeed.hide();
   browsePage.hide();
@@ -745,7 +768,9 @@ backToStreamBtn.addEventListener("click", () => {
   setTheaterMode(true);
   updateBackToStreamBtn();
   resyncChannelInfoBarVisibility();
-});
+}
+backToStreamBtn.addEventListener("click", returnToFullStream);
+initMiniPlayer({ expandToStream: returnToFullStream });
 
 // latest Twitch login info (set on login), so views created lazily, like the MultiView chat, can be marked logged-in when they open
 let currentLogin = null;
@@ -761,6 +786,9 @@ const auth = new TwitchAuth({
     sidebar.onLogin();
     // homeFeed.show() at startup races ahead of login, so on a fresh launch the first fetch 401s and falls back to empty, and never retried. refresh() re-runs it now a valid token exists
     homeFeed.refresh();
+    // Start the persistent account-level EventSub connection so whispers arrive app-wide, not only
+    // while watching a stream. Fires on both fresh login and session restore (both hit this callback).
+    invoke("start_account_eventsub").catch((err) => console.warn("[main] account eventsub start failed:", err));
   },
 });
 
@@ -1739,41 +1767,74 @@ channelInput.addEventListener("keydown", (e) => {
   else watchChannel(channel);
 });
 
-watchBtn.addEventListener("click", async () => {
-  if (session.playing) {
-    maybeSaveVodProgress();
-    session.intendedChannel = null;
-    forgetSession(); // explicit Stop must not be undone by a later reload
-    _devForceOfflineFor = null; // dev test override never survives a session
-    if (session.kickFailover) invoke("stop_kick_chat").catch(() => {});
-    session.kickFailover = null;
-    session.liveDvrInfo = null;
-    session.liveDvrM3u8Cache = null;
-    await chat.disconnect();
-    playbackControls.stop();
-    // playbackControls.stop() only tears down the FRONTEND. the relay's streamlink survives a client disconnect by design, so without this it keeps downloading until the next start_stream reaps it. every other stop() site is followed by a start that reaps the old process; this is the one path that stops without starting, so it must say so
-    invoke("stop_stream").catch((err) =>
-      console.warn("[main] failed to stop relay:", err),
-    );
-    session.playing = false;
-    setTheaterMode(false);
-    setStatus("Stopped");
-    hideDropsBanner();
-    hideChannelInfoBar();
-    resetDropsDismissal();
-    videoPlaceholder.style.display = "none";
-    if (session.lastActivePage === "browse") browsePage.show();
+// Full stop of playback + relay teardown, shared by the Stop button and by hiding to tray (so a
+// tray-minimized app is quiet and lightweight rather than streaming in the background).
+function stopPlayback({ returnToPage = true, goHome = false } = {}) {
+  if (!session.playing) return;
+  maybeSaveVodProgress();
+  session.intendedChannel = null;
+  forgetSession(); // explicit Stop must not be undone by a later reload
+  _devForceOfflineFor = null; // dev test override never survives a session
+  if (session.kickFailover) invoke("stop_kick_chat").catch(() => {});
+  session.kickFailover = null;
+  session.liveDvrInfo = null;
+  session.liveDvrM3u8Cache = null;
+  chat.disconnect();
+  playbackControls.stop();
+  // playbackControls.stop() only tears down the FRONTEND. the relay's streamlink survives a client disconnect by design, so without this it keeps downloading until the next start_stream reaps it. every other stop() site is followed by a start that reaps the old process; this is the one path that stops without starting, so it must say so
+  invoke("stop_stream").catch((err) =>
+    console.warn("[main] failed to stop relay:", err),
+  );
+  session.playing = false;
+  deactivateMiniPlayer();   // no stream to preview once stopped
+  resetMiniPlayerDismissal();
+  setTheaterMode(false);
+  setStatus("Stopped");
+  hideDropsBanner();
+  hideChannelInfoBar();
+  resetDropsDismissal();
+  videoPlaceholder.style.display = "none";
+  if (returnToPage) {
+    if (goHome) {
+      // tray-hide path: always land on Home so reopening shows a clean home page, not the last
+      // browse/vods page or a leftover stream frame
+      browsePage.hide();
+      vodsPage.hide();
+      homeFeed.show();
+    } else if (session.lastActivePage === "browse") browsePage.show();
     else if (session.lastActivePage === "vods") vodsPage.show(session.vodsChannel, { kick: session.vodsChannelIsKick });
     else homeFeed.show();
     session.pageVisible = true;
-    updateBackToStreamBtn();
-    syncWatchBtn();
+  }
+  updateBackToStreamBtn();
+  syncWatchBtn();
+}
+
+watchBtn.addEventListener("click", async () => {
+  if (session.playing) {
+    stopPlayback();
   } else {
     const channel = channelInput.value.trim();
     if (isKick()) watchKickChannel(channel);
     else watchChannel(channel);
   }
 });
+
+// Close-to-tray: push the saved preference to the backend at startup (default on), and stop playback
+// whenever the window is hidden to the tray so the app stays quiet and light while still receiving
+// whispers and live/category notifications (those run in the still-alive webview).
+{
+  const closeToTray = localStorage.getItem("closeToTray") !== "0"; // default on
+  invoke("set_close_to_tray", { enabled: closeToTray }).catch(() => {});
+  listen("hidden-to-tray", () => {
+    // Fully stop and return to Home so reopening from the tray shows a clean home page rather than a
+    // disconnected chat + empty black stream frame.
+    if (session.playing) stopPlayback({ returnToPage: true, goHome: true });
+    // Strip the previous channel's chat so a restored window doesn't show stale messages.
+    try { chat.clearChatMessages(); } catch { /* ignore */ }
+  });
+  // the toggle UI lives in the chat settings gear menu now (wired where that menu is built)
+}
 
 // WebView2 sleep/wake surface-desync recovery. symptom: after sleep the content is stuck at its old
 // size in the top-left with black margins (WebView2 missed the resize on resume). acts ONLY on a

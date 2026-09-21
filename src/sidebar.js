@@ -6,7 +6,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { getKickFollows, onKickFollowsChange } from "./kick-follows.js";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { makeHypeBadge } from "./hype-badges.js";
 import { streamHasDropsEnabled } from "./drops.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
@@ -174,6 +173,11 @@ export class ChannelsSidebar {
   // / rendering, so the two concerns can't re-entangle. costs one extra batched Helix call per refresh
   // while in Twitch mode (the view fetches the same rows separately), negligible next to the correctness
   async _pollTwitchGoLive() {
+    // DEBUG heartbeat: records that a poll tick ran and when, so you can confirm the background poll
+    // keeps ticking while the window is hidden to tray (window.__notifyPollStatus()). Harmless in prod.
+    this._lastPollAt = Date.now();
+    this._pollTickCount = (this._pollTickCount || 0) + 1;
+
     // needs the Twitch follow list, which requires a Twitch login; and skip the round-trip when
     // nothing is opted in (a later opt-in seeds its own baseline on the first tick after it's added)
     if (!this.loggedIn || (this.notifyChannels.size === 0 && this.categoryTargets.size === 0)) return;
@@ -319,6 +323,72 @@ export class ChannelsSidebar {
     console.log(`[debug] Faking go-live transition for "${targetLogin}" and re-running the real notification check...`);
     await this._checkForNewlyLiveChannels([ch]);
     console.log("[debug] Done - check your OS notifications if nothing appeared, see console for any errors logged above.");
+  }
+
+  // DEBUG ONLY (window.__testCategoryNotification, see main.js): force a "switched category"
+  // transition through the real _checkForNewlyLiveChannels(), so the category-notify path fires
+  // without waiting for a streamer to actually change games. Requires the channel to be opted into a
+  // category (click the bell → add a category), and uses the FIRST category it's tracking as the fake
+  // "new game" so it matches.
+  async debugTestCategoryNotification(login) {
+    const targetLogin = login || [...this.categoryTargets.keys()][0];
+    if (!targetLogin) {
+      throw new Error(
+        "No channel has a category notification set yet - click a channel's bell and add a category first, or pass a login explicitly: window.__testCategoryNotification('somechannel')"
+      );
+    }
+    const targets = this.categoryTargets.get(targetLogin);
+    if (!targets || !targets.length) {
+      throw new Error(`"${targetLogin}" has no category notifications set - add one via its bell icon first.`);
+    }
+    const fakeGame = targets[0]; // notify fires when the channel switches INTO a tracked category
+    const known = this.followed.find((c) => c.login === targetLogin);
+    const ch = {
+      login: targetLogin,
+      name: known?.name || targetLogin,
+      live: true,
+      title: known?.title || "",
+      game: fakeGame,
+    };
+    // seed a DIFFERENT previous game so the current game reads as a genuine change into the target
+    this._lastGame.set(targetLogin, "__something_else__");
+    console.log(`[debug] Faking a category switch for "${targetLogin}" into "${fakeGame}" and re-running the real notification check...`);
+    await this._checkForNewlyLiveChannels([ch]);
+    console.log("[debug] Done - check your OS notifications if nothing appeared, see console for any errors logged above.");
+  }
+
+  // DEBUG ONLY (window.__testFireNotification): fire a notification straight through the real
+  // sendNotification path, NO opt-in required. This is the simplest "does an OS notification actually
+  // display right now (e.g. while minimized to tray)?" check - it bypasses detection and just proves
+  // the notification plumbing + OS permission are working.
+  async debugFireNotification() {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === "granted";
+      if (!granted) { console.warn("[debug] Notification permission not granted - can't display."); return; }
+      sendNotification({ title: "Mosaic test notification", body: "If you can see this, notifications work while the window is hidden." });
+      console.log("[debug] Fired a test notification. If nothing appeared, the OS is suppressing it (check Focus Assist / Do Not Disturb / notification settings).");
+    } catch (err) {
+      console.error("[debug] Failed to fire test notification:", err);
+    }
+  }
+
+  // DEBUG ONLY (window.__notifyPollStatus): reports whether the background go-live/category poll is
+  // still ticking, and how long ago the last tick ran. Use it after reopening from tray to confirm the
+  // poll kept running while hidden (the tick count should have advanced).
+  debugPollStatus() {
+    const now = Date.now();
+    const last = this._lastPollAt || 0;
+    const agoSec = last ? Math.round((now - last) / 1000) : null;
+    const status = {
+      pollTickCount: this._pollTickCount || 0,
+      lastTickAgoSeconds: agoSec,
+      loggedIn: this.loggedIn,
+      optedInChannels: this.notifyChannels.size,
+      categoryTargets: this.categoryTargets.size,
+    };
+    console.log("[debug] Notify poll status:", status);
+    return status;
   }
 
   // local follow list + one batched kick_followed_status lookup. live first, offline greyed
@@ -520,9 +590,7 @@ export class ChannelsSidebar {
       dot.className = "sidebar-live-dot";
       viewerRow.appendChild(dot);
       viewerRow.appendChild(document.createTextNode(formatViewerCount(ch.viewers)));
-      const hype = makeHypeBadge();
-      hype.classList.add("sidebar-hype-inline");
-      viewerRow.appendChild(hype);
+      // hype trains are shown as a glow on the whole row (see hype-badges.js), no inline badge
       status.appendChild(viewerRow);
 
       if (ch.dropsEnabled) {
@@ -701,7 +769,28 @@ export class ChannelsSidebar {
       suggestBox.innerHTML = "";
       // hide ones already added
       const added = new Set(current.map((c) => c.toLowerCase()));
-      const filtered = results.filter((c) => !added.has((c.name || "").toLowerCase())).slice(0, 8);
+      const ql = q.toLowerCase();
+      // Twitch's search/categories returns up to 40 matches in no useful order (roughly alphabetical,
+      // NOT by popularity), so a plain slice could drop the obvious pick — e.g. "grand theft auto"
+      // buries "Grand Theft Auto V" behind spin-offs. Rank by match quality first: exact name, then
+      // prefix, then word-boundary, then plain substring; ties broken by shorter name (the canonical
+      // title tends to be shortest). Then show a longer list so nothing prominent is lost.
+      const score = (name) => {
+        const n = (name || "").toLowerCase();
+        if (n === ql) return 0;
+        if (n.startsWith(ql)) return 1;
+        if (n.includes(` ${ql}`) || n.includes(`${ql} `)) return 2;
+        if (n.includes(ql)) return 3;
+        return 4;
+      };
+      const filtered = results
+        .filter((c) => !added.has((c.name || "").toLowerCase()))
+        .sort((a, b) => {
+          const s = score(a.name) - score(b.name);
+          if (s !== 0) return s;
+          return (a.name || "").length - (b.name || "").length;
+        })
+        .slice(0, 15);
       if (!filtered.length) { suggestBox.style.display = "none"; return; }
       for (const cat of filtered) {
         const item = document.createElement("button");

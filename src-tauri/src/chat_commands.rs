@@ -414,6 +414,57 @@ pub fn stop_eventsub(state: State<EventSubState>) -> Result<(), String> {
     Ok(())
 }
 
+// Starts (or restarts) the persistent account-level EventSub connection that carries whispers, so
+// they arrive whether or not a stream is being watched. Called on login and on startup when a token
+// is restored. Idempotent: tears down any existing account connection first.
+#[tauri::command]
+pub async fn start_account_eventsub(
+    chat_state: State<'_, ChatState>,
+    whisper_state: State<'_, crate::WhisperEventSubState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let (access_token, user_id) = {
+        let guard = chat_state.auth.lock().map_err(|e| e.to_string())?;
+        match guard.as_ref() {
+            Some(creds) => (creds.access_token.clone(), creds.user_id.clone()),
+            None => return Ok(()), // not logged in, nothing to subscribe as
+        }
+    };
+
+    // tear down any previous account connection
+    {
+        let mut guard = whisper_state.stop_tx.lock().map_err(|e| e.to_string())?;
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(());
+        }
+    }
+
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    {
+        let mut guard = whisper_state.stop_tx.lock().map_err(|e| e.to_string())?;
+        *guard = Some(stop_tx);
+    }
+
+    tauri::async_runtime::spawn(eventsub::run_account(app, user_id, access_token, stop_rx));
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_account_eventsub(state: State<crate::WhisperEventSubState>) -> Result<(), String> {
+    let mut guard = state.stop_tx.lock().map_err(|e| e.to_string())?;
+    if let Some(tx) = guard.take() {
+        let _ = tx.send(());
+    }
+    Ok(())
+}
+
+// Frontend setting: whether the window's X hides to the tray (true) or quits the app (false).
+#[tauri::command]
+pub fn set_close_to_tray(enabled: bool, flags: State<crate::AppFlags>) {
+    flags.close_to_tray.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
 // starts the 7TV EventAPI subscription for one emote set, so additions/removals (e.g. a temporary
 // channel-points-unlocked emote) show up without rejoining. called from chat.js right after
 // loadSevenTvChannelEmotes() resolves with the set's id, unlike start_eventsub needs no auth check, since 7TV's EventAPI has no login requirement here

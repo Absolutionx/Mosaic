@@ -44,5 +44,9 @@ pub fn restore_window(app: &AppHandle) {
 // previously also killed a running streamlink/mpv child so it wouldn't orphan, unneeded now
 // that playback runs entirely in the webview via hls.js
 pub fn do_quit(app: &AppHandle) {
+    // mark that we're really quitting, so the main window's CloseRequested handler lets the window
+    // close instead of hiding it to tray (see AppFlags in main.rs)
+    let flags = app.state::<crate::AppFlags>();
+    flags.quitting.store(true, std::sync::atomic::Ordering::Relaxed);
     app.exit(0);
 }

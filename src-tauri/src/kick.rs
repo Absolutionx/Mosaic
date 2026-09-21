@@ -449,7 +449,7 @@ async fn fetch_via_curl(
     cmd.stdin(std::process::Stdio::null());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
+        // tokio::process::Command has its own inherent creation_flags (no std CommandExt import needed).
         // same as every other subprocess in this app (see deps_check.rs): without it, each lookup flashes a console window
         cmd.creation_flags(CREATE_NO_WINDOW);
     }

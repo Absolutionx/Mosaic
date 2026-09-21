@@ -10,29 +10,51 @@ const win = getCurrentWindow();
 // draggable while allowing buttons, inputs, links, and the window controls
 // to behave normally. The explicit handler also keeps dragging reliable
 // across WebView2/Tauri versions instead of relying only on CSS hit testing.
-const header = document.querySelector("header");
-header?.addEventListener("mousedown", (e) => {
-  if (e.button !== 0) return;
+//
+// In THEATER mode the top header is hidden (visibility:hidden, squeezed to a thin strip), so it can't
+// be grabbed to move the window. To keep the window draggable there, the same drag/double-click
+// behaviour is also attached to the chat pane's header bar ("Chat") and the empty strip above the
+// video. Those surfaces exist in every mode; the shared handlers below ignore clicks on real controls,
+// so adding them changes nothing about normal button/scroll behaviour.
+const dragEls = [
+  document.querySelector("header"),
+  document.querySelector(".chat-header"),
+  document.getElementById("video-column"),
+].filter(Boolean);
 
-  const target = e.target instanceof Element ? e.target : null;
-  if (target?.closest("button, input, textarea, select, a, [contenteditable=\"true\"], .win-controls, .resize-grip")) {
-    return;
-  }
+// The video column is a drag surface only in theater mode, and only at its very top (the empty band
+// above the 16:9 video) — never on the player, controls, or the home/browse pages it also hosts.
+function isVideoColumnBody(target, currentTarget) {
+  if (currentTarget?.id !== "video-column") return false;
+  // only in theater mode (outside it the header is the drag surface, and the column shows pages)
+  if (!document.getElementById("app")?.classList.contains("theater-mode")) return true;
+  // in theater mode: block drag on the actual video/controls/info, allow it on the empty surround
+  return !!target?.closest("#video-region, .controls-bar, .stream-info-overlay, #channel-info-bar, #home-feed, #browse-page, #vods-page");
+}
 
-  win.startDragging().catch(() => {});
-});
+for (const el of dragEls) {
+  el.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest("button, input, textarea, select, a, [contenteditable=\"true\"], .win-controls, .resize-grip")) {
+      return;
+    }
+    if (isVideoColumnBody(target, e.currentTarget)) return;
+    win.startDragging().catch(() => {});
+  });
 
-// Double-clicking an empty part of the chrome mirrors a normal desktop
-// titlebar and toggles maximize/restore.
-header?.addEventListener("dblclick", (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  const target = e.target instanceof Element ? e.target : null;
-  if (target?.closest("button, input, textarea, select, a, [contenteditable=\"true\"], .win-controls, .resize-grip")) {
-    return;
-  }
-  win.toggleMaximize().catch(() => {});
-});
+  // Double-clicking empty chrome mirrors a normal desktop titlebar and toggles maximize/restore.
+  el.addEventListener("dblclick", (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (target?.closest("button, input, textarea, select, a, [contenteditable=\"true\"], .win-controls, .resize-grip")) {
+      return;
+    }
+    if (isVideoColumnBody(target, e.currentTarget)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    win.toggleMaximize().catch(() => {});
+  });
+}
 
 document.getElementById("titlebar-min")?.addEventListener("click", () => win.minimize());
 document.getElementById("titlebar-max")?.addEventListener("click", () => win.toggleMaximize());

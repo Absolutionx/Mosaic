@@ -5,7 +5,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
-import { makeHypeBadge } from "./hype-badges.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 // the fetches return far more (Twitch 100, Kick 40, category rows hundreds), capped here
@@ -229,9 +228,7 @@ export class HomeFeed {
     thumb.alt = "";
     card.appendChild(thumb);
 
-    const hype = makeHypeBadge();
-    hype.classList.add("home-hype-badge");
-    card.appendChild(hype);
+    // hype trains are shown as a glow on the card (see hype-badges.js), no badge
 
     const liveBadge = document.createElement("span");
     liveBadge.className = "home-live-badge";
@@ -340,9 +337,7 @@ export class HomeFeed {
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
 
-    const hype = makeHypeBadge();
-    hype.classList.add("home-hype-badge");
-    thumbWrap.appendChild(hype);
+    // hype trains are shown as a glow on the card (see hype-badges.js), no badge
 
     const liveBadge = document.createElement("span");
     liveBadge.className = "home-live-badge";

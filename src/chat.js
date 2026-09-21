@@ -306,6 +306,11 @@ export class TwitchChat {
     if (this.sendBtn) this.sendBtn.disabled = false;
     if (this.emoteBtn) this.emoteBtn.disabled = false;
 
+    // Ensure the global emote sets are available even if no stream has been opened yet — so the
+    // whisper composer's emote picker/autocomplete work on a fresh launch. Idempotent and cheap; the
+    // full per-channel sets still load when a stream is opened.
+    this.loadGlobalEmotesOnce();
+
     // badge/cheermote fetches need a Helix token. if connect() ran before login they 401'd silently; now retry without a stream restart
     if (this.channel) {
       this.loadGlobalBadges();
@@ -316,6 +321,24 @@ export class TwitchChat {
         // same retry reasoning as above: ownLogin/the Helix token _maybeFetchChatters() needs are only available from here on
         this._maybeFetchChatters();
       }
+    }
+  }
+
+  // Loads the provider-global emote sets outside of connecting to a channel, so whispers have a usable
+  // emote set on a fresh instance. Third-party globals (7TV/BTTV/FFZ) need no auth and load once. The
+  // user's Twitch global/available emotes need a Helix token, so they load once a login exists — which
+  // is why this is safe to call both from initWhispers (maybe pre-login) and setLoggedIn (post-login).
+  loadGlobalEmotesOnce() {
+    if (!this._thirdPartyGlobalsLoaded) {
+      this._thirdPartyGlobalsLoaded = true;
+      this.loadSevenTvGlobalEmotes();
+      this.loadBttvGlobalEmotes();
+      this.loadFfzGlobalEmotes();
+    }
+    if (this.isLoggedIn && !this._twitchGlobalsLoaded) {
+      this._twitchGlobalsLoaded = true;
+      this.loadTwitchGlobalEmotes();
+      this.loadAvailableTwitchEmotes();
     }
   }
 
@@ -361,6 +384,13 @@ export class TwitchChat {
     }
 
     try {
+      // capture the reply context before clearReply() wipes it, so the optimistic echo below can be
+      // placed into the correct thread
+      const replyingToUser = this._replyToId ? this._replyToUser : null;
+      const replyingToBody = this._replyToId ? this._replyToBody : null;
+      const replyingThreadRoot = this._replyToId ? this._replyToThreadRoot : null;
+      const replyingParentId = this._replyToId || null;
+
       await invoke("send_chat_message", {
         message: text,
         replyToMsgId: this._replyToId || null,
@@ -378,11 +408,16 @@ export class TwitchChat {
 
       // Twitch IRC doesn't echo a client's own PRIVMSG back, so render it optimistically here. this
       // doesn't reflect server-side moderation (a dropped message still looks sent), acceptable.
-      // userId/badgesTag flow through so own messages get a clickable card. msgId is left undefined (no id
-      // until it echoes, which it won't), so Delete stays correctly disabled
+      // userId/badgesTag flow through so own messages get a clickable card. For a normal message msgId
+      // is left undefined (Delete stays disabled). For a REPLY we mint a synthetic local id and pass
+      // the reply/thread context so our own reply is stored in _msgStore under the right threadRootId
+      // and therefore shows up when the thread is opened — otherwise our reply was invisible in-thread.
+      const localMsgId = replyingToUser ? `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : undefined;
       this.renderMessage(this.ownDisplayName || this.ownLogin || "you", this._ownColor || "#9147ff", text, this._ownBadgesTag,
-                          undefined, undefined, undefined, undefined, undefined, this.ownUserId,
-                          /*isAction=*/false, /*emotesTag=*/null, /*isFirstMsg=*/false);
+                          undefined, undefined, replyingToUser || undefined, replyingToBody || undefined, localMsgId, this.ownUserId,
+                          /*isAction=*/false, /*emotesTag=*/null, /*isFirstMsg=*/false,
+                          /*isHighlighted=*/false, /*replyParentMsgId=*/replyingParentId,
+                          /*replyThreadParentMsgId=*/replyingThreadRoot || null);
       // IRC won't echo this back, so the Mod Chat tab (which watches "chat-message") never sees our own
       // messages — surface them via a window event using the same badge filter
       window.dispatchEvent(new CustomEvent("mosaic-own-message", { detail: {
@@ -555,6 +590,8 @@ export class TwitchChat {
     this.loadFfzGlobalEmotes();
     this.loadTwitchGlobalEmotes();
     this.loadAvailableTwitchEmotes();
+    this._thirdPartyGlobalsLoaded = true; // connect() has now pulled the 3rd-party global sets
+    if (this.isLoggedIn) this._twitchGlobalsLoaded = true;
     // re-pull available emotes right after the user unlocks/modifies one via the rewards panel. the event
     // also carries the exact {id, token} just unlocked, which we add immediately — reliable even if the
     // broader AvailableEmotesForChannel fetch misses it.
@@ -632,6 +669,17 @@ export class TwitchChat {
     this._isKickChat = false;
     this._kickBroadcasterId = null;
     this._applyTwitchInputState();
+  }
+
+  // Wipes the visible chat pane and the recent-message store. Used when restoring from the tray so a
+  // fresh window doesn't show the previous channel's stale messages. Safe to call anytime.
+  clearChatMessages() {
+    if (this.container) this.container.innerHTML = "";
+    if (this._msgStore) this._msgStore.clear();
+    this.userScrolledUp = false;
+    this.newMessageCountWhileScrolledUp = 0;
+    if (this.jumpToLatestBtn) this.jumpToLatestBtn.classList.remove("visible");
+    this.closeThread();
   }
 
   // there's no Kick chat-replay API, so this is setVodMode minus the replay engine, tear down the live connection, clear the pane, hide the composer, and say why it's empty
@@ -1290,6 +1338,29 @@ export class TwitchChat {
         try {
           await invoke("send_chat_message", { message: text, replyToMsgId: target });
           input.value = "";
+          // Twitch never echoes our own message back, so render it optimistically. A thread reply is
+          // still a normal chat message, so show it in the MAIN CHAT too (not just the thread) — that's
+          // where it was going missing. renderMessage writes the single _msgStore entry (under this
+          // thread's root) and, because that root matches the open thread, also appends it to the
+          // thread panel live. So one call covers both views without a duplicate store entry.
+          if (!this._isKickChat && this._openThreadRoot) {
+            const parentMsg = this._msgStore ? this._msgStore.get(target) : null;
+            const parentUser = parentMsg?.user || null;
+            const parentBody = parentMsg?.body || null;
+            const localId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            this.renderMessage(
+              this.ownDisplayName || this.ownLogin || "you",
+              this._ownColor || "#9147ff",
+              text,
+              this._ownBadgesTag,
+              undefined, undefined,
+              parentUser || undefined, parentBody || undefined,
+              localId, this.ownUserId,
+              /*isAction=*/false, /*emotesTag=*/null, /*isFirstMsg=*/false,
+              /*isHighlighted=*/false, /*replyParentMsgId=*/target,
+              /*replyThreadParentMsgId=*/this._openThreadRoot,
+            );
+          }
         } catch (err) {
           this.systemLine(`Couldn't send: ${err}`);
         } finally {
@@ -1743,7 +1814,9 @@ export class TwitchChat {
 
     const line = document.createElement("div");
     line.className = "chat-line";
-    if (msgId) line.dataset.msgId = msgId;
+    // synthetic local ids (our own un-echoed messages) go in the store for threading but must not be
+    // exposed as dataset.msgId — they're not real Twitch ids, so Reply/Delete against them would fail
+    if (msgId && !String(msgId).startsWith("local-")) line.dataset.msgId = msgId;
     if (userId) line.dataset.msgUserId = userId;
     line.dataset.msgUsername = username;
     line.dataset.msgText = message;
@@ -2173,6 +2246,12 @@ export class TwitchChat {
   _setReplyTarget(msgId, username, msgText = "") {
     this._replyToId = msgId;
     this._replyToUser = username;
+    this._replyToBody = msgText;
+    // the thread this reply belongs to: the parent's own thread root if it has one, else the parent id
+    // itself (a fresh thread). used to place our optimistic local echo into the right thread, since
+    // Twitch never echoes our own message back with an id.
+    const parent = this._msgStore ? this._msgStore.get(msgId) : null;
+    this._replyToThreadRoot = parent?.threadRootId || msgId;
 
     // build or re-use the indicator block above the input row. instance-scoped so a second chat (MultiView) gets its own bar
     let bar = this._replyIndicatorEl;
@@ -2217,35 +2296,37 @@ export class TwitchChat {
 
     const textSpan = document.createElement("span");
     textSpan.className = "chat-reply-indicator-text";
-    textSpan.textContent = msgText;
+    // Render emotes in the quote (not just their names). The parent message is in _msgStore keyed by
+    // its id, carrying the emotesTag; use renderMessageBody so 7TV/BTTV/FFZ/Twitch emotes show as
+    // images, matching how the message appears in chat. Fall back to plain text if it isn't stored.
+    // reuse the parent message looked up above (for the thread root); it carries the emotesTag
+    try {
+      textSpan.appendChild(this.renderMessageBody(msgText, parent?.emotesTag || null));
+    } catch {
+      textSpan.textContent = msgText;
+    }
 
     body.appendChild(userSpan);
     body.appendChild(textSpan);
     bar.appendChild(body);
 
-    // prefill input with @mention so the user sees who they're replying to
+    // Don't prefill an @mention: this sends as a real Twitch reply (reply-parent-msg-id tag, see
+    // send in chat.rs), and the reply context is carried by the thread itself — an @mention in the
+    // body would be redundant and is what made replies look like plain mentions. Just focus the
+    // empty input; the indicator bar above shows who's being replied to.
     if (this.inputEl) {
-      this.inputEl.value = `@${username} `;
       this._autosizeChatInput();
       this.inputEl.focus();
-      const len = this.inputEl.value.length;
-      this.inputEl.setSelectionRange(len, len);
     }
   }
 
   clearReply() {
     this._replyToId = null;
     this._replyToUser = null;
+    this._replyToBody = null;
+    this._replyToThreadRoot = null;
     const bar = this._replyIndicatorEl;
     if (bar) bar.style.display = "none";
-    // clear any prefilled @mention if the user hasn't typed anything extra
-    if (this.inputEl && this._replyToUser) {
-      const prefix = `@${this._replyToUser} `;
-      if (this.inputEl.value === prefix) {
-        this.inputEl.value = "";
-        this._autosizeChatInput();
-      }
-    }
   }
 
   // re-derives isMod from the cached USERSTATE badges tag and notifies onModStatusChange() subscribers if it changed. "moderator" or "broadcaster" present in the tag means mod tools should show

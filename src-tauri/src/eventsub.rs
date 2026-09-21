@@ -24,13 +24,45 @@ struct Metadata {
     message_type: String,
 }
 
-// runs the EventSub WebSocket loop in a background Tokio task. exits when stop_rx fires or the connection fails unrecoverably
+// runs the EventSub WebSocket loop in a background Tokio task. exits when stop_rx fires or the connection fails unrecoverably.
+//
+// account_mode distinguishes the two kinds of connection that use this loop:
+//   - false (the default, per-channel): subscribes to channel-scoped events (redemptions, automod,
+//     moderate, raid, hype train, predictions) for broadcaster_id, plus whispers. Torn down and
+//     recreated on each channel switch. On an unexpected close it just exits (a new channel start
+//     will make a fresh one).
+//   - true (account-level, persistent): subscribes ONLY to whispers (account-scoped, always
+//     relevant) and ignores broadcaster_id. Started at login/startup and kept alive regardless of
+//     what's being watched, so whispers arrive app-wide. On an unexpected close it auto-reconnects
+//     after a short delay rather than exiting, since nothing else will restart it.
 pub async fn run(
     app: AppHandle,
     broadcaster_id: String,
     moderator_id: String,
     access_token: String,
+    stop_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    run_inner(app, broadcaster_id, moderator_id, access_token, stop_rx, false).await;
+}
+
+// account-level persistent connection: whispers only, auto-reconnecting.
+pub async fn run_account(
+    app: AppHandle,
+    user_id: String,
+    access_token: String,
+    stop_rx: tokio::sync::oneshot::Receiver<()>,
+) {
+    // broadcaster_id is unused in account mode; pass the user id for both slots for clarity
+    run_inner(app, user_id.clone(), user_id, access_token, stop_rx, true).await;
+}
+
+async fn run_inner(
+    app: AppHandle,
+    broadcaster_id: String,
+    moderator_id: String,
+    access_token: String,
     mut stop_rx: tokio::sync::oneshot::Receiver<()>,
+    account_mode: bool,
 ) {
     let mut connect_url = EVENTSUB_WS.to_string();
 
@@ -40,6 +72,12 @@ pub async fn run(
             Ok((ws, _)) => ws,
             Err(e) => {
                 eprintln!("[eventsub] connect failed: {e}");
+                // account connection must not give up; retry after a delay unless we're stopping
+                if account_mode {
+                    if wait_or_stop(&mut stop_rx, 5).await { return; }
+                    connect_url = EVENTSUB_WS.to_string();
+                    continue 'reconnect;
+                }
                 return;
             }
         };
@@ -66,6 +104,10 @@ pub async fn run(
                                         .get("session").and_then(|s| s.get("id"))
                                         .and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+                                    // Channel-scoped subscriptions only apply to the per-channel
+                                    // connection; the account connection skips them entirely and does
+                                    // whispers alone.
+                                    if !account_mode {
                                     // channel point redemptions. 403 = not mod/broadcaster; log and continue so the rest of the app keeps working
                                     if let Err(e) = subscribe_channel_point_redemptions(
                                         &session_id, &broadcaster_id, &access_token,
@@ -126,16 +168,25 @@ pub async fn run(
                                             );
                                         }
                                     }
+                                    } // end !account_mode
 
                                     // whispers (Twitch DMs): account-level, needs user:read:whispers.
-                                    // moderator_id is the logged-in user's own id here.
-                                    if let Err(e) = subscribe_user_whispers(
-                                        &session_id, &moderator_id, &access_token,
-                                    ).await {
-                                        eprintln!(
-                                            "[eventsub] whisper subscription skipped \
-                                             (needs user:read:whispers, re-login): {e}"
-                                        );
+                                    // moderator_id is the logged-in user's own id here. Subscribed ONLY
+                                    // on the persistent account connection — it's always alive, so it
+                                    // covers whispers whether or not a stream is being watched. It must
+                                    // NOT also be subscribed on the per-channel connection: the two are
+                                    // independent EventSub sessions, so Twitch would deliver the same
+                                    // whisper to each and the app would show it twice (once while a
+                                    // stream is open). Account connection only.
+                                    if account_mode {
+                                        if let Err(e) = subscribe_user_whispers(
+                                            &session_id, &moderator_id, &access_token,
+                                        ).await {
+                                            eprintln!(
+                                                "[eventsub] whisper subscription skipped \
+                                                 (needs user:read:whispers, re-login): {e}"
+                                            );
+                                        }
                                     }
                                 }
                                 "session_keepalive" => {
@@ -167,10 +218,20 @@ pub async fn run(
                         }
                         Some(Ok(Message::Close(_))) | None => {
                             eprintln!("[eventsub] connection closed");
+                            if account_mode {
+                                if wait_or_stop(&mut stop_rx, 3).await { return; }
+                                connect_url = EVENTSUB_WS.to_string();
+                                continue 'reconnect;
+                            }
                             return;
                         }
                         Some(Err(e)) => {
                             eprintln!("[eventsub] read error: {e}");
+                            if account_mode {
+                                if wait_or_stop(&mut stop_rx, 3).await { return; }
+                                connect_url = EVENTSUB_WS.to_string();
+                                continue 'reconnect;
+                            }
                             return;
                         }
                         _ => {}
@@ -178,6 +239,18 @@ pub async fn run(
                 }
             }
         }
+    }
+}
+
+// Sleeps for `secs`, but returns true immediately if the stop signal fires first (so a reconnecting
+// account connection shuts down promptly on logout instead of after the delay).
+async fn wait_or_stop(
+    stop_rx: &mut tokio::sync::oneshot::Receiver<()>,
+    secs: u64,
+) -> bool {
+    tokio::select! {
+        _ = stop_rx => true,
+        _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => false,
     }
 }
 
