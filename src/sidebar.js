@@ -11,6 +11,8 @@ import { isHidden, hideChannel, onHiddenChange, showHideChannelMenu } from "./hi
 
 const REFRESH_INTERVAL_MS = 60_000;
 const COLLAPSED_LIVE_COUNT = 8;
+// max rows in the "Live Channels" (top live) sidebar section
+const TOP_LIVE_LIMIT = 10;
 
 export class ChannelsSidebar {
   constructor({ followedListEl, showMoreBtn, loginPromptEl, topLiveListEl, onChannelSelect }) {
@@ -30,6 +32,9 @@ export class ChannelsSidebar {
     this.notifyChannels = new Set();
     // login -> array of category (game) names to notify on when the channel switches to one of them
     this.categoryTargets = new Map();
+    // channels the user explicitly favorited (bell menu → "Add to Favorites"); shown in their own
+    // section above Followed Channels. independent of notifications
+    this.favorites = this._loadFavorites();
     // last-seen game per channel, to detect the transition into the target category
     this._lastGame = new Map();
     // login -> live state as of the last refresh, compared next tick to catch offline->live.
@@ -461,13 +466,21 @@ export class ChannelsSidebar {
     // drop hidden channels from the followed list entirely
     const followedVisible = this.followed.filter((ch) => !isHidden(ch.login));
 
-    if (followedVisible.length === 0) {
+    // Favorites = followed channels the user explicitly favorited (bell menu → "Add to Favorites").
+    // They get their own section above Followed Channels (Twitch only — Kick rows have no bell menu)
+    // and are removed from the regular list so a channel never appears twice. Order is preserved
+    // (followed list is already live-first).
+    const favorites = kick ? [] : followedVisible.filter((ch) => this._isFavorite(ch.login));
+    const regular = kick ? followedVisible : followedVisible.filter((ch) => !this._isFavorite(ch.login));
+    this._renderFavorites(favorites);
+
+    if (regular.length === 0) {
       if (kick) {
         const empty = document.createElement("div");
         empty.className = "sidebar-empty";
         empty.textContent = "Follow a Kick channel to pin it here.";
         this.followedListEl.appendChild(empty);
-      } else if (this.loggedIn) {
+      } else if (this.loggedIn && favorites.length === 0) {
         const empty = document.createElement("div");
         empty.className = "sidebar-empty";
         empty.textContent = "No followed channels yet.";
@@ -478,8 +491,8 @@ export class ChannelsSidebar {
     }
 
     const visible = this.expanded
-      ? followedVisible
-      : followedVisible.slice(0, COLLAPSED_LIVE_COUNT);
+      ? regular
+      : regular.slice(0, COLLAPSED_LIVE_COUNT);
 
     for (const ch of visible) {
       // the bell is wired to the Twitch poll, Kick rows don't get one (no offline->live pipeline behind their refresh)
@@ -488,14 +501,27 @@ export class ChannelsSidebar {
       );
     }
 
-    if (followedVisible.length > COLLAPSED_LIVE_COUNT) {
+    if (regular.length > COLLAPSED_LIVE_COUNT) {
       this.showMoreBtn.style.display = "block";
       this.showMoreBtn.textContent = this.expanded
         ? "Show Less"
-        : `Show More (${followedVisible.length - COLLAPSED_LIVE_COUNT})`;
+        : `Show More (${regular.length - COLLAPSED_LIVE_COUNT})`;
     } else {
       this.showMoreBtn.style.display = "none";
     }
+  }
+
+  // Renders the Favorites section (all favorites, never collapsed). Hidden entirely when empty.
+  _renderFavorites(favorites) {
+    const section = document.getElementById("favorites-section");
+    const list = document.getElementById("favorites-list");
+    if (!section || !list) return;
+    list.innerHTML = "";
+    if (!favorites.length) { section.style.display = "none"; return; }
+    for (const ch of favorites) {
+      list.appendChild(this.buildChannelRow(ch, { showNotifyToggle: true }));
+    }
+    section.style.display = "";
   }
 
   async renderTopLive(rows) {
@@ -524,8 +550,11 @@ export class ChannelsSidebar {
     }
 
     this.topLiveListEl.innerHTML = "";
+    let shown = 0;
     for (const s of rows) {
+      if (shown >= TOP_LIVE_LIMIT) break; // Live Channels is capped; counted after hidden-filtering
       if (isHidden(s.user_login)) continue; // user hid this channel
+      shown++;
       const ch = {
         id: s.user_id,
         login: s.user_login,
@@ -633,9 +662,9 @@ export class ChannelsSidebar {
     const notifyBtn = document.createElement("button");
     const isOn = this.notifyChannels.has(ch.login) || this.categoryTargets.has(ch.login);
     notifyBtn.className = `sidebar-notify-toggle${isOn ? " active" : ""}`;
-    notifyBtn.title = isOn
-      ? `Notifications on for ${ch.name || ch.login} - click to change`
-      : `Notify me about ${ch.name || ch.login}`;
+    // lets an open bell menu re-find this row's bell after a re-render moves the row (favorites)
+    notifyBtn.dataset.login = ch.login;
+    this._refreshBellState(notifyBtn, ch); // title/active state, same wording as after edits
     notifyBtn.innerHTML =
       '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>';
     notifyBtn.addEventListener("click", (e) => {
@@ -653,6 +682,17 @@ export class ChannelsSidebar {
     document.querySelector(".sidebar-notify-menu")?.remove();
     const menu = document.createElement("div");
     menu.className = "sidebar-notify-menu";
+    // places the menu next to `anchor` (the bell). reused after a favorite toggle moves the row
+    const positionMenu = () => {
+      const r = anchor.getBoundingClientRect();
+      const mw = menu.offsetWidth || 260;
+      const mh = menu.offsetHeight || 240;
+      // prefer below the bell; flip above if it would overflow the viewport bottom
+      let top = r.bottom + 4;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+      menu.style.top = `${top}px`;
+      menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.left - mw + 20))}px`;
+    };
 
     // ---- header ----
     const header = document.createElement("div");
@@ -685,7 +725,40 @@ export class ChannelsSidebar {
     liveSection.appendChild(liveRow);
     menu.appendChild(liveSection);
 
-    // ---- Section 2: Notify for categories ----
+    // ---- Section 2: Favorite (independent of notifications) ----
+    const favSection = document.createElement("div");
+    favSection.className = "sidebar-notify-section";
+    const favRow = document.createElement("label");
+    favRow.className = "sidebar-notify-liverow";
+    const favCb = document.createElement("input");
+    favCb.type = "checkbox";
+    favCb.checked = this._isFavorite(ch.login);
+    const favText = document.createElement("div");
+    favText.className = "sidebar-notify-liverow-text";
+    favText.innerHTML =
+      '<div class="sidebar-notify-liverow-title">Add to Favorites</div>' +
+      '<div class="sidebar-notify-liverow-sub">Pin this channel above Followed Channels</div>';
+    favCb.addEventListener("change", () => {
+      if (favCb.checked) this.favorites.add(ch.login);
+      else this.favorites.delete(ch.login);
+      this._saveFavorites();
+      // apply instantly: move the row into/out of Favorites now. that re-render replaces the row (and
+      // its bell), so re-attach this open menu to the row's new bell and move the menu along with it
+      this.renderFollowed();
+      const moved = document.querySelector(
+        `.sidebar-notify-toggle[data-login="${CSS.escape(ch.login)}"]`
+      );
+      if (moved) {
+        anchor = moved;
+        positionMenu();
+      }
+    });
+    favRow.appendChild(favCb);
+    favRow.appendChild(favText);
+    favSection.appendChild(favRow);
+    menu.appendChild(favSection);
+
+    // ---- Section 3: Notify for categories ----
     const catSection = document.createElement("div");
     catSection.className = "sidebar-notify-section";
     const catTitle = document.createElement("div");
@@ -839,14 +912,7 @@ export class ChannelsSidebar {
     });
 
     document.body.appendChild(menu);
-    const r = anchor.getBoundingClientRect();
-    const mw = menu.offsetWidth || 260;
-    const mh = menu.offsetHeight || 240;
-    // prefer below the bell; flip above if it would overflow the viewport bottom
-    let top = r.bottom + 4;
-    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
-    menu.style.top = `${top}px`;
-    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - mw - 8, r.left - mw + 20))}px`;
+    positionMenu();
     const close = (ev) => {
       if (!menu.contains(ev.target) && ev.target !== anchor) {
         menu.remove();
@@ -856,12 +922,30 @@ export class ChannelsSidebar {
     setTimeout(() => document.addEventListener("mousedown", close), 0);
   }
 
+  // A channel is a favorite when the user explicitly added it via "Add to Favorites" in the bell menu.
+  // Independent of notifications: the bell being on no longer makes a channel a favorite. Twitch only.
+  _isFavorite(login) {
+    return this.favorites.has(login);
+  }
+
+  // favorites persist in localStorage (a plain list of lowercased-as-given logins)
+  _loadFavorites() {
+    try {
+      const arr = JSON.parse(localStorage.getItem("favoriteChannels") || "[]");
+      return new Set(Array.isArray(arr) ? arr.filter(Boolean) : []);
+    } catch { return new Set(); }
+  }
+
+  _saveFavorites() {
+    try { localStorage.setItem("favoriteChannels", JSON.stringify([...this.favorites])); } catch { /* ignore quota */ }
+  }
+
   _refreshBellState(btn, ch) {
     const on = this.notifyChannels.has(ch.login) || this.categoryTargets.has(ch.login);
     btn.classList.toggle("active", on);
     btn.title = on
-      ? `Notifications on for ${ch.name || ch.login} - click to change`
-      : `Notify me about ${ch.name || ch.login}`;
+      ? `Notifications on for ${ch.name || ch.login} - click for favorites & notifications`
+      : `Favorites & notifications for ${ch.name || ch.login}`;
   }
 
   async _saveNotifyPrefs() {

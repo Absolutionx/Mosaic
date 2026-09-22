@@ -7608,3 +7608,34 @@ header .titlebar-action-buttons { overflow: visible; }
 }
 .hidden-channels-unhide:hover { background: var(--m-raised, #232b36); border-color: var(--m-accent, #9147ff); }
 .hidden-channels-empty { font-size: 12.5px; color: var(--m-faint, #697386); font-style: italic; padding: 12px 6px; text-align: center; }
+
+/* ---- Home: "Continue where you left off" (partially watched VODs) ---- */
+/* laid out by the shared .home-grid (same as the other Home sections) */
+.home-continue-card { text-align: left; }
+.home-continue-card .home-grid-thumb.no-thumb { background: var(--m-surface-2, #1c222c); }
+.home-continue-progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+  background: rgba(0, 0, 0, 0.55);
+}
+.home-continue-progress-fill { height: 100%; background: var(--m-accent, #9147ff); }
+.home-continue-text { padding: 8px 2px 2px; min-width: 0; }
+.home-continue-text .home-grid-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.home-continue-card .home-grid-viewers { bottom: 10px; }
+/* remove (×) on Continue cards: shows on hover, top-right of the thumbnail */
+.home-continue-remove {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 6px; cursor: pointer;
+  color: #fff; background: rgba(0, 0, 0, 0.6); border: 1px solid rgba(255, 255, 255, 0.15);
+  opacity: 0; transition: opacity .12s ease, background .12s ease;
+}
+.home-continue-card:hover .home-continue-remove,
+.home-continue-card:focus-within .home-continue-remove { opacity: 1; }
+.home-continue-remove:hover { background: rgba(220, 60, 60, 0.85); border-color: rgba(220, 60, 60, 0.9); }
+/* "Continue where you left off": fixed 5 per row (2 rows shown before "Show more"). Narrow windows
+   fall back to fewer columns so the cards don't get unreadably small. */
+.home-grid.home-continue-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+@media (max-width: 1400px) { .home-grid.home-continue-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .home-grid.home-continue-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

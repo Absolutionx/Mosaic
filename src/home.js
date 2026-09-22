@@ -5,13 +5,22 @@
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
-import { filterHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
+import { filterHidden, isHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
+
+// seconds -> "1:02:03" / "12:34"
+function fmtClock(secs) {
+  const t = Math.max(0, Math.floor(secs || 0));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
 // the fetches return far more (Twitch 100, Kick 40, category rows hundreds), capped here
 // just to fill out the page
 const CAROUSEL_SIZE = 15;
 const GRID_COLLAPSED_COUNT = 8;
+// "Continue where you left off": two rows of five before "Show more" (fixed 5-column grid, see CSS)
+const CONTINUE_COLLAPSED_COUNT = 10;
 const KICK_CATEGORY_ROW_COUNT = 6;
 const RPG_GAME_NAMES = [
   "Path of Exile 2",
@@ -23,9 +32,11 @@ const RPG_GAME_NAMES = [
 ];
 
 export class HomeFeed {
-  constructor({ containerEl, onChannelSelect }) {
+  constructor({ containerEl, onChannelSelect, onVodResume }) {
     this.containerEl = containerEl;
     this.onChannelSelect = onChannelSelect || (() => {});
+    this.onVodResume = onVodResume || (() => {});
+    this.continueItems = []; // "Continue where you left off" (partially watched VODs), see _loadContinue
     this.avatars = new Map();
     this.carouselIndex = 0;
     this.gridExpanded = false;
@@ -35,12 +46,17 @@ export class HomeFeed {
     // hiding only the placeholder left a black box over the feed. hide/show them together
     this.videoFrameEl = document.getElementById("video-frame");
     // re-render when a channel is hidden/unhidden so it drops out of / returns to the feed live
-    onHiddenChange(() => { if (this.loaded && this.containerEl.style.display !== "none") this.render(); });
+    onHiddenChange(() => {
+      if (this.loaded && this.containerEl.style.display !== "none") this._loadContinue().then(() => this.render());
+    });
   }
 
   show() {
     this.containerEl.style.display = "block";
     if (this.videoFrameEl) this.videoFrameEl.style.display = "none";
+    // progress changes while a VOD plays, so reload the continue row on every visit (cheap: one local
+    // file read), then re-render if the rest of the feed is already loaded
+    this._loadContinue().then(() => { if (this.loaded && this.topLive) this.render(); });
     if (!this.loaded) {
       this.loaded = true;
       this.refresh();
@@ -84,7 +100,157 @@ export class HomeFeed {
     ]);
     this.topLive = topLive;
     this.extraRows = extraRows;
+    await this._loadContinue();
     this.render();
+  }
+
+  // Partially-watched VODs for "Continue where you left off", from the local progress store. Only
+  // entries that have display metadata (recorded when a VOD is opened from a VOD card), that were
+  // watched past the first 30s, and aren't basically finished. Most recent first, capped at 30.
+  async _loadContinue() {
+    // one-time (per session) background backfill of title/thumbnail for older Twitch VODs watched
+    // before that metadata was recorded; re-renders this row when it fills anything in. needs a login,
+    // so on failure (e.g. not logged in yet) it's retried on the next Home refresh
+    if (!this._backfillStarted) {
+      this._backfillStarted = true;
+      invoke("backfill_vod_progress_metadata")
+        .then(async (filled) => {
+          if (filled > 0) {
+            await this._loadContinue();
+            if (this.loaded && this.topLive && this.containerEl.style.display !== "none") this.render();
+          }
+        })
+        .catch(() => { this._backfillStarted = false; });
+    }
+    let all = {};
+    try { all = (await invoke("get_all_vod_progress")) || {}; } catch { this.continueItems = []; return; }
+    const END_THRESHOLD = 30; // matches main.js VOD_RESUME_END_THRESHOLD_SECS: within 30s of the end = finished
+    this.continueItems = Object.entries(all)
+      .map(([videoId, e]) => ({
+        videoId,
+        positionSecs: e.position_secs || 0,
+        totalSecs: e.total_secs || 0,
+        updatedAt: e.updated_at || 0,
+        title: e.title || "",
+        channelName: e.channel_name || e.channel_login || "",
+        channelLogin: e.channel_login || "",
+        thumbnailUrl: e.thumbnail_url || "",
+        dismissed: !!e.dismissed,
+      }))
+      .filter((it) =>
+        !it.dismissed &&
+        it.title &&
+        it.totalSecs > 0 &&
+        it.positionSecs >= 30 &&
+        it.positionSecs < it.totalSecs - END_THRESHOLD &&
+        !isHidden(it.channelLogin))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30); // 10 shown (2 rows of 5), the rest behind "Show more"
+  }
+
+  // same wrapping grid + "Show more" toggle as the other Home sections (was a horizontal scroller)
+  buildContinueSection() {
+    const key = "grid-expanded-continue";
+    const items = this.continueItems;
+    const section = document.createElement("div");
+    section.className = "home-section home-continue";
+    const heading = document.createElement("div");
+    heading.className = "home-section-title";
+    heading.textContent = "Continue where you left off";
+    section.appendChild(heading);
+
+    const grid = document.createElement("div");
+    grid.className = "home-grid home-continue-grid";
+    const expanded = this._expandedSections?.has(key);
+    const visible = expanded ? items : items.slice(0, CONTINUE_COLLAPSED_COUNT);
+    for (const it of visible) grid.appendChild(this.buildContinueCard(it));
+    section.appendChild(grid);
+
+    if (items.length > CONTINUE_COLLAPSED_COUNT) {
+      const showMore = document.createElement("button");
+      showMore.className = "home-show-more";
+      showMore.innerHTML = expanded
+        ? 'Show less <svg viewBox="0 0 24 24" width="14" height="14" style="transform:rotate(180deg)"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>'
+        : 'Show more <svg viewBox="0 0 24 24" width="14" height="14"><path d="M7 10l5 5 5-5z" fill="currentColor"/></svg>';
+      showMore.addEventListener("click", () => {
+        if (!this._expandedSections) this._expandedSections = new Set();
+        if (expanded) this._expandedSections.delete(key);
+        else this._expandedSections.add(key);
+        this.render();
+      });
+      section.appendChild(showMore);
+    }
+    return section;
+  }
+
+  buildContinueCard(it) {
+    const card = document.createElement("button");
+    card.className = "home-grid-card home-continue-card";
+    card.title = `Resume at ${fmtClock(it.positionSecs)}`;
+    card.addEventListener("click", () => this.onVodResume(it));
+
+    const thumbWrap = document.createElement("div");
+    thumbWrap.className = "home-grid-thumb-wrap";
+    const thumb = document.createElement("img");
+    thumb.className = "home-grid-thumb";
+    thumb.alt = "";
+    const url = it.thumbnailUrl || "";
+    // Helix hands back a "_404_processing" URL for VODs still transcoding, treat as no thumbnail
+    if (url && !url.includes("404_processing")) {
+      thumb.src = url
+        .replace("%{width}", "440").replace("%{height}", "248")
+        .replace("{width}", "440").replace("{height}", "248");
+      thumb.onerror = () => { thumb.removeAttribute("src"); thumb.classList.add("no-thumb"); };
+    } else {
+      thumb.classList.add("no-thumb");
+    }
+    thumbWrap.appendChild(thumb);
+
+    const left = document.createElement("span");
+    left.className = "home-grid-viewers";
+    left.textContent = `${fmtClock(it.totalSecs - it.positionSecs)} left`;
+    thumbWrap.appendChild(left);
+
+    // resume progress bar along the bottom of the thumbnail
+    const bar = document.createElement("div");
+    bar.className = "home-continue-progress";
+    const fill = document.createElement("div");
+    fill.className = "home-continue-progress-fill";
+    fill.style.width = `${Math.min(100, Math.max(0, (it.positionSecs / it.totalSecs) * 100))}%`;
+    bar.appendChild(fill);
+    thumbWrap.appendChild(bar);
+
+    // remove from this row only: the saved position is kept, so opening the VOD again later (e.g. from
+    // the channel's VODs page) still resumes. a span, not a button: the card is itself a button and
+    // buttons can't nest. stops propagation so it doesn't also open the VOD
+    const remove = document.createElement("span");
+    remove.className = "home-continue-remove";
+    remove.setAttribute("role", "button");
+    remove.setAttribute("aria-label", "Remove from Continue where you left off");
+    remove.title = "Remove from this list";
+    remove.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    remove.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      try { await invoke("dismiss_vod_from_continue", { videoId: it.videoId }); } catch { /* ignore */ }
+      this.continueItems = this.continueItems.filter((x) => x.videoId !== it.videoId);
+      this.render();
+    });
+    thumbWrap.appendChild(remove);
+    card.appendChild(thumbWrap);
+
+    const text = document.createElement("div");
+    text.className = "home-grid-text home-continue-text";
+    const title = document.createElement("div");
+    title.className = "home-grid-title";
+    title.textContent = it.title;
+    const name = document.createElement("div");
+    name.className = "home-grid-name";
+    name.textContent = it.channelName;
+    text.appendChild(title);
+    text.appendChild(name);
+    card.appendChild(text);
+    return card;
   }
 
   // one section per category; a category whose fetch fails or comes back empty is dropped,
@@ -169,6 +335,9 @@ export class HomeFeed {
     this.containerEl.innerHTML = "";
     if ((this.topLive || []).length > 0) {
       this.containerEl.appendChild(this.buildCarousel(this.topLive.slice(0, CAROUSEL_SIZE)));
+    }
+    if (this.continueItems.length > 0) {
+      this.containerEl.appendChild(this.buildContinueSection());
     }
     this.containerEl.appendChild(
       this.buildSection(

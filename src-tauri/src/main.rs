@@ -257,6 +257,8 @@ fn main() {
             vod_progress::get_all_vod_progress,
             vod_progress::get_vod_progress,
             vod_progress::save_vod_progress,
+            vod_progress::backfill_vod_progress_metadata,
+            vod_progress::dismiss_vod_from_continue,
             oauth::validate_oauth_token,
             oauth::restore_session,
             oauth::logout,

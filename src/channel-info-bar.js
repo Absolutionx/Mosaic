@@ -164,9 +164,13 @@ export async function updateChannelInfoBar(channel, stream) {
         // only apply if this is still the intended channel: this is the tail of an await, and
         // session.intendedChannel (set synchronously in watchChannel) is the current truth, unlike
         // currentChannel (not set until start_stream resolves) or lastChannelInfo
-        if (session.intendedChannel === channel) {
+        // during a VOD, intendedChannel is "vod:<id>", so also accept "the bar is showing this
+        // channel for the VOD being played" — otherwise a VOD's bar never got its avatar
+        const vodOfThisChannel = String(session.intendedChannel || "").startsWith("vod:") &&
+          sameLogin(lastChannelInfo?.channel, channel);
+        if (session.intendedChannel === channel || vodOfThisChannel) {
           channelInfoAvatar.src = url;
-          updateStreamInfoOverlay(channel, stream, url, broadcasterType);
+          updateStreamInfoOverlay(channel, stream || vodOverlayStream(channel), url, broadcasterType);
         }
       }
     } catch (err) {
@@ -296,6 +300,45 @@ export function hideChannelInfoBar() {
 export function resyncChannelInfoBarVisibility() {
   if (!lastChannelInfo) return;
   channelInfoBar.style.display = session.intendedChannel !== null && !session.pageVisible ? "flex" : "none";
+}
+
+// VOD playback: make sure the bar shows the VOD's channel (name, avatar, Follow / Subscribe / Videos /
+// Link Kick) so you can jump to that channel's other VODs. A VOD opened from Home had no bar at all (only
+// live playback fills it), or could show a previous channel's. No-op when it already shows this channel,
+// so arriving from the channel's own VODs page keeps the info already loaded. Twitch only.
+export function ensureChannelInfoBarFor(channel) {
+  if (!channel) return;
+  if (lastChannelInfo && !lastChannelInfo.kick &&
+      String(lastChannelInfo.channel).toLowerCase() === String(channel).toLowerCase()) {
+    resyncChannelInfoBarVisibility();
+    return;
+  }
+  updateChannelInfoBar(channel, null);
+}
+
+// the in-video overlay's content during a VOD: channel name + the VOD's own title (no game/viewers,
+// those describe a live stream). null when the bar isn't showing a VOD for this channel
+function sameLogin(a, b) {
+  return String(a || "").toLowerCase() === String(b || "").toLowerCase();
+}
+
+function vodOverlayStream(channel) {
+  const vod = lastChannelInfo?.vod;
+  if (!vod || !sameLogin(lastChannelInfo.channel, channel)) return null;
+  return { user_name: vod.name, title: vod.title };
+}
+
+// Shows a Twitch VOD's own title in the info bar (and the in-video overlay) instead of the channel's
+// live-stream details. Viewer count and tags are cleared: they describe the live stream, not the VOD.
+// Call after ensureChannelInfoBarFor(channel). Twitch only.
+export function showVodInInfoBar(channel, { title = "", channelName = "" } = {}) {
+  if (!channel || !lastChannelInfo || lastChannelInfo.kick || !sameLogin(lastChannelInfo.channel, channel)) return;
+  lastChannelInfo.vod = { title, name: channelName || channelInfoName.textContent || channel };
+  channelInfoTitle.textContent = title;
+  channelInfoViewers.textContent = "";
+  channelInfoTags.innerHTML = "";
+  const shown = lastChannelInfo.channel; // the bar's own spelling of the login
+  updateStreamInfoOverlay(shown, vodOverlayStream(shown), channelInfoAvatar.src, "");
 }
 
 // 1x1 transparent pixel so the avatar <img> never shows a broken-image icon while loading or absent

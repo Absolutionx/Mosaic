@@ -127,6 +127,13 @@
              Kick login in this app, so there's nothing equivalent to
              show) - see applyPlatformUi() in main.js. -->
         <div id="followed-section">
+          <!-- Favorites: followed channels whose bell is on. Shown above Followed Channels, hidden when
+               empty (see renderFollowed in sidebar.js). -->
+          <div id="favorites-section" style="display:none">
+            <div class="sidebar-section-title" id="favorites-section-title">Favorites</div>
+            <div id="favorites-list"></div>
+            <div class="sidebar-section-divider"></div>
+          </div>
           <div class="sidebar-section-title" id="followed-section-title">Followed Channels</div>
           <div id="followed-channels-list"></div>
           <button id="followed-show-more-btn" class="sidebar-show-more" style="display:none"></button>

@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.2.65"
+version = "1.2.76"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 

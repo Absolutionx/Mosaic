@@ -117,7 +117,7 @@ export class VodsPage {
       const card = this._buildVodCard(vod, progressByVodId[vod.id]);
       grid.appendChild(card);
       const totalSeconds = vod.duration ? parseDurationToSeconds(vod.duration) : 0;
-      cardRefs.push({ vodId: vod.id, totalSeconds, card });
+      cardRefs.push({ vodId: vod.id, totalSeconds, card, meta: this._vodMeta(vod) });
     }
     this.containerEl.appendChild(grid);
 
@@ -134,11 +134,21 @@ export class VodsPage {
     this.currentChannel = null;
   }
 
+  // display metadata recorded alongside saved progress, used by Home's "Continue where you left off"
+  _vodMeta(vod) {
+    return {
+      title: vod.title || "",
+      channelName: vod.user_name || this.currentChannel || "",
+      channelLogin: vod.user_login || this.currentChannel || "",
+      thumbnailUrl: vod.thumbnail_url || "",
+    };
+  }
+
   _buildVodCard(vod, progress) {
     const card = document.createElement("button");
     card.className = "home-grid-card";
     const totalSeconds = vod.duration ? parseDurationToSeconds(vod.duration) : 0;
-    card.addEventListener("click", () => this.onVodSelect(vod.id, totalSeconds, this.currentChannel));
+    card.addEventListener("click", () => this.onVodSelect(vod.id, totalSeconds, this.currentChannel, undefined, this._vodMeta(vod)));
 
     const thumbWrap = document.createElement("div");
     thumbWrap.className = "home-grid-thumb-wrap";
@@ -221,7 +231,7 @@ export class VodsPage {
     const closePopup = () => { activePopup?.remove(); activePopup = null; };
     document.addEventListener("click", closePopup, { capture: true, once: false });
 
-    await Promise.all(cardRefs.map(async ({ vodId, card, totalSeconds }) => {
+    await Promise.all(cardRefs.map(async ({ vodId, card, totalSeconds, meta: vodMeta }) => {
       try {
         const chapters = await fetchVodChapters(vodId);
         if (this.currentChannel !== channel) return;
@@ -261,7 +271,7 @@ export class VodsPage {
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
               closePopup();
-              this.onVodSelect(vodId, totalSeconds, this.currentChannel, Math.floor(ch.positionSec));
+              this.onVodSelect(vodId, totalSeconds, this.currentChannel, Math.floor(ch.positionSec), vodMeta);
             });
             popup.appendChild(item);
           });

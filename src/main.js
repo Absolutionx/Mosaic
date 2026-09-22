@@ -43,7 +43,7 @@ import {
   initChannelInfoBar, setAfterAliasBtnRefresh, channelInfoKickAliasBtn,
   updateChannelInfoBar, updateKickChannelInfoBar, updateStreamInfoOverlay,
   hideChannelInfoBar, resyncChannelInfoBarVisibility, refreshKickAliasBtn,
-  startChannelInfoRefresh,
+  startChannelInfoRefresh, ensureChannelInfoBarFor, showVodInInfoBar,
 } from "./channel-info-bar.js";
 
 const channelInput = document.getElementById("channel-input");
@@ -688,6 +688,12 @@ const homeFeed = new HomeFeed({
       watchChannel(login, stream);
     }
   },
+  // "Continue where you left off": jump straight to the saved position (an explicit start offset, so
+  // it wins over the resume-prompt logic) and keep recording its metadata
+  onVodResume: (item) =>
+    openVod(item.videoId, item.totalSecs, item.channelLogin, Math.floor(item.positionSecs), {
+      title: item.title, channelName: item.channelName, channelLogin: item.channelLogin, thumbnailUrl: item.thumbnailUrl,
+    }),
 });
 
 const browsePage = new BrowsePage({
@@ -704,17 +710,23 @@ const browsePage = new BrowsePage({
 });
 
 // homeFeed and browsePage both toggle the same #video-frame visibility (only one of video/home/browse shows at a time), so browsePage.hide() must run BEFORE homeFeed.show(), else its "hide the video frame" would stomp the one that should stick
+// Opens a VOD (Twitch or Kick), remembering its display metadata so progress saves can record it for
+// Home's "Continue where you left off" row. Shared by the VODs page and that Home row.
+function openVod(videoId, totalSeconds, broadcastLogin, startOffsetSeconds, meta) {
+  session.vodMeta = meta ? { videoId: String(videoId), ...meta } : null;
+  // Kick cards carry "kick:<uuid>" ids (kick_channel_videos in kick.rs), route those to the Kick VOD path; everything else is a Twitch archive id
+  if (String(videoId).startsWith("kick:")) {
+    watchKickVod(videoId, totalSeconds, startOffsetSeconds);
+  } else {
+    watchVod(videoId, totalSeconds, broadcastLogin, startOffsetSeconds);
+  }
+}
+
 const vodsPage = new VodsPage({
   containerEl: document.getElementById("vods-page"),
   videoFrameEl: document.getElementById("video-frame"),
-  onVodSelect: (videoId, totalSeconds, broadcastLogin, startOffsetSeconds) => {
-    // Kick cards carry "kick:<uuid>" ids (kick_channel_videos in kick.rs), route those to the Kick VOD path; everything else is a Twitch archive id
-    if (String(videoId).startsWith("kick:")) {
-      watchKickVod(videoId, totalSeconds, startOffsetSeconds);
-    } else {
-      watchVod(videoId, totalSeconds, broadcastLogin, startOffsetSeconds);
-    }
-  },
+  onVodSelect: (videoId, totalSeconds, broadcastLogin, startOffsetSeconds, meta) =>
+    openVod(videoId, totalSeconds, broadcastLogin, startOffsetSeconds, meta),
 });
 
 browsePage.hide();
@@ -1112,7 +1124,16 @@ function maybeSaveVodProgress() {
   const positionSecs = playbackControls.lastKnownPosition;
   const totalSecs = playbackControls.vodTotalSeconds;
   if (!totalSecs) return; // nothing meaningful to compare position against
-  invoke("save_vod_progress", { videoId, positionSecs, totalSecs }).catch((err) => {
+  // attach display metadata (for Home's "Continue where you left off") when we have it for this VOD;
+  // when we don't (e.g. a session-restored VOD), the backend keeps whatever it recorded before
+  const meta = session.vodMeta && session.vodMeta.videoId === videoId ? session.vodMeta : null;
+  invoke("save_vod_progress", {
+    videoId, positionSecs, totalSecs,
+    title: meta?.title || null,
+    channelName: meta?.channelName || null,
+    channelLogin: meta?.channelLogin || null,
+    thumbnailUrl: meta?.thumbnailUrl || null,
+  }).catch((err) => {
     console.warn("Failed to save VOD progress:", err);
   });
 }
@@ -1136,6 +1157,11 @@ async function watchChannel(channel, stream) {
   }
 
   // hide BOTH pages, not just the active one, the user could start a stream from either home or Browse
+  // starting playback always returns to the full-size player: if the mini player was floating (we
+  // came from a page while something played), turn it off first so the new video doesn't open inside
+  // it. must run before the pages' hide() so its floating inline styles are cleared first
+  deactivateMiniPlayer();
+  resetMiniPlayerDismissal();
   homeFeed.hide();
   browsePage.hide();
   vodsPage.hide();
@@ -1368,6 +1394,11 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
     syncWatchBtn();
   }
 
+  // starting playback always returns to the full-size player: if the mini player was floating (we
+  // came from a page while something played), turn it off first so the new video doesn't open inside
+  // it. must run before the pages' hide() so its floating inline styles are cleared first
+  deactivateMiniPlayer();
+  resetMiniPlayerDismissal();
   homeFeed.hide();
   browsePage.hide();
   vodsPage.hide();
@@ -1398,7 +1429,28 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
     playbackControls.start(`vod:${videoId}`, m3u8Url, session.currentQuality, vodTotalSeconds, startPositionSecs);
     resolvePipVodUrl(videoId, m3u8Url);
     updateBackToStreamBtn();
-    resyncChannelInfoBarVisibility();
+    // show the VOD's channel in the info bar (Follow / Subscribe / Videos), even when it was opened
+    // from Home where no channel info was loaded; keeps existing info when it's already this channel
+    if (broadcastLogin) {
+      ensureChannelInfoBarFor(broadcastLogin);
+      // show the VOD's own title (not the channel's live-stream title/viewers). from the metadata recorded
+      // when it was opened (VOD card / Home row); a session-restored VOD has none, so fall back to the
+      // title saved with its progress
+      const meta = session.vodMeta && session.vodMeta.videoId === String(videoId) ? session.vodMeta : null;
+      if (meta?.title) {
+        showVodInInfoBar(broadcastLogin, { title: meta.title, channelName: meta.channelName });
+      } else {
+        invoke("get_vod_progress", { videoId: String(videoId) })
+          .then((e) => {
+            if (e?.title && session.intendedChannel === `vod:${videoId}`) {
+              showVodInInfoBar(broadcastLogin, { title: e.title, channelName: e.channel_name || "" });
+            }
+          })
+          .catch(() => {});
+      }
+    } else {
+      resyncChannelInfoBarVisibility();
+    }
     // fire-and-forget: muted-segment markers are a nice-to-have, never something playback waits on. shows none if the user isn't logged in (Helix only returns muted_segments for a user token) or on any failure
     invoke("get_vod_muted_segments", { videoId })
       .then((raw) => playbackControls.renderMutedSegments(JSON.parse(raw), vodTotalSeconds))
@@ -1443,6 +1495,11 @@ async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
     syncWatchBtn();
   }
 
+  // starting playback always returns to the full-size player: if the mini player was floating (we
+  // came from a page while something played), turn it off first so the new video doesn't open inside
+  // it. must run before the pages' hide() so its floating inline styles are cleared first
+  deactivateMiniPlayer();
+  resetMiniPlayerDismissal();
   homeFeed.hide();
   browsePage.hide();
   vodsPage.hide();
@@ -1509,6 +1566,11 @@ async function watchKickChannel(channel) {
     syncWatchBtn();
   }
 
+  // starting playback always returns to the full-size player: if the mini player was floating (we
+  // came from a page while something played), turn it off first so the new video doesn't open inside
+  // it. must run before the pages' hide() so its floating inline styles are cleared first
+  deactivateMiniPlayer();
+  resetMiniPlayerDismissal();
   homeFeed.hide();
   browsePage.hide();
   vodsPage.hide();
