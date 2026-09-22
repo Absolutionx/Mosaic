@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
+import { filterHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 // the fetches return far more (Twitch 100, Kick 40, category rows hundreds), capped here
@@ -33,6 +34,8 @@ export class HomeFeed {
     // #video-frame has its own solid black background, separate from its placeholder, so
     // hiding only the placeholder left a black box over the feed. hide/show them together
     this.videoFrameEl = document.getElementById("video-frame");
+    // re-render when a channel is hidden/unhidden so it drops out of / returns to the feed live
+    onHiddenChange(() => { if (this.loaded && this.containerEl.style.display !== "none") this.render(); });
   }
 
   show() {
@@ -184,6 +187,7 @@ export class HomeFeed {
   }
 
   buildCarousel(streams) {
+    streams = filterHidden(streams);
     const wrap = document.createElement("div");
     wrap.className = "home-carousel";
 
@@ -221,6 +225,10 @@ export class HomeFeed {
     card.className = "home-carousel-card";
     card.dataset.hypeId = s.user_id || "";
     card.addEventListener("click", () => this.onChannelSelect(s.user_login, s));
+    card.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showHideChannelMenu(e.clientX, e.clientY, s.user_login, s.user_name || s.user_login);
+    });
 
     const thumb = document.createElement("img");
     thumb.className = "home-carousel-thumb";
@@ -286,6 +294,7 @@ export class HomeFeed {
   }
 
   buildSection(title, streams, collapsedCount, key) {
+    streams = filterHidden(streams);
     const section = document.createElement("div");
     section.className = "home-section";
 
@@ -327,6 +336,10 @@ export class HomeFeed {
     card.className = "home-grid-card";
     card.dataset.hypeId = s.user_id || "";
     card.addEventListener("click", () => this.onChannelSelect(s.user_login, s));
+    card.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showHideChannelMenu(e.clientX, e.clientY, s.user_login, s.user_name || s.user_login);
+    });
 
     const thumbWrap = document.createElement("div");
     thumbWrap.className = "home-grid-thumb-wrap";

@@ -20,6 +20,7 @@ const dragEls = [
   document.querySelector("header"),
   document.querySelector(".chat-header"),
   document.getElementById("video-column"),
+  document.getElementById("theater-drag-strip"),
 ].filter(Boolean);
 
 // The video column is a drag surface only in theater mode, and only at its very top (the empty band

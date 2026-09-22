@@ -137,6 +137,22 @@ html, body {
   border-bottom: none;
 }
 
+/* Window-drag strip for theater mode. Hidden by default (the normal header handles dragging). In
+   theater mode the header is hidden and a large monitor can leave no empty band above the video, so
+   this thin full-width strip at the very top is a reliable, always-present drag handle. It sits in the
+   reserved 14px top area, above the grid, and passes clicks through to the video elsewhere. */
+#theater-drag-strip { display: none; }
+#app.theater-mode.header-collapsed:not(.app-fullscreen) #theater-drag-strip {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 150px; /* leave the top-right window controls clickable */
+  height: 18px;
+  z-index: 1900; /* above content, below win-controls (2000) so the window buttons stay clickable */
+  -webkit-app-region: drag;
+}
+
 /* Keep the native-style window controls reachable after theater mode hides the
    header. Take them out of the collapsed header layout and pin them to the
    OS window's top-right corner. */
@@ -6054,6 +6070,58 @@ button:active { transform: translateY(1px); }
   100% { box-shadow: 0 0 0 40px rgba(255, 255, 255, 0) inset; }
 }
 
+/* Gift-sub banner: a celebratory bar near the chat header for a large gift-sub drop (5+), matching the
+   hype-train/pinned banner slot. Warm accent so it reads as a special/positive event. */
+.gift-sub-banner {
+  display: none;
+  align-items: center;
+  gap: 9px;
+  margin: 6px 8px 2px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255, 145, 71, 0.18), rgba(255, 77, 210, 0.14));
+  border: 1px solid rgba(255, 145, 71, 0.45);
+  box-shadow: 0 0 12px rgba(255, 145, 71, 0.15);
+  user-select: none;
+  overflow: hidden;
+}
+.gift-sub-banner-icon { flex: 0 0 auto; font-size: 15px; line-height: 1; }
+.gift-sub-banner-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--m-text, #e7ebf2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gift-sub-banner-name { font-weight: 700; color: var(--m-text, #e7ebf2); }
+.gift-sub-banner-detail { color: var(--m-text, #e7ebf2); opacity: 0.9; }
+.gift-sub-banner-detail strong { font-weight: 800; }
+.gift-sub-banner-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--m-muted, #9aa5b4);
+  cursor: pointer;
+}
+.gift-sub-banner-close:hover { background: rgba(255, 255, 255, 0.1); color: var(--m-text, #e7ebf2); }
+.gift-sub-banner.gift-pop { animation: gift-sub-pop 0.35s cubic-bezier(0.2, 0.8, 0.3, 1.2); }
+@keyframes gift-sub-pop {
+  0% { transform: translateY(-6px) scale(0.97); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gift-sub-banner.gift-pop { animation: none; }
+}
+
 /* Twitch prediction overlay (top of chat pane, stacks above hype/pinned) — see _renderPrediction */
 .prediction-overlay {
   margin: 6px 8px 2px;
@@ -7486,3 +7554,57 @@ header .titlebar-action-buttons { overflow: visible; }
   cursor: pointer;
   pointer-events: auto;
 }
+
+/* ---- Hidden channels: right-click menu + manage modal ---- */
+.hide-channel-menu {
+  position: fixed; z-index: 12000; min-width: 180px; padding: 4px;
+  background: var(--m-surface, #18181b); border: 1px solid var(--m-border, #29313d);
+  border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+}
+.hide-channel-menu-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px;
+  background: none; border: none; border-radius: 6px; color: var(--m-text, #e7ebf2);
+  font-family: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.hide-channel-menu-item:hover { background: var(--m-surface-2, #1c222c); }
+.hide-channel-menu-item svg { flex: 0 0 auto; color: var(--m-muted, #9aa5b4); }
+.hide-channel-menu-item:hover svg { color: var(--m-text, #e7ebf2); }
+
+.hidden-channels-overlay {
+  position: fixed; inset: 0; z-index: 12000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.5);
+}
+.hidden-channels-modal {
+  width: 380px; max-width: calc(100vw - 32px); max-height: 70vh; display: flex; flex-direction: column;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d);
+  border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.55); overflow: hidden;
+}
+.hidden-channels-head {
+  display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
+  border-bottom: 1px solid var(--m-border, #29313d);
+}
+.hidden-channels-title { font-size: 15px; font-weight: 800; color: var(--m-text, #e7ebf2); }
+.hidden-channels-close {
+  background: none; border: none; color: var(--m-muted, #9aa5b4); cursor: pointer; padding: 2px;
+  display: inline-flex; border-radius: 6px;
+}
+.hidden-channels-close:hover { color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); }
+.hidden-channels-sub { font-size: 12.5px; color: var(--m-muted, #9aa5b4); padding: 10px 16px 4px; }
+.hidden-channels-list { overflow-y: auto; padding: 6px 10px 12px;
+  scrollbar-width: thin; scrollbar-color: var(--m-raised, #232b36) transparent; }
+.hidden-channels-list::-webkit-scrollbar { width: 8px; }
+.hidden-channels-list::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.hidden-channels-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 6px; border-bottom: 1px solid var(--m-border-soft, #212832);
+}
+.hidden-channels-row:last-child { border-bottom: none; }
+.hidden-channels-name { font-size: 13.5px; color: var(--m-text, #e7ebf2); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hidden-channels-unhide {
+  flex: 0 0 auto; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 5px 12px; border-radius: 7px; color: var(--m-text, #e7ebf2);
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.hidden-channels-unhide:hover { background: var(--m-raised, #232b36); border-color: var(--m-accent, #9147ff); }
+.hidden-channels-empty { font-size: 12.5px; color: var(--m-faint, #697386); font-style: italic; padding: 12px 6px; text-align: center; }

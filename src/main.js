@@ -32,6 +32,7 @@ import { checkStreamDeps } from "./deps-banner.js";
 import { checkForUpdate } from "./update-banner.js";
 import { MultiView } from "./multiview.js";
 import { updateDropsBanner, hideDropsBanner, resetDropsDismissal } from "./drops-banner.js";
+import { openHiddenChannelsModal } from "./hidden-channels.js";
 import { initMiniPlayer, activateMiniPlayer, deactivateMiniPlayer, resetMiniPlayerDismissal } from "./mini-player.js";
 import {
   initLayout, switchPage, updateBackToStreamBtn, setTheaterMode,
@@ -427,6 +428,7 @@ const trackId = new TrackId(playbackControls.videoEl);
         closeMenu();
         if (action === "filter") openFilter();
         else if (action === "pins") openPins();
+        else if (action === "hidden") openHiddenChannelsModal();
       });
     });
 

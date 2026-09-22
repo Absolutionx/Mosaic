@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
+import { filterHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
 
 // every category is shown now (see get_top_games pagination in main.rs)
 const CATEGORIES_COLLAPSED_COUNT = 18;
@@ -287,7 +288,7 @@ export class BrowsePage {
 
     const grid = document.createElement("div");
     grid.className = "home-grid";
-    for (const s of streams) {
+    for (const s of filterHidden(streams)) {
       grid.appendChild(this.buildStreamCard(s));
     }
     this.containerEl.appendChild(grid);
@@ -330,7 +331,7 @@ export class BrowsePage {
 
     const grid = document.createElement("div");
     grid.className = "home-grid";
-    for (const s of streams) {
+    for (const s of filterHidden(streams)) {
       grid.appendChild(this.buildStreamCard(s));
     }
     this.containerEl.appendChild(grid);
@@ -559,7 +560,7 @@ export class BrowsePage {
     }
     const grid = document.createElement("div");
     grid.className = "home-grid";
-    for (const s of streams) {
+    for (const s of filterHidden(streams)) {
       grid.appendChild(this.buildStreamCard(s));
     }
     this.containerEl.appendChild(grid);
@@ -664,6 +665,10 @@ export class BrowsePage {
     card.className = "home-grid-card";
     card.dataset.hypeId = s.user_id || "";
     card.addEventListener("click", () => this.onChannelSelect(s.user_login, s));
+    card.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showHideChannelMenu(e.clientX, e.clientY, s.user_login, s.user_name || s.user_login);
+    });
 
     const thumbWrap = document.createElement("div");
     thumbWrap.className = "home-grid-thumb-wrap";

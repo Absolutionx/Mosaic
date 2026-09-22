@@ -539,6 +539,8 @@ export class TwitchChat {
     this._roomModes = {};
     this._renderChatModes();
     this._hideTimeoutPanel();
+    // clear any stale gift-sub banner from the previous channel
+    if (typeof this._hideGiftSubBanner === "function") this._hideGiftSubBanner();
     if (this._msgStore) this._msgStore.clear();
     this.userScrolledUp = false;
     // leaving any prior Kick-chat session behind, back on Twitch IRC now
@@ -679,6 +681,7 @@ export class TwitchChat {
     this.userScrolledUp = false;
     this.newMessageCountWhileScrolledUp = 0;
     if (this.jumpToLatestBtn) this.jumpToLatestBtn.classList.remove("visible");
+    if (typeof this._hideGiftSubBanner === "function") this._hideGiftSubBanner();
     this.closeThread();
   }
 

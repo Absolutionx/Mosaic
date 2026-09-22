@@ -104,6 +104,53 @@ export const chatEventsMixin = {
     ));
     line.appendChild(info);
     this._appendEvent(line);
+
+    // Big gift drops (5+) also get a prominent banner near the chat header, like Twitch. The inline
+    // event above still shows in the full history; this is the extra celebratory bar.
+    if (count >= 5) this._showGiftSubBanner(p.display_name, count, plan);
+  },
+
+  // Celebratory banner for a large gift-sub drop. Auto-dismisses after a bit; a bigger drop replaces
+  // it. Lives in the banner slot near the chat header, alongside hype-train/pinned.
+  _showGiftSubBanner(gifter, count, planLabel) {
+    const el = document.getElementById("gift-sub-banner");
+    if (!el) return;
+    // if a banner is already showing for a bigger drop, keep that one
+    if (el.style.display !== "none" && (el._giftCount || 0) > count) return;
+    el._giftCount = count;
+
+    const planText = planLabel ? ` ${planLabel}` : "";
+    el.innerHTML =
+      '<span class="gift-sub-banner-icon">🎁</span>' +
+      '<span class="gift-sub-banner-text">' +
+        '<span class="gift-sub-banner-name"></span>' +
+        '<span class="gift-sub-banner-detail"></span>' +
+      '</span>' +
+      '<button class="gift-sub-banner-close" title="Dismiss" aria-label="Dismiss">' +
+        '<svg viewBox="0 0 24 24" width="13" height="13"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg>' +
+      '</button>';
+    // set text via textContent so display names can't inject markup
+    el.querySelector(".gift-sub-banner-name").textContent = gifter || "Someone";
+    el.querySelector(".gift-sub-banner-detail").textContent =
+      ` gifted ${count}${planText} sub${count === 1 ? "" : "s"}!`;
+    el.style.display = "flex";
+    // retrigger the entrance animation
+    el.classList.remove("gift-pop");
+    void el.offsetWidth;
+    el.classList.add("gift-pop");
+
+    el.querySelector(".gift-sub-banner-close").onclick = () => this._hideGiftSubBanner();
+
+    clearTimeout(this._giftBannerTimer);
+    this._giftBannerTimer = setTimeout(() => this._hideGiftSubBanner(), 12000);
+  },
+
+  _hideGiftSubBanner() {
+    const el = document.getElementById("gift-sub-banner");
+    if (!el) return;
+    clearTimeout(this._giftBannerTimer);
+    el.style.display = "none";
+    el._giftCount = 0;
   },
 
   _renderRaidBanner(p) {

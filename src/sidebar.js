@@ -7,6 +7,7 @@ import { feedInvoke, isKick } from "./platform.js";
 import { getKickFollows, onKickFollowsChange } from "./kick-follows.js";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { streamHasDropsEnabled } from "./drops.js";
+import { isHidden, hideChannel, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 const COLLAPSED_LIVE_COUNT = 8;
@@ -40,6 +41,12 @@ export class ChannelsSidebar {
     this.showMoreBtn.addEventListener("click", () => {
       this.expanded = !this.expanded;
       this.renderFollowed();
+    });
+
+    // when a channel is hidden/unhidden, re-render both sidebar lists so it disappears/reappears live
+    onHiddenChange(() => {
+      this.renderFollowed();
+      if (this._lastTopLiveRows) this.renderTopLive(this._lastTopLiveRows);
     });
 
     // follow toggled from the info bar (kick-follows.js), reflect it without waiting for the 60s refresh
@@ -451,7 +458,10 @@ export class ChannelsSidebar {
     this.followedListEl.innerHTML = "";
     const kick = isKick();
 
-    if (this.followed.length === 0) {
+    // drop hidden channels from the followed list entirely
+    const followedVisible = this.followed.filter((ch) => !isHidden(ch.login));
+
+    if (followedVisible.length === 0) {
       if (kick) {
         const empty = document.createElement("div");
         empty.className = "sidebar-empty";
@@ -468,8 +478,8 @@ export class ChannelsSidebar {
     }
 
     const visible = this.expanded
-      ? this.followed
-      : this.followed.slice(0, COLLAPSED_LIVE_COUNT);
+      ? followedVisible
+      : followedVisible.slice(0, COLLAPSED_LIVE_COUNT);
 
     for (const ch of visible) {
       // the bell is wired to the Twitch poll, Kick rows don't get one (no offline->live pipeline behind their refresh)
@@ -478,17 +488,18 @@ export class ChannelsSidebar {
       );
     }
 
-    if (this.followed.length > COLLAPSED_LIVE_COUNT) {
+    if (followedVisible.length > COLLAPSED_LIVE_COUNT) {
       this.showMoreBtn.style.display = "block";
       this.showMoreBtn.textContent = this.expanded
         ? "Show Less"
-        : `Show More (${this.followed.length - COLLAPSED_LIVE_COUNT})`;
+        : `Show More (${followedVisible.length - COLLAPSED_LIVE_COUNT})`;
     } else {
       this.showMoreBtn.style.display = "none";
     }
   }
 
   async renderTopLive(rows) {
+    this._lastTopLiveRows = rows; // cached so a hide/unhide can re-render without a refetch
     // /helix/streams has no profile images, so batch-lookup avatars for uncached ids. Kick rows
     // skip it: kick.rs embeds the avatar inline, and kick:* ids must never reach get_users_info (Helix would 400)
     for (const s of rows) {
@@ -514,6 +525,7 @@ export class ChannelsSidebar {
 
     this.topLiveListEl.innerHTML = "";
     for (const s of rows) {
+      if (isHidden(s.user_login)) continue; // user hid this channel
       const ch = {
         id: s.user_id,
         login: s.user_login,
@@ -551,6 +563,11 @@ export class ChannelsSidebar {
           : null
       )
     );
+    // right-click → hide this channel everywhere
+    btn.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      showHideChannelMenu(e.clientX, e.clientY, ch.login, ch.name || ch.login);
+    });
 
     const avatarWrap = document.createElement("div");
     avatarWrap.className = "sidebar-channel-avatar-wrap";
