@@ -611,6 +611,9 @@ export class TwitchChat {
     }
     // a new channel's held messages have nothing to do with the previous one's, clear the queue and the panel/badge it drives
     this._automodQueue = [];
+    // start each channel with the panel closed (it's opened on demand via the AutoMod button)
+    const amPanel = document.getElementById("automod-panel");
+    if (amPanel) amPanel.style.display = "none";
     this._renderAutomodPanel();
     // same for the per-user tracking the card reads. user info (account age etc.) is left cached: it's about the account, not the channel
     this._messageCountByUserId = new Map();
@@ -874,7 +877,35 @@ export class TwitchChat {
 
     this.unlisteners.push(
       await listen("chat-system", (event) => {
-        this.systemLine(event.payload.text);
+        const p = event.payload || {};
+        this.systemLine(p.text);
+        // Twitch refused our message because we're banned / timed out (e.g. the panel was dismissed with
+        // "Check again" but the ban still stands): put the panel back
+        if (p.msg_id === "msg_banned") this._showTimeoutPanel(null);
+        else if (p.msg_id === "msg_timedout") {
+          const m = /(\d+)\s*(?:more\s*)?second/i.exec(p.text || "");
+          this._showTimeoutPanel(m ? Number(m[1]) : null);
+        }
+      })
+    );
+
+    // Moderation actions against us from PubSub (chatrooms-user-v1, pubsub.rs). IRC announces a ban
+    // (CLEARCHAT) but never an unban, so this is what lifts the panel live when a mod unbans /
+    // un-times-out us in this channel.
+    this.unlisteners.push(
+      await listen("pubsub-self-moderation", (event) => {
+        const p = event.payload || {};
+        if (String(p.channel_id) !== String(this.roomId)) return;
+        const panel = document.getElementById("chat-timeout-panel");
+        const locked = panel && panel.style.display !== "none";
+        if (p.action === "unban" || p.action === "untimeout") {
+          if (locked) {
+            this._hideTimeoutPanel();
+            this.systemLine(p.action === "unban"
+              ? "You were unbanned. You can chat again."
+              : "Your timeout was lifted. You can chat again.");
+          }
+        }
       })
     );
 
@@ -1310,18 +1341,23 @@ export class TwitchChat {
     if (!banned) this._timeoutEnds = Date.now() + secs * 1000;
     wrapper.style.display = "none";
     panel.style.display = "";
+    // built once; only the countdown text updates each second (rebuilding would make the button flicker)
+    panel.innerHTML =
+      `<div class="chat-timeout-title">\u23F1 ${banned ? "BANNED" : "TIMEOUT"}</div>` +
+      `<div class="chat-timeout-body"></div>` +
+      // fallback if the live unban notice doesn't arrive: re-enable the box; if Twitch still refuses the
+      // next message (msg_banned / msg_timedout NOTICE) the panel comes straight back
+      `<button type="button" class="chat-timeout-recheck" title="Unbanned? Re-enable the message box">Check again</button>`;
+    panel.querySelector(".chat-timeout-recheck").addEventListener("click", () => this._hideTimeoutPanel());
+    const bodyEl = panel.querySelector(".chat-timeout-body");
     const render = () => {
-      let body;
       if (banned) {
-        body = "You are permanently banned from this chat.";
-      } else {
-        const remain = Math.max(0, Math.ceil((this._timeoutEnds - Date.now()) / 1000));
-        if (remain <= 0) { this._hideTimeoutPanel(); return; }
-        body = `You are currently timed out from Chat, you can chat again in ${this._fmtCountdown(remain)}.`;
+        bodyEl.textContent = "You are permanently banned from this chat.";
+        return;
       }
-      panel.innerHTML =
-        `<div class="chat-timeout-title">\u23F1 ${banned ? "BANNED" : "TIMEOUT"}</div>` +
-        `<div class="chat-timeout-body">${body}</div>`;
+      const remain = Math.max(0, Math.ceil((this._timeoutEnds - Date.now()) / 1000));
+      if (remain <= 0) { this._hideTimeoutPanel(); return; }
+      bodyEl.textContent = `You are currently timed out from Chat, you can chat again in ${this._fmtCountdown(remain)}.`;
     };
     render();
     if (!banned) this._timeoutTicker = setInterval(render, 1000);

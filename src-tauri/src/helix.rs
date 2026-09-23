@@ -390,6 +390,85 @@ pub async fn get_vod_chat(
     response.text().await.map_err(|e| e.to_string())
 }
 
+// ---- VOD chat heatmap ----
+// Samples VOD chat activity at many positions for the seek-bar heatmap. For each requested offset,
+// fetches ONE page of VOD chat starting there (same GQL query as get_vod_chat, first-page form) and
+// returns only compact stats: how many comments the page had and the time span they cover. The frontend
+// turns that into messages/second per sample. Parsing happens here so the webview never receives the
+// full comment payloads (a couple hundred pages of them). Fetches run concurrently, capped at
+// HEATMAP_CONCURRENCY to stay polite to Twitch. Per-sample failures are reported, not fatal.
+const HEATMAP_CONCURRENCY: usize = 6;
+
+async fn vod_chat_page_stats(
+    client: &reqwest::Client,
+    video_id: &str,
+    offset_seconds: f64,
+) -> Result<(usize, f64, f64), String> {
+    const GQL_URL: &str = "https://gql.twitch.tv/gql";
+    const GQL_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+    const QUERY_HASH: &str =
+        "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a";
+    let body = serde_json::json!([{
+        "operationName": "VideoCommentsByOffsetOrCursor",
+        "variables": { "videoID": video_id, "contentOffsetSeconds": offset_seconds as i64 },
+        "extensions": { "persistedQuery": { "version": 1, "sha256Hash": QUERY_HASH } }
+    }]);
+    let resp = client
+        .post(GQL_URL)
+        .header("Client-ID", GQL_CLIENT_ID)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("GQL request failed: {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let edges = json
+        .pointer("/0/data/video/comments/edges")
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let offsets: Vec<f64> = edges
+        .iter()
+        .filter_map(|e| e.pointer("/node/contentOffsetSeconds").and_then(|v| v.as_f64()))
+        .collect();
+    let first = offsets.iter().cloned().fold(f64::INFINITY, f64::min);
+    let last = offsets.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    if offsets.is_empty() {
+        Ok((0, offset_seconds, offset_seconds))
+    } else {
+        Ok((offsets.len(), first, last))
+    }
+}
+
+#[tauri::command]
+pub async fn get_vod_chat_density(
+    video_id: String,
+    offsets: Vec<f64>,
+) -> Result<Vec<serde_json::Value>, String> {
+    use futures_util::stream::{self, StreamExt};
+    let client = reqwest::Client::new();
+    let results: Vec<(f64, Result<(usize, f64, f64), String>)> = stream::iter(offsets.into_iter().map(|off| {
+        let client = client.clone();
+        let vid = video_id.clone();
+        async move { (off, vod_chat_page_stats(&client, &vid, off).await) }
+    }))
+    .buffer_unordered(HEATMAP_CONCURRENCY)
+    .collect()
+    .await;
+    Ok(results
+        .into_iter()
+        .map(|(off, r)| match r {
+            Ok((count, first, last)) => serde_json::json!({
+                "offset": off, "count": count, "first": first, "last": last
+            }),
+            Err(_) => serde_json::json!({ "offset": off, "error": true }),
+        })
+        .collect())
+}
+
 // how many live streams to sample when approximating per-category viewer counts (see
 // get_category_viewer_counts). larger = more accurate for lower-ranked categories at the cost of more
 // Helix requests (paged at 100) and a slower Browse load; 1000 covers every category visible before "Show more"

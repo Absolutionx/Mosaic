@@ -56,6 +56,10 @@ pub struct ChatMessageEvent {
 #[derive(Serialize, Clone)]
 pub struct ChatSystemEvent {
     pub text: String,
+    // the IRC NOTICE's msg-id tag when there is one (e.g. "msg_banned" / "msg_timedout", sent when a
+    // banned or timed-out user tries to chat), so the frontend can react to it, not just print the text
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub msg_id: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -167,7 +171,7 @@ pub async fn run_chat_client(
         let _ = app.emit("chat-status", ChatStatusEvent { status: status.into() });
     };
     let emit_system = |text: String| {
-        let _ = app.emit("chat-system", ChatSystemEvent { text });
+        let _ = app.emit("chat-system", ChatSystemEvent { text, msg_id: None });
     };
 
     // Twitch logins are only [a-z0-9_]. Filter to exactly that so nothing else (a CR/LF or space from the
@@ -559,7 +563,10 @@ async fn handle_irc_line<S>(
         }
         "NOTICE" => {
             if !trailing.is_empty() {
-                let _ = app.emit("chat-system", ChatSystemEvent { text: trailing.to_string() });
+                let _ = app.emit("chat-system", ChatSystemEvent {
+                    text: trailing.to_string(),
+                    msg_id: tags.get("msg-id").cloned().filter(|s| !s.is_empty()),
+                });
             }
         }
         "CLEARCHAT" => {

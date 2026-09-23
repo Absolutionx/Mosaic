@@ -1296,6 +1296,41 @@ header #login-btn.logged-in { border-radius: 7px; }
   inset: 0;
   pointer-events: none;
 }
+/* VOD chat heatmap (vod-heatmap.js / renderChatHeatmap): a soft area chart of chat activity just above
+   the seek bar, spikes marked with dots. It's a child of the seek track, so clicking it seeks and
+   hovering shows the time preview (labelled "Chat spike" near a peak). Fades in once data arrives. */
+.seek-bar-heatmap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease;
+}
+.seek-bar-heatmap.has-data { opacity: 1; pointer-events: auto; }
+.seek-bar-heatmap svg { display: block; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.seek-heat-area { fill: var(--m-accent, #9147ff); fill-opacity: 0.28; }
+.seek-heat-line {
+  fill: none;
+  stroke: var(--m-accent, #9147ff);
+  stroke-opacity: 0.85;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+.seek-heat-peak {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  margin-bottom: -3px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--m-accent, #9147ff), 0 0 8px rgba(145, 71, 255, 0.8);
+  pointer-events: none;
+}
 .seek-bar-muted-segment {
   position: absolute;
   top: 0;
@@ -1876,6 +1911,8 @@ header #login-btn.logged-in { border-radius: 7px; }
   scrollbar-width: thin;
   scrollbar-color: var(--m-raised, #232b36) transparent;
 }
+/* safety net: a panel with nothing in it never draws (it would show as a thin empty bar) */
+.automod-panel:empty { display: none !important; }
 .automod-panel::-webkit-scrollbar { width: 8px; }
 .automod-panel::-webkit-scrollbar-track { background: transparent; }
 .automod-panel::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
@@ -3360,31 +3397,26 @@ body.kick-mode .sidebar-channel-name {
    Same position:fixed-on-body, anchored-to-a-clicked-element
    pattern as .emote-autocomplete/.link-preview-popup/.chat-context-
    menu elsewhere in this file. */
+/* User card (click a username in chat). Themed with the app tokens: surface card, neutral themed
+   buttons, tinted red Ban (same treatment as AutoMod's Deny), slim themed scrollbars. Layout notes:
+   the WHOLE card is capped at 70vh; the header is pinned (flex-shrink:0) and doubles as the drag
+   handle (_makeUserCardDraggable in chat.js); .user-card-body below is the part that scrolls. */
 .user-card {
   position: fixed;
-  width: 260px;
-  background: #18181b;
-  border: 1px solid #3a3a3d;
-  border-radius: 8px;
+  width: 270px;
+  background: var(--m-surface, #161b22);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 12px;
   padding: 12px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.55);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
   z-index: 12000; /* above everything incl. MultiView overlay (11000) */
-  /* Caps the WHOLE card (header + scrollable body together) to
-     70% of the viewport height. The body below is the part that
-     actually scrolls; max-height/overflow here used to be on this
-     same element covering everything including the header, which
-     conflated "pin the header in place" with "cap how tall the
-     content can get" into a single rule doing both jobs at once.
-     Splitting them (header pinned via flex-shrink:0 below, body
-     scrolling on its own) makes each piece responsible for only
-     the one thing it needs to do, which is more robust than
-     relying on one rule to do both. */
+  color: var(--m-text, #e7ebf2);
   max-height: 70vh;
   display: flex;
   flex-direction: column;
 }
 .user-card-loading {
-  color: #adadb8;
+  color: var(--m-muted, #9aa5b4);
   font-size: 13px;
   padding: 8px 2px;
 }
@@ -3392,24 +3424,13 @@ body.kick-mode .sidebar-channel-name {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
-  /* Never shrinks or scrolls away, regardless of how tall the
-     scrollable body below ends up - the close button (and the
-     drag handle this whole header doubles as) must always stay
-     reachable no matter how far the body is scrolled. */
-  flex-shrink: 0;
-  /* Drag handle - see _makeUserCardDraggable in chat.js, which
-     listens for mousedown anywhere inside the card but only
-     starts a drag if it lands within .user-card-header. */
-  cursor: grab;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--m-border-soft, #212832);
+  flex-shrink: 0; /* never scrolls away: the close button + drag handle must stay reachable */
+  cursor: grab;   /* drag handle, see _makeUserCardDraggable in chat.js */
 }
-/* Added by _makeUserCardDraggable for the duration of an active
-   drag. Switches the cursor to "grabbing" (rather than leaving it
-   as "grab", which would look like the drag isn't actually
-   registering) and disables text selection - without this,
-   dragging quickly could select the name/avatar area's text the
-   same way dragging over any other text does, which looks broken
-   even though the position update itself still works fine. */
+/* during an active drag: "grabbing" cursor, and no accidental text selection */
 .user-card.dragging,
 .user-card.dragging .user-card-header {
   cursor: grabbing;
@@ -3420,62 +3441,50 @@ body.kick-mode .sidebar-channel-name {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   margin-left: auto;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: 7px;
   background: transparent;
-  color: #adadb8;
-  /* Overrides the "grab" cursor set on .user-card-header, which
-     this button sits inside - it's a normal click target, not
-     part of the drag surface (chat.js stops its mousedown from
-     reaching the header's own drag-start listener). */
-  cursor: pointer;
+  color: var(--m-muted, #9aa5b4);
+  cursor: pointer; /* a click target, not part of the header's drag surface */
 }
 .user-card-close-btn:hover {
-  background: #3a3a3d;
-  color: #efeff1;
+  background: var(--m-surface-2, #1c222c);
+  color: var(--m-text, #e7ebf2);
 }
-/* The loading-state close button sits directly in the card (there
-   is no flex header yet at that point, just the loading text), so
-   it's pinned via absolute positioning relative to the card
-   instead of flex layout. */
+/* loading state has no header yet, so its close button is pinned to the card corner */
 .user-card-loading-close {
   position: absolute;
   top: 10px;
   right: 10px;
 }
-/* The actual scrollable region - everything except the header
-   (badges, account-created line, mod actions, stats, message
-   history). Paired with .user-card's flex-direction:column and
-   this rule's flex:1, this element grows to fill whatever space
-   is left under the fixed-height header, then clips/scrolls its
-   own content once that space runs out - the header never moves
-   and is never part of what scrolls.
-   min-height:0 mirrors the same fix already used for #chat-pane
-   .chat-body elsewhere in this file: a flex child's default
-   min-height is "auto," which lets it grow to fit its content and
-   ignore overflow/flex-shrinking rules - exactly the "expands
-   infinitely instead of scrolling" failure mode this is fixing.
-   Setting it to 0 lets flex's own shrinking (and this element's
-   own overflow-y) actually take effect instead of being
-   overridden by the content's natural size. */
+/* the scrollable region (everything below the header). min-height:0 lets it actually shrink and
+   scroll inside the capped card instead of growing to fit its content */
 .user-card-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--accent-dark) #18181b;
+  scrollbar-color: var(--m-raised, #232b36) transparent;
 }
+.user-card-body::-webkit-scrollbar,
+.user-card-history::-webkit-scrollbar { width: 7px; }
+.user-card-body::-webkit-scrollbar-track,
+.user-card-history::-webkit-scrollbar-track { background: transparent; }
+.user-card-body::-webkit-scrollbar-thumb,
+.user-card-history::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.user-card-body::-webkit-scrollbar-thumb:hover,
+.user-card-history::-webkit-scrollbar-thumb:hover { background: var(--m-border, #29313d); }
 .user-card-avatar {
   width: 44px;
   height: 44px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
-  background: #2c2c30;
+  background: var(--m-surface-2, #1c222c);
 }
 .user-card-name-block {
   min-width: 0;
@@ -3483,14 +3492,14 @@ body.kick-mode .sidebar-channel-name {
 .user-card-name {
   font-size: 15px;
   font-weight: 700;
-  color: #efeff1;
+  color: var(--m-text, #e7ebf2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .user-card-login {
   font-size: 12px;
-  color: #adadb8;
+  color: var(--m-muted, #9aa5b4);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3500,27 +3509,31 @@ body.kick-mode .sidebar-channel-name {
 }
 .user-card-created {
   font-size: 12px;
-  color: #adadb8;
+  color: var(--m-muted, #9aa5b4);
   margin-bottom: 10px;
 }
 .user-card-mod-actions {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  gap: 5px;
   margin-bottom: 8px;
 }
+/* timeout presets: neutral themed buttons (no purple fill on hover) */
 .user-card-timeout-preset {
-  background: #2c2c30;
-  border: 1px solid #3a3a3d;
-  color: #efeff1;
-  border-radius: 4px;
-  padding: 5px 0;
-  font-size: 11px;
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  color: var(--m-text, #e7ebf2);
+  border-radius: 7px;
+  padding: 6px 0;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
   cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
 }
 .user-card-timeout-preset:hover:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--m-raised, #232b36);
+  border-color: var(--m-muted, #9aa5b4);
 }
 .user-card-timeout-preset:disabled {
   opacity: 0.35;
@@ -3533,26 +3546,33 @@ body.kick-mode .sidebar-channel-name {
 }
 .user-card-ban-row button {
   flex: 1;
-  border: none;
-  border-radius: 4px;
+  border-radius: 7px;
   padding: 7px 0;
+  font-family: inherit;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
 .user-card-delete-btn {
-  background: #2c2c30;
-  color: #efeff1;
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  color: var(--m-text, #e7ebf2);
 }
 .user-card-delete-btn:hover:not(:disabled) {
-  background: #3a3a3d;
+  background: var(--m-raised, #232b36);
+  border-color: var(--m-muted, #9aa5b4);
 }
+/* Ban: tinted red (same treatment as AutoMod's Deny) instead of a solid dark red slab */
 .user-card-ban-btn {
-  background: #a33333;
-  color: white;
+  background: rgba(235, 87, 87, 0.12);
+  border: 1px solid rgba(235, 87, 87, 0.40);
+  color: #ff8a8a;
 }
 .user-card-ban-btn:hover:not(:disabled) {
-  background: #a33333;
+  background: rgba(235, 87, 87, 0.22);
+  border-color: rgba(235, 87, 87, 0.70);
+  color: #ffb0b0;
 }
 .user-card-ban-row button:disabled {
   opacity: 0.4;
@@ -3561,53 +3581,49 @@ body.kick-mode .sidebar-channel-name {
 .user-card-stats {
   display: flex;
   gap: 8px;
-  border-top: 1px solid #2c2c30;
-  padding-top: 8px;
-  margin-bottom: 6px;
+  border-top: 1px solid var(--m-border-soft, #212832);
+  padding-top: 10px;
+  margin-bottom: 8px;
 }
 .user-card-stat {
   text-align: center;
   flex: 1;
 }
 .user-card-stat-value {
-  font-size: 16px;
-  font-weight: 700;
-  color: #efeff1;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--m-text, #e7ebf2);
 }
 .user-card-stat-label {
   font-size: 10px;
-  color: #adadb8;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--m-muted, #9aa5b4);
   text-transform: uppercase;
 }
+/* recent messages: scrolls on its own after ~5 rows (a long message wraps, so it's approximate) */
 .user-card-history {
-  border-top: 1px solid #2c2c30;
-  padding-top: 6px;
+  border-top: 1px solid var(--m-border-soft, #212832);
+  padding-top: 8px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  /* Independently scrollable once it exceeds ~5 single-line rows,
-     rather than the surrounding card/body growing to fit all
-     (up to USER_CARD_HISTORY_LIMIT, currently 20) entries. Sized
-     in px rather than row-count: row height isn't fixed (a long
-     message wraps via word-break on .user-card-history-text below,
-     so some rows take more vertical space than others), so this is
-     calibrated to "about 5 rows of typical, non-wrapping length"
-     rather than an exact guarantee - matches how Twitch's own card
-     handles the same list. */
-  max-height: 112px;
+  gap: 4px;
+  max-height: 120px;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--accent-dark) #18181b;
+  scrollbar-color: var(--m-raised, #232b36) transparent;
 }
 .user-card-history-row {
   font-size: 12px;
-  color: #d1d1d6;
+  line-height: 1.4;
+  color: var(--m-text, #e7ebf2);
   display: flex;
   gap: 6px;
 }
 .user-card-history-time {
-  color: #6d6d72;
+  color: var(--m-faint, #697386);
   flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
 }
 .user-card-history-text {
   word-break: break-word;
@@ -4200,8 +4216,7 @@ body.kick-mode .back-to-stream-btn,
 body.kick-mode .deps-banner-install-btn,
 body.kick-mode .channel-info-follow-btn,
 body.kick-mode .browse-pill,
-body.kick-mode .home-drops-badge,
-body.kick-mode .user-card-timeout-preset:hover:not(:disabled) {
+body.kick-mode .home-drops-badge {
   color: var(--accent-fg);
 }
 
@@ -5047,17 +5062,18 @@ body.multiview-active .deps-banner {
 .track-id-panel {
   position: fixed;
   display: none;
-  min-width: 200px;
+  min-width: 220px;
   max-width: 300px;
-  background: #18181b;
-  border: 1px solid #3a3a3d;
-  border-radius: 6px;
+  background: var(--m-surface, #161b22);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 10px;
   padding: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   z-index: 1000;
-  color: #efeff1;
+  color: var(--m-text, #e7ebf2);
   font-size: 13px;
 }
+.track-id-panel.is-history { width: 310px; max-width: 310px; padding: 10px; }
 .track-id-status {
   display: flex;
   align-items: center;
@@ -5066,15 +5082,15 @@ body.multiview-active .deps-banner {
 }
 .track-id-sub {
   margin-top: 4px;
-  color: #adadb8;
+  color: var(--m-muted, #9aa5b4);
   font-size: 12px;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 .track-id-spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid #3a3a3d;
-  border-top-color: #bf94ff;
+  border: 2px solid var(--m-border, #29313d);
+  border-top-color: var(--m-accent, #9147ff);
   border-radius: 50%;
   animation: track-id-spin 0.7s linear infinite;
   flex: 0 0 auto;
@@ -5086,15 +5102,16 @@ body.multiview-active .deps-banner {
 }
 .track-id-result {
   display: flex;
-  gap: 10px;
+  gap: 11px;
   align-items: center;
 }
 .track-id-cover {
-  width: 48px;
-  height: 48px;
-  border-radius: 4px;
+  width: 52px;
+  height: 52px;
+  border-radius: 7px;
   object-fit: cover;
   flex: 0 0 auto;
+  background: var(--m-surface-2, #1c222c);
 }
 .track-id-meta {
   min-width: 0;
@@ -5106,7 +5123,7 @@ body.multiview-active .deps-banner {
   text-overflow: ellipsis;
 }
 .track-id-artist {
-  color: #adadb8;
+  color: var(--m-muted, #9aa5b4);
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
@@ -5116,13 +5133,114 @@ body.multiview-active .deps-banner {
   margin-top: 6px;
   background: none;
   border: none;
-  color: #bf94ff;
+  color: var(--m-accent, #9147ff);
   font-size: 12px;
   padding: 0;
   cursor: pointer;
+  font-family: inherit;
 }
 .track-id-link:hover {
   text-decoration: underline;
+}
+
+/* footer ("History (N)" / "Back to history") + small text buttons */
+.track-id-footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--m-border-soft, #212832);
+  display: flex;
+  justify-content: flex-end;
+}
+.track-id-footer-btn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-muted, #9aa5b4);
+  cursor: pointer;
+}
+.track-id-footer-btn:hover { color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); }
+
+/* history view */
+.track-id-hist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--m-border-soft, #212832);
+}
+.track-id-hist-heading { font-weight: 700; font-size: 13px; }
+.track-id-hist-clear.armed { color: #ff8a8a; }
+.track-id-hist-clear.armed:hover { background: rgba(235, 87, 87, 0.14); color: #ffb0b0; }
+.track-id-hist-list {
+  max-height: 290px;
+  overflow-y: auto;
+  margin: 0 -4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--m-raised, #232b36) transparent;
+}
+.track-id-hist-list::-webkit-scrollbar { width: 8px; }
+.track-id-hist-list::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.track-id-hist-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.track-id-hist-item:hover { background: var(--m-surface-2, #1c222c); }
+.track-id-hist-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.track-id-hist-cover-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--m-surface-2, #1c222c);
+  color: var(--m-muted, #9aa5b4);
+  font-size: 16px;
+}
+.track-id-hist-meta { flex: 1; min-width: 0; }
+.track-id-hist-title,
+.track-id-hist-artist,
+.track-id-hist-when { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-id-hist-title { font-weight: 700; font-size: 12.5px; }
+.track-id-hist-artist { color: var(--m-muted, #9aa5b4); font-size: 12px; }
+.track-id-hist-when { color: var(--m-faint, #697386); font-size: 11px; margin-top: 1px; }
+.track-id-hist-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--m-muted, #9aa5b4);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s ease, background .12s ease;
+}
+.track-id-hist-item:hover .track-id-hist-remove,
+.track-id-hist-remove:focus-visible { opacity: 1; }
+.track-id-hist-remove:hover { background: rgba(235, 87, 87, 0.16); color: #ff8a8a; }
+.track-id-empty {
+  padding: 14px 6px;
+  color: var(--m-muted, #9aa5b4);
+  font-size: 12.5px;
+  text-align: center;
+  line-height: 1.45;
 }
 
 /* Chat filter button (chat header) + settings modal */
@@ -6389,8 +6507,8 @@ button:active { transform: translateY(1px); }
   color: var(--m-text, #e7ebf2);
   background: var(--m-bg, #0e1116);
   border: 1px solid var(--m-border, #29313d);
-  border-radius: 6px;
-  padding: 6px 8px;
+  border-radius: 8px;
+  padding: 7px 9px;
 }
 .user-card-note-input:focus { outline: none; border-color: var(--m-muted, #9aa5b4); }
 .chat-note-dot {
@@ -6939,6 +7057,13 @@ button:active { transform: translateY(1px); }
   font-size: 14px; font-weight: 800; letter-spacing: 0.06em; color: var(--m-text, #e7ebf2); margin-bottom: 7px;
 }
 .chat-timeout-body { font-size: 12.5px; color: var(--m-muted, #9aa5b4); line-height: 1.45; }
+/* "Check again": fallback to re-enable the box if the live unban notice doesn't come through */
+.chat-timeout-recheck {
+  margin-top: 10px; font-family: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  padding: 5px 14px; border-radius: 7px; color: var(--m-text, #e7ebf2);
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.chat-timeout-recheck:hover { background: var(--m-raised, #232b36); border-color: var(--m-accent, #9147ff); }
 
 /* Whispers header button + unread badge */
 .header-whispers-btn {

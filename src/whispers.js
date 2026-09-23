@@ -327,17 +327,18 @@ async function renderThread(modal) {
       acBox.appendChild(row);
     });
   }
-  input.addEventListener("input", refreshAc);
+  // Suggestions open only on purpose, same rule as the main chat box: Tab, or a word typed with a
+  // leading ":" (e.g. ":kekw"). Ordinary typing never opens them (it used to, on nearly every word, since
+  // most short words appear inside some emote name). Once open, typing keeps refining the list
+  input.addEventListener("input", () => {
+    if (acVisible() || /^:\S{2,}$/.test(currentWord())) refreshAc();
+  });
   input.addEventListener("keydown", (e) => {
     if (!acVisible()) {
-      // Tab with a typed word completes the top match even without the dropdown open
+      // Tab opens suggestions for the word being typed (like the main chat box); Tab/Enter then inserts
       if (e.key === "Tab") {
-        const all = allEmotes();
-        const q = currentWord().replace(/^:/, "").toLowerCase();
-        if (q.length >= 2) {
-          const hit = all.find((x) => x.name.toLowerCase().startsWith(q)) || all.find((x) => x.name.toLowerCase().includes(q));
-          if (hit) { e.preventDefault(); insertEmote(hit.name); }
-        }
+        const q = currentWord().replace(/^:/, "");
+        if (q.length >= 2) { e.preventDefault(); refreshAc(); }
       }
       return;
     }

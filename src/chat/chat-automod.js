@@ -130,6 +130,12 @@ export const chatAutomodMixin = {
     const panel = document.getElementById("automod-panel");
     if (!panel) return;
     panel.innerHTML = "";
+    // not a mod here (e.g. opened on a channel you moderate, then switched to one you don't): its toggle
+    // is hidden, so the panel must close too, otherwise it lingers as an empty bar under the header
+    if (!this.isMod) {
+      panel.style.display = "none";
+      return;
+    }
 
     if (this._automodQueue.length === 0) {
       if (this.isMod) {

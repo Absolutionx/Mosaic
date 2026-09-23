@@ -74,7 +74,7 @@ pub async fn stop_kick_chat(state: tauri::State<'_, KickChatState>) -> Result<()
 }
 
 fn system_line(app: &AppHandle, text: impl Into<String>) {
-    let _ = app.emit("chat-system", ChatSystemEvent { text: text.into() });
+    let _ = app.emit("chat-system", ChatSystemEvent { text: text.into(), msg_id: None });
 }
 
 async fn run(

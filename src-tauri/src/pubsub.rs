@@ -112,6 +112,18 @@ impl PubSubService {
             .await
             .map_err(|e| e.to_string())?;
 
+        // Moderation actions taken against the logged-in user (the topic Twitch's own site uses to lift a
+        // "you're banned / timed out" state live). IRC announces bans (CLEARCHAT) but never unbans, so
+        // without this an unbanned user stayed locked out until they reloaded. Undocumented topic, so it
+        // gets its OWN LISTEN: if Twitch ever rejects it, that error can't take the channel-points topics
+        // above down with it.
+        let listen_self_mod = json!({
+            "type": "LISTEN",
+            "nonce": uuid::Uuid::new_v4().to_string(),
+            "data": { "topics": [format!("chatrooms-user-v1.{user_id}")], "auth_token": token }
+        });
+        let _ = write.send(Message::Text(listen_self_mod.to_string())).await;
+
         // PubSub wants a PING within every 5 min; we send every 4
         let mut ping = tokio::time::interval(Duration::from_secs(240));
         ping.tick().await; // consume the immediate tick
@@ -166,6 +178,22 @@ impl PubSubService {
                             "reward_cost": reward["cost"].as_i64().unwrap_or(0),
                             "user_input": r["user_input"].as_str().unwrap_or(""),
                         }));
+                    }
+                } else if topic.starts_with("chatrooms-user-v1") {
+                    // e.g. {"type":"user_moderation_action","data":{"action":"unban","channel_id":"...",...}}
+                    // read defensively (undocumented): accept the action under either key it's been seen with
+                    if inner["type"].as_str() == Some("user_moderation_action") {
+                        let d = &inner["data"];
+                        let action = d["action"].as_str()
+                            .or_else(|| d["moderation_action"].as_str())
+                            .unwrap_or("");
+                        let channel_id = d["channel_id"].as_str().unwrap_or("");
+                        if !action.is_empty() && !channel_id.is_empty() {
+                            let _ = app.emit("pubsub-self-moderation", json!({
+                                "action": action,
+                                "channel_id": channel_id,
+                            }));
+                        }
                     }
                 } else if topic.starts_with("community-points-user-v1") {
                     // points-earned / claimed etc. carry the new balance for a channel

@@ -5,22 +5,56 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { relativeDate } from "./format.js";
 
 // how long to listen; Shazam matches on ~5s+, a little longer rides out talking/noise
 const CAPTURE_SECONDS = 8;
 const OUT_RATE = 16000;
 
+// identification history (localStorage): most recent first, capped. Identifying the same song again
+// within DEDUP_MS just refreshes that entry instead of adding a duplicate
+const HISTORY_KEY = "trackIdHistory";
+const HISTORY_MAX = 50;
+const DEDUP_MS = 10 * 60 * 1000;
+
+function loadHistory() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    return Array.isArray(arr) ? arr.filter((e) => e && e.title) : [];
+  } catch { return []; }
+}
+function saveHistory(list) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_MAX))); } catch { /* quota */ }
+}
+
 export class TrackId {
-  constructor(videoEl) {
+  // getContext() -> { channel, vod }: what was playing, recorded with each history entry
+  constructor(videoEl, { getContext } = {}) {
     this.videoEl = videoEl;
+    this.getContext = getContext || (() => ({ channel: "", vod: false }));
     this.btn = document.getElementById("track-id-btn");
     this.panel = document.getElementById("track-id-panel");
     this.busy = false;
+    this._clearArmed = false;
 
-    if (this.btn) this.btn.addEventListener("click", () => this.identify());
+    if (this.btn) {
+      this.btn.addEventListener("click", () => this.identify());
+      // right-click: jump straight to history without listening
+      this.btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        if (!this.busy) this.showHistory();
+      });
+      if (this.btn.title && !this.btn.title.includes("right-click")) {
+        this.btn.title += " (right-click for history)";
+      }
+    }
+    // close on outside click. uses the event's composed path (fixed when the click is dispatched), not
+    // panel.contains(target): moving between views re-renders the panel, detaching the clicked button
+    // before this runs, which would otherwise read as an "outside" click and close the panel
     document.addEventListener("click", (e) => {
       if (!this.panel || this.panel.style.display === "none") return;
-      if (this.panel.contains(e.target) || this.btn?.contains(e.target)) return;
+      const path = e.composedPath ? e.composedPath() : [];
+      if (path.includes(this.panel) || (this.btn && path.includes(this.btn))) return;
       this._hide();
     });
     document.addEventListener("keydown", (e) => {
@@ -44,14 +78,20 @@ export class TrackId {
       const audioB64 = await this._capturePcmBase64(CAPTURE_SECONDS);
       this._render(`<div class="track-id-status"><span class="track-id-spinner"></span>Identifying&hellip;</div>`);
       const match = await invoke("identify_song", { audioB64 });
-      if (match && match.title) this._renderMatch(match);
-      else
+      if (match && match.title) {
+        this._addToHistory(match);
+        this._renderMatch(match);
+      } else {
         this._render(
-          `<div class="track-id-status">No match found.</div><div class="track-id-sub">Try again during a clearer stretch of the song.</div>`
+          `<div class="track-id-status">No match found.</div><div class="track-id-sub">Try again during a clearer stretch of the song.</div>` +
+          this._historyFooter()
         );
+        this._wireFooter();
+      }
     } catch (err) {
       const msg = typeof err === "string" ? err : err?.message || "Something went wrong.";
-      this._render(`<div class="track-id-status">Couldn't identify.</div><div class="track-id-sub">${escapeHtml(msg)}</div>`);
+      this._render(`<div class="track-id-status">Couldn't identify.</div><div class="track-id-sub">${escapeHtml(msg)}</div>` + this._historyFooter());
+      this._wireFooter();
     } finally {
       this.busy = false;
       this.btn?.classList.remove("loading");
@@ -113,7 +153,109 @@ export class TrackId {
     return pcmToBase64(pcm);
   }
 
-  _renderMatch(m) {
+  // ---- history ----
+  _addToHistory(m) {
+    const ctx = (() => { try { return this.getContext() || {}; } catch { return {}; } })();
+    const entry = {
+      title: m.title || "",
+      artist: m.artist || "",
+      album_art: m.album_art || "",
+      providers: Array.isArray(m.providers) ? m.providers.slice(0, 4).map((p) => ({ name: p.name, url: p.url })) : [],
+      song_link: m.song_link || "",
+      shazam_url: m.shazam_url || "",
+      channel: ctx.channel || "",
+      vod: !!ctx.vod,
+      at: new Date().toISOString(),
+    };
+    const list = loadHistory();
+    const top = list[0];
+    if (top && top.title === entry.title && top.artist === entry.artist &&
+        Date.now() - new Date(top.at).getTime() < DEDUP_MS) {
+      list[0] = entry; // same song again within a few minutes: refresh it, don't duplicate
+    } else {
+      list.unshift(entry);
+    }
+    saveHistory(list);
+  }
+
+  _historyFooter() {
+    const n = loadHistory().length;
+    if (!n) return "";
+    return `<div class="track-id-footer"><button type="button" class="track-id-footer-btn" data-act="history">History (${n})</button></div>`;
+  }
+
+  _wireFooter() {
+    this.panel?.querySelector('[data-act="history"]')?.addEventListener("click", () => this.showHistory());
+  }
+
+  showHistory() {
+    const list = loadHistory();
+    this._clearArmed = false;
+    let body;
+    if (!list.length) {
+      body = `<div class="track-id-empty">No songs identified yet. Click the Track ID button while music is playing.</div>`;
+    } else {
+      body = `<div class="track-id-hist-list">` + list.map((e, i) => {
+        const cover = e.album_art
+          ? `<img class="track-id-hist-cover" src="${escapeAttr(e.album_art)}" alt="" />`
+          : `<div class="track-id-hist-cover track-id-hist-cover-empty">&#9835;</div>`;
+        const when = relativeDate(e.at);
+        const where = e.channel ? `${escapeHtml(e.channel)}${e.vod ? " (VOD)" : ""} · ` : "";
+        return (
+          `<div class="track-id-hist-item" data-i="${i}" role="button" tabindex="0" title="Show links">` +
+            cover +
+            `<div class="track-id-hist-meta">` +
+              `<div class="track-id-hist-title">${escapeHtml(e.title)}</div>` +
+              `<div class="track-id-hist-artist">${escapeHtml(e.artist)}</div>` +
+              `<div class="track-id-hist-when">${where}${escapeHtml(when)}</div>` +
+            `</div>` +
+            `<button type="button" class="track-id-hist-remove" data-i="${i}" title="Remove from history" aria-label="Remove from history">` +
+              `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>` +
+            `</button>` +
+          `</div>`
+        );
+      }).join("") + `</div>`;
+    }
+    this._render(
+      `<div class="track-id-hist-head">` +
+        `<span class="track-id-hist-heading">Recently identified</span>` +
+        (list.length ? `<button type="button" class="track-id-footer-btn track-id-hist-clear" data-act="clear">Clear</button>` : "") +
+      `</div>` + body,
+      "history"
+    );
+    const p = this.panel;
+    p.querySelectorAll(".track-id-hist-item").forEach((el) => {
+      const open = () => {
+        const e = loadHistory()[Number(el.getAttribute("data-i"))];
+        if (e) this._renderMatch(e, { fromHistory: true });
+      };
+      el.addEventListener("click", open);
+      el.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
+    });
+    p.querySelectorAll(".track-id-hist-remove").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const next = loadHistory();
+        next.splice(Number(btn.getAttribute("data-i")), 1);
+        saveHistory(next);
+        this.showHistory();
+      });
+    });
+    // two-step clear so one stray click can't wipe the whole history
+    p.querySelector('[data-act="clear"]')?.addEventListener("click", (ev) => {
+      const btn = ev.currentTarget;
+      if (!this._clearArmed) {
+        this._clearArmed = true;
+        btn.textContent = "Clear all?";
+        btn.classList.add("armed");
+        return;
+      }
+      saveHistory([]);
+      this.showHistory();
+    });
+  }
+
+  _renderMatch(m, { fromHistory = false } = {}) {
     const cover = m.album_art
       ? `<img class="track-id-cover" src="${escapeAttr(m.album_art)}" alt="" />`
       : "";
@@ -140,7 +282,11 @@ export class TrackId {
           ${links}
         </div>
       </div>
+      ${fromHistory
+        ? `<div class="track-id-footer"><button type="button" class="track-id-footer-btn" data-act="history">&larr; Back to history</button></div>`
+        : this._historyFooter()}
     `);
+    this._wireFooter();
     this.panel.querySelectorAll(".track-id-link").forEach((btn) => {
       btn.addEventListener("click", () => {
         const u = btn.getAttribute("data-url");
@@ -149,8 +295,9 @@ export class TrackId {
     });
   }
 
-  _render(html) {
+  _render(html, mode = "") {
     if (!this.panel) return;
+    this.panel.classList.toggle("is-history", mode === "history");
     this.panel.innerHTML = html;
     this.panel.style.display = "block";
     this._position();

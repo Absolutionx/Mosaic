@@ -14,6 +14,7 @@ import { initModMenu } from "./mod-menu.js";
 import { initWhispers } from "./whispers.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
+import { startVodHeatmap } from "./vod-heatmap.js";
 import { TwitchAuth } from "./auth.js";
 import { ChannelsSidebar } from "./sidebar.js";
 import { startHypeBadgePolling } from "./hype-badges.js";
@@ -366,7 +367,16 @@ const playbackControls = new PlaybackControls({
   lowLatency: session.lowLatency,
 });
 // Track ID button: identifies the music playing off the same <video> the controls drive
-const trackId = new TrackId(playbackControls.videoEl);
+const trackId = new TrackId(playbackControls.videoEl, {
+  // recorded with each identified song in Track ID's history: the channel (or the VOD's channel)
+  getContext: () => {
+    const ic = String(session.intendedChannel || "");
+    if (ic.startsWith("vod:")) {
+      return { channel: session.vodMeta?.channelName || session.vodMeta?.channelLogin || "", vod: true };
+    }
+    return { channel: ic.replace(/^kick:/, ""), vod: false };
+  },
+});
 // Chat settings gear (in the composer, next to the emote button): a small popup menu that launches
 // the chat-filter and pinned-messages flows, which used to be two separate toolbar buttons. The menu
 // is a fixed-position flyout anchored to the gear, same pattern as the emote picker.
@@ -1119,6 +1129,25 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
 const VOD_RESUME_END_THRESHOLD_SECS = 30;
 
 // saves the current VOD's position (no-op for live). called wherever playback is about to tear down (channel/VOD switch, Stop) and every 15s while watching, so a crash loses at most a few seconds
+// VOD chat heatmap: one load at a time; a new VOD (or stopping) cancels the previous load so a slow
+// one can't paint onto the wrong video. If the VOD's length isn't known yet (e.g. resumed via session
+// restore), wait for the player to report it.
+let _heatmapHandle = null;
+function startChatHeatmap(videoId, totalSeconds) {
+  _heatmapHandle?.cancel();
+  _heatmapHandle = null;
+  const begin = (total) => {
+    if (session.intendedChannel !== `vod:${videoId}`) return; // moved on before the duration arrived
+    _heatmapHandle = startVodHeatmap(videoId, total, (data) =>
+      playbackControls.renderChatHeatmap(data, videoId));
+  };
+  if (totalSeconds > 0) { begin(totalSeconds); return; }
+  const v = playbackControls.videoEl;
+  const onMeta = () => { if (v.duration > 0 && Number.isFinite(v.duration)) begin(v.duration); };
+  if (v.duration > 0 && Number.isFinite(v.duration)) onMeta();
+  else v.addEventListener("loadedmetadata", onMeta, { once: true });
+}
+
 function maybeSaveVodProgress() {
   if (!session.playing || !playbackControls.isVod || !session.intendedChannel?.startsWith("vod:")) return;
   const videoId = session.intendedChannel.slice("vod:".length);
@@ -1457,6 +1486,8 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
     invoke("get_vod_muted_segments", { videoId })
       .then((raw) => playbackControls.renderMutedSegments(JSON.parse(raw), vodTotalSeconds))
       .catch((err) => console.warn("Failed to load muted segments:", err));
+    // chat heatmap on the seek bar (vod-heatmap.js). fire-and-forget like the muted segments
+    startChatHeatmap(videoId, vodTotalSeconds);
   } catch (err) {
     setTheaterMode(false);
     setStatus(`Error: ${err}`);
@@ -1837,6 +1868,7 @@ channelInput.addEventListener("keydown", (e) => {
 // tray-minimized app is quiet and lightweight rather than streaming in the background).
 function stopPlayback({ returnToPage = true, goHome = false } = {}) {
   if (!session.playing) return;
+  _heatmapHandle?.cancel(); // stop sampling a VOD we're leaving
   maybeSaveVodProgress();
   session.intendedChannel = null;
   forgetSession(); // explicit Stop must not be undone by a later reload

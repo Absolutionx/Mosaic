@@ -77,6 +77,9 @@ export class PlaybackControls {
     this.mutedSegmentsContainer = document.getElementById("seek-bar-muted-segments");
     this.seekBarTooltip = document.getElementById("seek-bar-tooltip");
     this.seekBarThumbnail = document.getElementById("seek-bar-thumbnail");
+    this.seekBarHeatmap = document.getElementById("seek-bar-heatmap");
+    // VOD chat heatmap spike positions in seconds, for the hover label (see renderChatHeatmap)
+    this._heatPeaksSec = [];
     this.timeDisplay = document.getElementById("time-display");
     this.liveBtn = document.getElementById("live-btn");
     this.muteBtn = document.getElementById("mute-btn");
@@ -255,6 +258,7 @@ export class PlaybackControls {
       this._disableAutoMode();
       // markers are tied to a VOD's muted_segments: a same-channel restart keeps the same VOD, but a real switch means these belong to the old one. main.js re-fetches; this just hides the stale markers meanwhile
       this.renderMutedSegments([], 0);
+      this.renderChatHeatmap(null);
     }
     this.currentChannel = channel;
     // false for every Twitch stream/VOD; true for a Kick VOD. with isVod=true its live-session clamp branches are unreachable; its only live effect is routing the quality menu to _loadKickQualityMenu
@@ -357,6 +361,7 @@ export class PlaybackControls {
       this._qualitiesPromise = null;
       this._disableAutoMode();
       this.renderMutedSegments([], 0);
+      this.renderChatHeatmap(null);
       this._kickPreferredLevelLabel = null; // new channel, fresh quality choice
     }
     this.currentChannel = channel;
@@ -834,6 +839,7 @@ export class PlaybackControls {
     this.setPauseIcon(false);
     this.seekBarFill.style.width = "0%";
     this.renderMutedSegments([], 0);
+    this.renderChatHeatmap(null);
     this.isVod = false;
     this.vodTotalSeconds = 0;
     this._liveDvr = null;
@@ -1641,6 +1647,36 @@ export class PlaybackControls {
     this.showControls();
   }
 
+  // Draws the VOD chat heatmap above the seek bar: levels 0..1 per evenly spaced sample (null = not
+  // loaded yet, drawn as a gap-free zero), peaks = sample indexes of the biggest chat spikes. Pass null
+  // to clear. videoId guards against a slow load painting onto a different VOD.
+  renderChatHeatmap(data, videoId) {
+    const el = this.seekBarHeatmap;
+    if (!el) return;
+    if (!data || !this.isVod || (videoId && this.currentChannel !== `vod:${videoId}`)) {
+      if (!data) { el.innerHTML = ""; el.classList.remove("has-data"); this._heatPeaksSec = []; }
+      return;
+    }
+    const { levels, peaks, total } = data;
+    const n = levels.length;
+    if (!n) return;
+    const pts = levels.map((v, i) => `${i + 0.5},${(100 - (v || 0) * 100).toFixed(1)}`);
+    const area = `M0,100 L0.5,${pts[0].split(",")[1]} L${pts.join(" L")} L${n},${pts[n - 1].split(",")[1]} L${n},100 Z`;
+    const line = `M${pts.join(" L")}`;
+    const markers = peaks.map((i) => {
+      const left = ((i + 0.5) / n) * 100;
+      const bottom = Math.max(0, Math.min(100, (levels[i] || 0) * 100));
+      return `<span class="seek-heat-peak" style="left:${left}%;bottom:${bottom}%"></span>`;
+    }).join("");
+    el.innerHTML =
+      `<svg viewBox="0 0 ${n} 100" preserveAspectRatio="none" aria-hidden="true">` +
+        `<path class="seek-heat-area" d="${area}"/>` +
+        `<path class="seek-heat-line" d="${line}"/>` +
+      `</svg>${markers}`;
+    el.classList.add("has-data");
+    this._heatPeaksSec = total > 0 ? peaks.map((i) => ((i + 0.5) / n) * total) : [];
+  }
+
   updateSeekTooltip(event) {
     const duration = this.lastKnownDuration;
     if (duration <= 0) {
@@ -1659,9 +1695,10 @@ export class PlaybackControls {
       const muted = this._mutedSegments.some(
         (seg) => absSeconds >= (seg.offset ?? 0) && absSeconds < (seg.offset ?? 0) + (seg.duration ?? 0)
       );
-      this.seekBarTooltip.textContent = muted
-        ? `${this.formatDuration(absSeconds)} (Muted)`
-        : this.formatDuration(absSeconds);
+      // near one of the heatmap's chat spikes (within ~1.5% of the VOD): say so
+      const nearSpike = this._heatPeaksSec.some((p) => Math.abs(p - absSeconds) <= total * 0.015);
+      this.seekBarTooltip.textContent =
+        this.formatDuration(absSeconds) + (muted ? " (Muted)" : "") + (nearSpike ? " · Chat spike" : "");
 
       this._updateSeekThumbnail(absSeconds);
     } else {
