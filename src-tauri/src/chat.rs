@@ -170,7 +170,13 @@ pub async fn run_chat_client(
         let _ = app.emit("chat-system", ChatSystemEvent { text });
     };
 
-    let channel_lower = channel.to_lowercase();
+    // Twitch logins are only [a-z0-9_]. Filter to exactly that so nothing else (a CR/LF or space from the
+    // watch box) can reach the raw JOIN / PRIVMSG lines and be parsed by Twitch as extra IRC commands
+    let channel_lower: String = channel
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
     let mut backoff_secs: u64 = 1;
     let mut first_attempt = true;
 

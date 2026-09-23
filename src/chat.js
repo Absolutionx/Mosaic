@@ -21,6 +21,43 @@ import { looksLikeUrl, USER_CARD_HISTORY_LIMIT } from "./chat/shared.js";
 
 // must match .chat-input's max-height in index.html, duplicated (not read via getComputedStyle) since _autosizeChatInput() needs it every keystroke
 const CHAT_INPUT_MAX_HEIGHT_PX = 120;
+// ASCII-art detection helpers (see _isAsciiArt)
+const ASCII_ART_MIN_GRAPHEMES = 40;
+const ART_SYMBOL_RE = /[\p{So}\p{Sk}]/u;
+let _graphemeSegmenter = null;
+function graphemeSegmenter() {
+  if (!_graphemeSegmenter) _graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  return _graphemeSegmenter;
+}
+
+// Keeps chat art scaled to fit the chat column. One shared ResizeObserver watches each art block's
+// outer box (full chat width): it fits when the block is first laid out (so it works even if the chat
+// was hidden or the line was built off-DOM) and again whenever the column width changes. The inner box
+// is what gets zoomed; `zoom` scales without re-wrapping, so rows stay intact.
+let _artFitObserver = null;
+function fitArt(outer) {
+  const inner = outer._artInner;
+  const avail = outer.clientWidth;
+  if (!inner || !avail || avail === outer._artLastAvail) return;
+  outer._artLastAvail = avail;
+  inner.style.zoom = "1";
+  const natural = inner.offsetWidth;
+  inner.style.zoom = natural > avail ? String(Math.floor((avail / natural) * 1000) / 1000) : "1";
+}
+function observeArtFit(outer, inner) {
+  outer._artInner = inner;
+  if (!_artFitObserver) {
+    _artFitObserver = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        // trimmed/removed lines: stop watching so they can be garbage-collected
+        if (!e.target.isConnected) { _artFitObserver.unobserve(e.target); continue; }
+        fitArt(e.target);
+      }
+    });
+  }
+  _artFitObserver.observe(outer);
+}
+
 export class TwitchChat {
   constructor({ container, statusEl, inputEl, sendBtn, emoteBtn, emotePickerMenu, inputBadge, jumpToLatestBtn, jumpToLatestCount } = {}) {
     this.container = container;
@@ -370,7 +407,10 @@ export class TwitchChat {
     }
 
     if (!this.isLoggedIn) return;
-    const text = this.inputEl.value.trim();
+    // Twitch chat has no multi-line messages: line breaks (e.g. pasted multi-row art) become spaces.
+    // The backend enforces this too (a CR/LF would end the IRC command); doing it here keeps our own
+    // optimistic echo identical to what everyone else receives
+    const text = this.inputEl.value.replace(/\r\n|\r|\n/g, " ").trim();
     if (!text) return;
 
     if (text.startsWith("/")) {
@@ -1930,7 +1970,23 @@ export class TwitchChat {
     const textSpan = document.createElement("span");
     textSpan.className = "chat-message-text" + (isAction ? " chat-action-message" : "");
     if (isAction) textSpan.style.fontStyle = "italic";
-    textSpan.appendChild(this.renderMessageBody(message, emotesTag, stripEmotes));
+    // "ASCII art" (Braille / block / box-drawing pictures). See _isAsciiArt, _asciiArtRows,
+    // _renderAsciiArtRows, _renderAsciiArtFlow and fitArt
+    const isAsciiArt = this._isAsciiArt(message);
+    const artRows = isAsciiArt ? this._asciiArtRows(message) : null;
+    if (artRows) {
+      // normal case: the message is clean rows separated by single spaces. draw them one per line in
+      // Twitch's font stack (so every glyph resolves to the same font Twitch uses) and scale to fit
+      line.classList.add("is-ascii-art-rows");
+      textSpan.appendChild(this._renderAsciiArtRows(artRows));
+    } else if (isAsciiArt) {
+      // fallback for art whose chunks aren't clean rows: Twitch web chat's exact text width + font with
+      // normal wrapping (Chatterino's approach), scaled to fit
+      line.classList.add("is-ascii-art-rows");
+      textSpan.appendChild(this._renderAsciiArtFlow(this.renderMessageBody(message, emotesTag, stripEmotes)));
+    } else {
+      textSpan.appendChild(this.renderMessageBody(message, emotesTag, stripEmotes));
+    }
     line.appendChild(document.createTextNode(" "));
     line.appendChild(textSpan);
 
@@ -2135,6 +2191,65 @@ export class TwitchChat {
   }
 
   // checks Twitch native emotes (by IRC-tag position) first, then 7TV/BTTV (by name), then cheermotes, then plain text
+  // ASCII-art detection, same rule as Chatterino (messages/AsciiArt.cpp): at least 40 grapheme
+  // clusters containing a Unicode "Symbol, other" (So) or "Symbol, modifier" (Sk) code point. That
+  // covers Braille (the vast majority of Twitch art), block elements and box drawing.
+  _isAsciiArt(message) {
+    if (!message || message.length < ASCII_ART_MIN_GRAPHEMES) return false;
+    let n = 0;
+    for (const { segment } of graphemeSegmenter().segment(message)) {
+      if (ART_SYMBOL_RE.test(segment) && ++n >= ASCII_ART_MIN_GRAPHEMES) return true;
+    }
+    return false;
+  }
+
+  // Twitch sends art as ONE line whose rows are separated by single spaces (blank cells inside a row
+  // are U+2800, not spaces). Returns those rows when the chunks really are rows (most the same
+  // length, give or take a couple), else null so the caller falls back to width-based wrapping.
+  _asciiArtRows(message) {
+    // rows are separated by spaces; line breaks count too (older local echoes of pasted art had them)
+    const rows = message.split(/[ \r\n\t]+/).filter(Boolean);
+    if (rows.length < 2) return null;
+    const lens = rows.map((r) => Array.from(r).length).sort((x, y) => x - y);
+    const median = lens[Math.floor(lens.length / 2)];
+    if (median < 6) return null;
+    const close = lens.filter((l) => Math.abs(l - median) <= 2).length;
+    return close / rows.length >= 0.6 ? rows : null;
+  }
+
+  // One row per line, in Twitch's chat font stack at Twitch's size (13px / 20px lines), never wrapped.
+  // No per-character tricks: each glyph resolves to exactly the font Twitch's own chat uses (Braille ->
+  // Windows symbol fallback, block chars -> Arial, etc.), so mixed art keeps Twitch's widths. The block
+  // is then scaled to fit the chat column and re-fit whenever the column's width changes.
+  _renderAsciiArtRows(rows) {
+    const outer = document.createElement("div");
+    outer.className = "chat-art";
+    const inner = document.createElement("div");
+    inner.className = "chat-art-inner";
+    for (const row of rows) {
+      const r = document.createElement("div");
+      r.className = "chat-art-row";
+      r.textContent = row;
+      inner.appendChild(r);
+    }
+    outer.appendChild(inner);
+    observeArtFit(outer, inner);
+    return outer;
+  }
+
+  // Fallback layout: the message body wrapped normally inside a box exactly as wide as Twitch web
+  // chat's text area (300px) in Twitch's font, so it breaks where Twitch breaks it; scaled to fit.
+  _renderAsciiArtFlow(bodyNode) {
+    const outer = document.createElement("div");
+    outer.className = "chat-art";
+    const inner = document.createElement("div");
+    inner.className = "chat-art-inner chat-art-flow";
+    inner.appendChild(bodyNode);
+    outer.appendChild(inner);
+    observeArtFit(outer, inner);
+    return outer;
+  }
+
   renderMessageBody(message, emotesTag = null, stripEmotes = false) {
     const fragment = document.createDocumentFragment();
     const twitchEmotes = this.parseTwitchEmotesTag(message, emotesTag);

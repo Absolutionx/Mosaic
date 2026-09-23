@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
 import { filterHidden, isHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
+import { relativeDate } from "./format.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
@@ -135,6 +136,7 @@ export class HomeFeed {
         channelName: e.channel_name || e.channel_login || "",
         channelLogin: e.channel_login || "",
         thumbnailUrl: e.thumbnail_url || "",
+        createdAt: e.created_at || "",
         dismissed: !!e.dismissed,
       }))
       .filter((it) =>
@@ -186,7 +188,9 @@ export class HomeFeed {
   buildContinueCard(it) {
     const card = document.createElement("button");
     card.className = "home-grid-card home-continue-card";
-    card.title = `Resume at ${fmtClock(it.positionSecs)}`;
+    card.title = it.updatedAt
+      ? `Resume at ${fmtClock(it.positionSecs)} · last watched ${relativeDate(new Date(it.updatedAt).toISOString())}`
+      : `Resume at ${fmtClock(it.positionSecs)}`;
     card.addEventListener("click", () => this.onVodResume(it));
 
     const thumbWrap = document.createElement("div");
@@ -208,7 +212,8 @@ export class HomeFeed {
 
     const left = document.createElement("span");
     left.className = "home-grid-viewers";
-    left.textContent = `${fmtClock(it.totalSecs - it.positionSecs)} left`;
+    // where you left off, out of the full length (e.g. "1:02:33 / 3:10:00")
+    left.textContent = `${fmtClock(it.positionSecs)} / ${fmtClock(it.totalSecs)}`;
     thumbWrap.appendChild(left);
 
     // resume progress bar along the bottom of the thumbnail
@@ -247,8 +252,16 @@ export class HomeFeed {
     const name = document.createElement("div");
     name.className = "home-grid-name";
     name.textContent = it.channelName;
+    // when it was streamed, same wording as the VODs page ("3 days ago"). when the stream date isn't
+    // known (e.g. Kick VODs), fall back to when you last watched it
+    const date = document.createElement("div");
+    date.className = "home-grid-game home-continue-date";
+    date.textContent = it.createdAt
+      ? relativeDate(it.createdAt)
+      : (it.updatedAt ? `Watched ${relativeDate(new Date(it.updatedAt).toISOString())}` : "");
     text.appendChild(title);
     text.appendChild(name);
+    if (date.textContent) text.appendChild(date);
     card.appendChild(text);
     return card;
   }

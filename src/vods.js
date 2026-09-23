@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { fetchVodChapters } from "./chapters.js";
+import { relativeDate } from "./format.js";
 
 function resolveThumbnailUrl(url, width = 440, height = 248) {
   return url
@@ -26,18 +27,6 @@ function parseDurationToSeconds(dur) {
   const m = (dur.match(/(\d+)m/) || [])[1] | 0;
   const s = (dur.match(/(\d+)s/) || [])[1] | 0;
   return h * 3600 + m * 60 + s;
-}
-
-function relativeDate(isoString) {
-  const diff = Date.now() - new Date(isoString).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} day${days !== 1 ? "s" : ""} ago`;
-  const weeks = Math.floor(days / 7);
-  return `${weeks} week${weeks !== 1 ? "s" : ""} ago`;
 }
 
 export class VodsPage {
@@ -141,6 +130,7 @@ export class VodsPage {
       channelName: vod.user_name || this.currentChannel || "",
       channelLogin: vod.user_login || this.currentChannel || "",
       thumbnailUrl: vod.thumbnail_url || "",
+      createdAt: vod.created_at || "",
     };
   }
 

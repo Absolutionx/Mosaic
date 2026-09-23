@@ -693,6 +693,7 @@ const homeFeed = new HomeFeed({
   onVodResume: (item) =>
     openVod(item.videoId, item.totalSecs, item.channelLogin, Math.floor(item.positionSecs), {
       title: item.title, channelName: item.channelName, channelLogin: item.channelLogin, thumbnailUrl: item.thumbnailUrl,
+      createdAt: item.createdAt,
     }),
 });
 
@@ -1133,6 +1134,7 @@ function maybeSaveVodProgress() {
     channelName: meta?.channelName || null,
     channelLogin: meta?.channelLogin || null,
     thumbnailUrl: meta?.thumbnailUrl || null,
+    createdAt: meta?.createdAt || null,
   }).catch((err) => {
     console.warn("Failed to save VOD progress:", err);
   });

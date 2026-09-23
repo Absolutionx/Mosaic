@@ -29,6 +29,10 @@ pub struct ProgressEntry {
     pub channel_login: Option<String>,
     #[serde(default)]
     pub thumbnail_url: Option<String>,
+    // when the VOD was streamed (Twitch's created_at, ISO 8601), shown on the Continue card as
+    // "3 days ago". Some("") = looked up and unavailable (VOD gone), so it isn't looked up again
+    #[serde(default)]
+    pub created_at: Option<String>,
     // set when the user removes this VOD from Home's "Continue where you left off" row. hides it from
     // that row only; the saved position is kept, so opening the VOD again still resumes. cleared the
     // next time progress is saved (i.e. the user is actually watching it again)
@@ -95,6 +99,7 @@ pub fn save_vod_progress(
     channel_name: Option<String>,
     channel_login: Option<String>,
     thumbnail_url: Option<String>,
+    created_at: Option<String>,
 ) -> Result<(), String> {
     let mut progress = load_progress(&app);
     // keep previously recorded metadata when this save doesn't carry any (e.g. a VOD resumed via
@@ -111,6 +116,7 @@ pub fn save_vod_progress(
             channel_name: keep(channel_name, prev.as_ref().and_then(|p| p.channel_name.clone())),
             channel_login: keep(channel_login, prev.as_ref().and_then(|p| p.channel_login.clone())),
             thumbnail_url: keep(thumbnail_url, prev.as_ref().and_then(|p| p.thumbnail_url.clone())),
+            created_at: keep(created_at, prev.as_ref().and_then(|p| p.created_at.clone())),
             // watching it again brings it back into the Continue row
             dismissed: false,
         },
@@ -146,7 +152,7 @@ pub fn dismiss_vod_from_continue(app: AppHandle, video_id: String) -> Result<(),
     Ok(())
 }
 
-// Fills in title / channel / thumbnail for progress entries saved before that metadata was recorded,
+// Fills in title / channel / thumbnail / stream date for progress entries saved before that metadata was recorded,
 // so older watch history shows up in Home's "Continue where you left off" row. Looks them up on Twitch
 // via /helix/videos?id=... (up to 100 ids per request). Twitch-only: Kick ids ("kick:...") are skipped.
 // Never touches position/updated_at, so the row's most-recent-first order is unchanged.
@@ -167,15 +173,19 @@ pub async fn backfill_vod_progress_metadata(
     let missing: Vec<String> = load_progress(&app)
         .vods
         .iter()
-        .filter(|(id, e)| e.title.is_none() && !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()))
+        .filter(|(id, e)| {
+            (e.title.is_none() || e.created_at.is_none())
+                && !id.is_empty()
+                && id.chars().all(|c| c.is_ascii_digit())
+        })
         .map(|(id, _)| id.clone())
         .collect();
     if missing.is_empty() {
         return Ok(0);
     }
 
-    // id -> (title, channel_name, channel_login, thumbnail_url)
-    let mut found: HashMap<String, (String, String, String, String)> = HashMap::new();
+    // id -> (title, channel_name, channel_login, thumbnail_url, created_at)
+    let mut found: HashMap<String, (String, String, String, String, String)> = HashMap::new();
     // ids whose lookup definitively completed (found or confirmed gone)
     let mut resolved: HashSet<String> = HashSet::new();
 
@@ -205,7 +215,10 @@ pub async fn backfill_vod_progress_metadata(
                 let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
                 let id = s("id");
                 if id.is_empty() { continue; }
-                found.insert(id, (s("title"), s("user_name"), s("user_login"), s("thumbnail_url")));
+                found.insert(
+                    id,
+                    (s("title"), s("user_name"), s("user_login"), s("thumbnail_url"), s("created_at")),
+                );
             }
         }
     }
@@ -217,16 +230,28 @@ pub async fn backfill_vod_progress_metadata(
     for id in &missing {
         if !resolved.contains(id) { continue; }
         let Some(entry) = progress.vods.get_mut(id) else { continue };
-        if entry.title.is_some() { continue; } // filled by a real save in the meantime
         match found.get(id) {
-            Some((title, name, login, thumb)) => {
-                entry.title = Some(title.clone());
-                entry.channel_name = Some(name.clone());
-                entry.channel_login = Some(login.clone());
-                entry.thumbnail_url = Some(thumb.clone());
-                filled += 1;
+            Some((title, name, login, thumb, created)) => {
+                // only fill what's missing: a real save in the meantime may already have set some
+                let mut changed = false;
+                if entry.title.is_none() {
+                    entry.title = Some(title.clone());
+                    entry.channel_name = Some(name.clone());
+                    entry.channel_login = Some(login.clone());
+                    entry.thumbnail_url = Some(thumb.clone());
+                    changed = true;
+                }
+                if entry.created_at.is_none() {
+                    entry.created_at = Some(created.clone());
+                    changed = true;
+                }
+                if changed { filled += 1; }
             }
-            None => entry.title = Some(String::new()), // gone from Twitch: don't look it up again
+            None => {
+                // gone from Twitch: mark whatever is missing as looked-up so it isn't retried
+                if entry.title.is_none() { entry.title = Some(String::new()); }
+                if entry.created_at.is_none() { entry.created_at = Some(String::new()); }
+            }
         }
     }
     save_progress(&app, &progress)?;

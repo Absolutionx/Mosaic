@@ -631,6 +631,9 @@ header #login-btn.logged-in { border-radius: 7px; }
   background: rgba(0, 0, 0, 0.75);
   transform: translate(-50%, -50%) scale(1.06);
 }
+/* keep the centering translate while pressed: the global `button:active { transform: ... }` would
+   otherwise replace it and knock the button off-center mid-click (the jump-to-latest pill's bug) */
+.center-play-btn:active { transform: translate(-50%, -50%) scale(0.97); }
 #video-region .placeholder {
   position: absolute;
   inset: 0;
@@ -1858,102 +1861,118 @@ header #login-btn.logged-in { border-radius: 7px; }
   color: #666;
 }
 /* --- AutoMod queue panel ---
-   Slides in above .chat-body (a sibling, not an overlay) when
-   toggled via .automod-toggle-btn - same "push the layout, don't
-   float on top" approach #channel-info-bar uses below the video,
-   rather than z-index tricks. Capped height + its own scroll so a
-   backlog of held messages can't push chat itself out of view. */
+   Slides in above .chat-body (a sibling, not an overlay) when toggled via .automod-toggle-btn - "push
+   the layout, don't float on top". Themed as a rounded card like the hype-train / gift-sub banners that
+   share this spot. Capped height + its own scroll so a backlog of held messages can't push chat itself
+   out of view. */
 .automod-panel {
   max-height: 220px;
   overflow-y: auto;
-  border-bottom: 1px solid #2c2c30;
-  background: #131315;
   flex-shrink: 0;
+  margin: 6px 8px 2px;
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 10px;
   scrollbar-width: thin;
-  scrollbar-color: var(--accent-dark) #131315;
+  scrollbar-color: var(--m-raised, #232b36) transparent;
 }
+.automod-panel::-webkit-scrollbar { width: 8px; }
+.automod-panel::-webkit-scrollbar-track { background: transparent; }
+.automod-panel::-webkit-scrollbar-thumb { background: var(--m-raised, #232b36); border-radius: 4px; }
+.automod-panel::-webkit-scrollbar-thumb:hover { background: var(--m-border, #29313d); }
 .automod-panel-empty {
   padding: 14px 12px;
-  color: #6d6d72;
-  font-size: 12px;
+  color: var(--m-muted, #9aa5b4);
+  font-size: 12.5px;
   text-align: center;
-  font-style: italic;
 }
 .automod-item {
-  padding: 8px 12px;
-  border-bottom: 1px solid #232327;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--m-border-soft, #212832);
 }
+.automod-item:last-child { border-bottom: none; }
 .automod-item-header {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 7px;
   margin-bottom: 3px;
 }
 .automod-item-user {
   font-weight: 700;
-  color: var(--accent-text);
-  font-size: 12px;
+  color: var(--m-text, #e7ebf2);
+  font-size: 12.5px;
 }
 .automod-item-category {
   font-size: 10px;
-  color: #6d6d72;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #ff9147;
   text-transform: uppercase;
 }
 .automod-item-text {
   font-size: 13px;
-  color: #efeff1;
+  line-height: 1.45;
+  color: var(--m-text, #e7ebf2);
   word-wrap: break-word;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .automod-item-actions {
   display: flex;
   gap: 6px;
 }
-.automod-item-actions button {
-  flex: 1;
-  border: none;
-  border-radius: 4px;
-  padding: 5px 0;
+/* Allow / Deny: tinted pills (green / red) that brighten on hover, instead of solid slabs */
+.automod-allow-btn,
+.automod-deny-btn {
+  font-family: inherit;
+  border-radius: 7px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
+.automod-item-actions button { flex: 1; padding: 6px 0; }
 .automod-allow-btn {
-  background: #2e7d32;
-  color: white;
+  background: rgba(46, 204, 113, 0.12);
+  border: 1px solid rgba(46, 204, 113, 0.40);
+  color: #5fe39b;
 }
-.automod-allow-btn:hover {
-  background: #388e3c;
+.automod-allow-btn:hover:not(:disabled) {
+  background: rgba(46, 204, 113, 0.22);
+  border-color: rgba(46, 204, 113, 0.70);
+  color: #8ff0b8;
 }
 .automod-deny-btn {
-  background: #a33333;
-  color: white;
+  background: rgba(235, 87, 87, 0.12);
+  border: 1px solid rgba(235, 87, 87, 0.40);
+  color: #ff8a8a;
 }
-.automod-deny-btn:hover {
-  background: #a33333;
+.automod-deny-btn:hover:not(:disabled) {
+  background: rgba(235, 87, 87, 0.22);
+  border-color: rgba(235, 87, 87, 0.70);
+  color: #ffb0b0;
 }
-.automod-item-actions button:disabled {
+.automod-item-actions button:disabled,
+.automod-inline-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 /* --- Inline AutoMod held-message line (in the chat stream itself) ---
-   Mirrors what Twitch's own client shows: the message appears where
-   it would have in chat, with Allow/Deny buttons right on it.
-   Left border + muted background makes it visually distinct from
-   normal chat lines without being jarring. */
+   Mirrors what Twitch's own client shows: the message appears where it would have in chat, with
+   Allow/Deny right on it. Same soft-glow treatment as highlighted / first-time messages, in AutoMod
+   orange, so it reads as "needs attention" without a heavy block. */
 .chat-line.is-automod-held {
-  border-left: 3px solid #ff9147;
-  background: #1e1a14;
-  padding: 5px 10px 5px 9px;
+  background: linear-gradient(90deg, rgba(255, 145, 71, 0.10), rgba(255, 145, 71, 0.02) 70%, transparent);
+  box-shadow: inset 2px 0 0 0 rgba(255, 145, 71, 0.60), inset 0 0 12px rgba(255, 145, 71, 0.08);
+  border-radius: 7px;
+  padding: 6px 10px 6px 10px;
   margin: 2px 0;
-  border-radius: 0 4px 4px 0;
 }
 .automod-held-label {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 700;
   color: #ff9147;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1961,16 +1980,16 @@ header #login-btn.logged-in { border-radius: 7px; }
 }
 .automod-held-category {
   font-size: 10px;
-  color: #6d6d72;
+  color: var(--m-muted, #9aa5b4);
   text-transform: uppercase;
-  font-weight: 400;
+  font-weight: 600;
 }
 .automod-held-body {
-  margin-bottom: 5px;
+  margin-bottom: 6px;
   word-wrap: break-word;
 }
 .automod-held-username {
-  color: var(--accent-text);
+  color: var(--m-text, #e7ebf2);
 }
 .automod-inline-actions {
   display: flex;
@@ -1979,30 +1998,7 @@ header #login-btn.logged-in { border-radius: 7px; }
 .automod-inline-actions .automod-allow-btn,
 .automod-inline-actions .automod-deny-btn {
   flex: 0 0 auto;
-  border: none;
-  border-radius: 4px;
   padding: 3px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.automod-inline-actions .automod-allow-btn {
-  background: #2e7d32;
-  color: white;
-}
-.automod-inline-actions .automod-allow-btn:hover {
-  background: #388e3c;
-}
-.automod-inline-actions .automod-deny-btn {
-  background: #a33333;
-  color: white;
-}
-.automod-inline-actions .automod-deny-btn:hover {
-  background: #a33333;
-}
-.automod-inline-actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 #chat-pane .chat-body {
   flex: 1;
@@ -3009,9 +3005,14 @@ body.kick-mode .sidebar-channel-name {
 .jump-to-latest-btn {
   display: none;
   position: absolute;
-  /* Compact pill, centered — no longer spanning the full chat width. */
-  left: 50%;
-  transform: translateX(-50%);
+  /* Compact pill, centered — no longer spanning the full chat width. Centered with left/right +
+     auto margins, NOT transform: translateX(-50%). The global `button:active { transform: ... }`
+     press effect replaced that transform mid-click, shoving the pill half its width sideways so the
+     mouseup landed off it and the click was lost (it "shifted then snapped back" and needed re-clicks). */
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  width: max-content;
   /* Rides the input row's REAL height (published by _autosizeChatInput
      as --chat-input-row-h) rather than a hardcoded offset - the old
      fixed 50px assumed a one-line input, so the auto-growing textarea
@@ -7639,3 +7640,30 @@ header .titlebar-action-buttons { overflow: visible; }
 .home-grid.home-continue-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 @media (max-width: 1400px) { .home-grid.home-continue-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 1000px) { .home-grid.home-continue-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.home-continue-date { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- ASCII art in chat (see _isAsciiArt / _renderAsciiArtRows / fitArt in chat.js) ----
+   Drawn in Twitch web chat's font stack at Twitch's size (13px text, 20px lines). Inter has no art
+   glyphs, so exactly like on Twitch every Braille / block / box-drawing character resolves further down
+   this same stack or to Windows' fallback — which is what keeps mixed art at Twitch's widths.
+   The art sits on its own line under the username; .chat-art is the available width and
+   .chat-art-inner is zoomed by JS to fit it (zoom scales without re-wrapping). */
+.chat-line.is-ascii-art-rows .chat-message-text { display: block; margin-top: 2px; }
+.chat-art { display: block; width: 100%; overflow: hidden; }
+.chat-art-inner {
+  display: inline-block;
+  vertical-align: top;
+  font-family: Inter, Roobert, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 20px;
+  letter-spacing: normal;
+  white-space: pre;
+}
+.chat-art-row { white-space: pre; }
+/* fallback (chunks weren't clean rows): Twitch's exact 300px text width with normal wrapping */
+.chat-art-inner.chat-art-flow {
+  width: 300px;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: normal;
+}

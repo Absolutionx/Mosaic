@@ -75,6 +75,12 @@ pub fn send_chat_message(
         .as_ref()
         .ok_or_else(|| "No active chat connection - is a stream playing?".to_string())?;
 
+    // Line breaks must never reach the IRC line: a CR/LF ends an IRC command, so text after one would be
+    // parsed by Twitch as a separate raw command (message corruption, or command injection from pasted
+    // text). Twitch chat has no multi-line messages anyway: convert them to spaces, which is also how
+    // multi-row chat art is meant to travel (rows separated by single spaces).
+    let message = message.replace("\r\n", " ").replace(['\r', '\n'], " ");
+
     let outgoing = match reply_to_msg_id {
         Some(id) if !id.is_empty() => {
             chat::OutgoingMessage::ReplyPrivmsg { reply_to_id: id, text: message }
