@@ -68,6 +68,20 @@ function findBoxPayload(bytes, boxType) {
   return scan(0, bytes.length);
 }
 
+// true once the top-level moov box has arrived IN FULL (its declared size fits in the bytes we have).
+// the init segment arrives in pieces; only a complete moov can prove a stream has NO video track
+function moovIsComplete(bytes) {
+  let off = 0;
+  while (off + 8 <= bytes.length) {
+    const size = ((bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0;
+    if (size < 8) return false;
+    const type = String.fromCharCode(bytes[off + 4], bytes[off + 5], bytes[off + 6], bytes[off + 7]);
+    if (type === "moov") return off + size <= bytes.length;
+    off += size;
+  }
+  return false;
+}
+
 // build the exact codecs="..." string from moov's avcC/hvcC/av1C rather than guessing.
 // H.264: profile/constraint/level from avcC bytes 1-3. H.265: a Main-profile fallback (hvcC is
 // complex). AV1: parsed per AV1-ISOBMFF. null if no recognized config box
@@ -103,6 +117,13 @@ function buildCodecStringFromInitSegment(bytes) {
     return `video/mp4; codecs="av01.${seqProfile}.${ll}${tier}.${dd}, mp4a.40.2"`;
   }
 
+  // audio-only stream (the player's "Audio only" quality): AAC with no video track. only accepted once
+  // the WHOLE moov is here, so a video stream whose audio track merely arrived first can never be
+  // mistaken for audio-only (that would play sound over a black screen)
+  if (moovIsComplete(bytes) && findBoxPayload(bytes, "mp4a")) {
+    return 'audio/mp4; codecs="mp4a.40.2"';
+  }
+
   return null;
 }
 
@@ -126,6 +147,12 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
     // restarting the relay. the owner uses this to auto-restart
     onDead = null,
   } = callbacks;
+
+  // set once the init segment resolves to an audio-only stream (the "Audio only" quality). audio needs more
+  // start-up headroom than video: its data arrives in ~2s bursts (one HLS segment at a time), and starting
+  // only 0.5s behind the newest data let the element run dry before the next burst and get stuck
+  // "waiting" until the 6s stall watchdog rescued it (the ~4.5s of silence after switching to audio only)
+  let isAudioOnly = false;
 
   // hard-reset the video element before a new MediaSource. without it, Chromium's decoder retains
   // state (frames, timestamp expectations, error flags) and new data with very different timestamps
@@ -198,7 +225,8 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
     }
     const start = buffered.start(buffered.length - 1);
     const end = buffered.end(buffered.length - 1);
-    const MIN_BUFFER_BEFORE_START_SECONDS = 1;
+    // audio-only: wait for a bit more and start further back, see isAudioOnly
+    const MIN_BUFFER_BEFORE_START_SECONDS = isAudioOnly ? 1.5 : 1;
     console.log("[stream-player] buffered range:", { start, end, span: end - start, rangeCount: buffered.length });
     if (end - start < MIN_BUFFER_BEFORE_START_SECONDS) return;
     hasStartedPlayback = true;
@@ -210,7 +238,8 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
       onVodStartOffset?.(start);
     } else {
       // live: seek near the live edge with a small margin so currentTime doesn't overshoot before the next chunk
-      videoEl.currentTime = Math.max(start, end - 0.5);
+      // (audio-only gets a bigger margin: its next data can be ~2s away, see isAudioOnly)
+      videoEl.currentTime = Math.max(start, end - (isAudioOnly ? 1.5 : 0.5));
     }
     console.log("[stream-player] starting playback, currentTime set to", videoEl.currentTime);
     videoEl.play().then(() => {
@@ -321,7 +350,8 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
     }
 
     // only act after currentTime's been stuck a while, not on the first flat reading, a brief pause between checks is normal jitter
-    const STALL_THRESHOLD_MS = 6_000;
+    // audio-only: rescue much sooner, silence is far more noticeable than a paused picture
+    const STALL_THRESHOLD_MS = isAudioOnly ? 2_500 : 6_000;
     if (now - _lastStallCheckTime < STALL_THRESHOLD_MS) return;
 
     if (!sourceBuffer || sourceBuffer.updating) return;
@@ -339,8 +369,8 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
       `${((now - _lastStallCheckTime) / 1000).toFixed(1)}s while buffered data reaches ` +
       `${latestRangeEnd.toFixed(1)} - forcing recovery`
     );
-    // same near-the-end, small-margin target startPlaybackOnceBuffered uses for the live-edge jump
-    videoEl.currentTime = Math.max(latestRangeStart, latestRangeEnd - 0.5);
+    // same near-the-end target startPlaybackOnceBuffered uses for the live-edge jump (bigger margin for audio-only)
+    videoEl.currentTime = Math.max(latestRangeStart, latestRangeEnd - (isAudioOnly ? 1.5 : 0.5));
     videoEl.play().catch((err) => console.warn("[stream-player] stall-recovery play() failed:", err));
     _lastStallCheckPosition = videoEl.currentTime;
     _lastStallCheckTime = now;
@@ -518,6 +548,7 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
           if (mimeType) {
             console.log("[stream-player] resolved codec from init segment:", mimeType);
             codecResolved = true;
+            isAudioOnly = mimeType.startsWith("audio/");
             const created = createSourceBufferOrFail(mimeType);
             if (!created) return; // onFatalError already called
             // feed everything accumulated (the init segment plus any media in the same chunk) now that there's a SourceBuffer
@@ -607,7 +638,8 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
         "| buffered ranges =", videoEl.buffered.length,
         "| codec =", mimeType,
       );
-      if (videoEl.videoWidth === 0 && videoEl.buffered.length > 0) {
+      // audio-only streams never have a frame, that's expected, not a decode failure
+      if (!mimeType.startsWith("audio/") && videoEl.videoWidth === 0 && videoEl.buffered.length > 0) {
         console.error(
           "[stream-player] BLACK-SCREEN SIGNATURE: data is buffered but no frame decoded. " +
           "This webview likely cannot decode this codec (" + mimeType + ").",

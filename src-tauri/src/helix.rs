@@ -390,6 +390,103 @@ pub async fn get_vod_chat(
     response.text().await.map_err(|e| e.to_string())
 }
 
+// ---- VOD top clips ----
+// "1h2m3s" / "45m10s" / "30s" (Helix video duration) -> seconds
+fn parse_twitch_duration(d: &str) -> u64 {
+    let (mut total, mut num) = (0u64, 0u64);
+    for c in d.chars() {
+        if let Some(v) = c.to_digit(10) {
+            num = num * 10 + v as u64;
+        } else {
+            total += num * match c { 'h' => 3600, 'm' => 60, _ => 1 };
+            num = 0;
+        }
+    }
+    total + num
+}
+
+// The most-viewed clips made from a Twitch VOD, with where each sits in the VOD, for the seek-bar clip
+// markers and the "Top clips" list. Helix Get Clips can't filter by video, so: look the VOD up (channel,
+// start time, length), fetch the channel's clips created from the stream's start to 3 days after it ended
+// (catching clips made from the VOD afterwards), and keep the ones whose video_id is this VOD and that
+// have a vod_offset (Twitch leaves it null for clips it hasn't processed). Up to 10 pages (1000 clips),
+// sorted by views, top 25 returned.
+#[tauri::command]
+pub async fn get_vod_top_clips(
+    state: State<'_, ChatState>,
+    video_id: String,
+) -> Result<serde_json::Value, String> {
+    use chrono::{SecondsFormat, Utc};
+    if video_id.is_empty() || !video_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("not a Twitch VOD id".to_string());
+    }
+    let (token, _) = require_auth(&state)?;
+
+    let body = helix_get(
+        &format!("https://api.twitch.tv/helix/videos?id={video_id}"),
+        Some(token.clone()),
+    )
+    .await?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let video = json.pointer("/data/0").ok_or_else(|| "VOD not found".to_string())?;
+    let user_id = video["user_id"].as_str().unwrap_or("").to_string();
+    let created = video["created_at"].as_str().unwrap_or("");
+    let duration = parse_twitch_duration(video["duration"].as_str().unwrap_or(""));
+    if user_id.is_empty() {
+        return Err("VOD has no broadcaster".to_string());
+    }
+    let start = chrono::DateTime::parse_from_rfc3339(created)
+        .map_err(|e| e.to_string())?
+        .with_timezone(&Utc);
+    let end = (start + chrono::Duration::seconds(duration as i64) + chrono::Duration::days(3)).min(Utc::now());
+    let started_at = start.to_rfc3339_opts(SecondsFormat::Secs, true);
+    let ended_at = end.to_rfc3339_opts(SecondsFormat::Secs, true);
+
+    let mut clips: Vec<serde_json::Value> = Vec::new();
+    let mut cursor = String::new();
+    for _ in 0..10 {
+        let mut url = format!(
+            "https://api.twitch.tv/helix/clips?broadcaster_id={user_id}&started_at={started_at}&ended_at={ended_at}&first=100"
+        );
+        if !cursor.is_empty() {
+            url.push_str(&format!("&after={cursor}"));
+        }
+        let page_body = helix_get(&url, Some(token.clone())).await?;
+        let page: serde_json::Value = serde_json::from_str(&page_body).map_err(|e| e.to_string())?;
+        if let Some(arr) = page["data"].as_array() {
+            for c in arr {
+                if c["video_id"].as_str() != Some(video_id.as_str()) {
+                    continue;
+                }
+                let Some(offset) = c["vod_offset"].as_f64() else { continue };
+                clips.push(serde_json::json!({
+                    "id": c["id"],
+                    "title": c["title"],
+                    "views": c["view_count"],
+                    "offset": offset,
+                    "duration": c["duration"],
+                    "thumbnail": c["thumbnail_url"],
+                    "url": c["url"],
+                    "creator": c["creator_name"],
+                }));
+            }
+        }
+        cursor = page
+            .pointer("/pagination/cursor")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if cursor.is_empty() {
+            break;
+        }
+    }
+    clips.sort_by(|a, b| {
+        b["views"].as_u64().unwrap_or(0).cmp(&a["views"].as_u64().unwrap_or(0))
+    });
+    clips.truncate(25);
+    Ok(serde_json::json!({ "clips": clips }))
+}
+
 // ---- VOD chat heatmap ----
 // Samples VOD chat activity at many positions for the seek-bar heatmap. For each requested offset,
 // fetches ONE page of VOD chat starting there (same GQL query as get_vod_chat, first-page form) and

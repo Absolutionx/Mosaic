@@ -70,7 +70,7 @@ export const chatEventsMixin = {
     if (p.user_message) {
       const msg = document.createElement("div");
       msg.className = "chat-event-message";
-      msg.appendChild(this.renderMessageBody(p.user_message, p.emotes_tag));
+      msg.appendChild(this.renderMessageBody(p.user_message, p.emotes_tag, this._stripEmotesFor(p.display_name)));
       line.appendChild(msg);
     }
     this._appendEvent(line);
@@ -177,7 +177,7 @@ export const chatEventsMixin = {
     info.appendChild(this._name(p.display_name));
     info.appendChild(document.createTextNode(": "));
     if (p.user_message) {
-      info.appendChild(this.renderMessageBody(p.user_message, p.emotes_tag));
+      info.appendChild(this.renderMessageBody(p.user_message, p.emotes_tag, this._stripEmotesFor(p.display_name)));
     } else if (p.system_msg) {
       info.appendChild(document.createTextNode(p.system_msg));
     }

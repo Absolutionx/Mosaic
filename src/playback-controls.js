@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetchVodChapters, fetchVodSeekPreviewsUrl } from "./chapters.js";
 import { loadVodStoryboard } from "./seek-thumbnails.js";
 import { attachHlsVod } from "./vod-player.js";
+import { formatViewerCount } from "./format.js";
 import { attachMseStream } from "./stream-player.js";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { currentMonitor, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
@@ -16,6 +17,21 @@ const HIDE_DELAY_MS = 2000;
 const PROGRESS_POLL_MS = 1000;
 // how far behind the live edge (video.seekable's end) still counts as "effectively live", live always trails by a small latency buffer
 const LIVE_EDGE_THRESHOLD_SECONDS = 2;
+// catch up to live (see _updateCatchUp): Twitch live only. "behind" = seconds between the playhead and
+// the end of what's buffered (the relay feeds the live edge straight into the buffer). normal playback
+// sits within CATCHUP_TARGET of it. past START it speeds up, faster the further behind (three steps, so
+// ~20s behind is caught up in about 2.5 min instead of 5+ at a flat 1.05x), and eases back to 1x once
+// within target + 0.5s (hysteresis, so it doesn't flicker between speeds). beyond MAX_BEHIND it leaves
+// you be: that far back is a long pause or a deliberate rewind, where the Live button is the right tool
+const CATCHUP_TARGET = 3;
+const CATCHUP_START_BEHIND = CATCHUP_TARGET + 3;   // 6s
+const CATCHUP_MAX_BEHIND = 45;
+const CATCHUP_STEPS = [            // [more than this many seconds behind, play at]
+  [15, 1.2],
+  [8, 1.12],
+  [CATCHUP_START_BEHIND, 1.06],
+];
+const CATCHUP_RATE_FINAL = 1.06;   // the last stretch, down to target + 0.5s
 // deliberately much slower than the stall-driven step-down (~3s): a wrong step-up costs a
 // visible restart and likely a stall, so there's no benefit to checking faster, only more risk
 // of acting on a blip
@@ -89,6 +105,11 @@ export class PlaybackControls {
     this.settingsBtn = document.getElementById("settings-btn");
     this.chaptersBtn  = document.getElementById("chapters-btn");
     this.chaptersMenu = document.getElementById("chapters-menu");
+    // most-viewed clips of the current VOD (setTopClips): list button/menu + seek-bar markers
+    this.clipsBtn  = document.getElementById("clips-btn");
+    this.clipsMenu = document.getElementById("clips-menu");
+    this.seekBarClips = document.getElementById("seek-bar-clips");
+    this._topClips = [];
 
     // null for live streams or when no VOD is playing. seeking is just videoEl.currentTime = seconds
     this._hlsVod = null;
@@ -227,14 +248,29 @@ export class PlaybackControls {
       this.toggleChaptersMenu();
     });
 
+    this.clipsBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleClipsMenu();
+    });
+
     document.addEventListener("click", () => {
       this.qualityMenu.classList.remove("open");
       this.chaptersMenu?.classList.remove("open");
+      this.clipsMenu?.classList.remove("open");
     });
 
     // keep the play/pause icon and center button in sync with whatever changed video.paused, not just our clicks but the element's own changes (autoplay, or a shortcut calling video.play()/.pause() directly)
     this.videoEl.addEventListener("play", () => { this.setPauseIcon(false); invoke("heartbeat_set_playing", { playing: true }).catch(() => {}); });
     this.videoEl.addEventListener("pause", () => { this.setPauseIcon(true); invoke("heartbeat_set_playing", { playing: false }).catch(() => {}); });
+    // catch up to live: a seek that lands well behind the live edge is a deliberate rewind, so pause
+    // catch-up; one that lands near the edge (Live button, auto edge-seek, clicking near the end) resumes
+    // it. judged by where the seek LANDS, so every source of seeking is handled the same way
+    this.videoEl.addEventListener("seeked", () => {
+      if (this.isVod || this._liveDvr || this._isKickSession) return;
+      const r = this._getActualBufferedRange();
+      if (!r) return;
+      this._catchUpSuspended = (r.end - this.videoEl.currentTime) > CATCHUP_START_BEHIND;
+    });
 
     // exiting native PiP other than via our pipBtn (the OS window's own close) must reflect back in our UI
     this.videoEl.addEventListener("leavepictureinpicture", () => {
@@ -259,6 +295,7 @@ export class PlaybackControls {
       // markers are tied to a VOD's muted_segments: a same-channel restart keeps the same VOD, but a real switch means these belong to the old one. main.js re-fetches; this just hides the stale markers meanwhile
       this.renderMutedSegments([], 0);
       this.renderChatHeatmap(null);
+      this.setTopClips(null);
     }
     this.currentChannel = channel;
     // false for every Twitch stream/VOD; true for a Kick VOD. with isVod=true its live-session clamp branches are unreachable; its only live effect is routing the quality menu to _loadKickQualityMenu
@@ -268,11 +305,14 @@ export class PlaybackControls {
     if (!this.autoQualityMode) {
       this.currentQuality = quality;
     }
+    this._syncAudioOnlyUi();
+    this._resetCatchUp();
     // channels prefixed with "vod:" are past broadcasts, fixed duration and no live edge, so live-specific UI is hidden
     this.isVod = channel.startsWith("vod:");
     this.vodTotalSeconds = vodTotalSeconds;
     this._chapters = [];
     this._chaptersLoaded = false;
+    this._liveChaptersVideoId = null; // set by loadLiveChapters once a live stream's recording is known
     // reset so a new VOD doesn't briefly show the previous one's stale thumbnails while its own storyboard loads
     this._storyboard = { frameFor: () => null };
     if (this.chaptersBtn) this.chaptersBtn.style.display = "none";
@@ -355,6 +395,9 @@ export class PlaybackControls {
   // since Kick is a plain live playlist through hls.js (attachHlsDvr at -1 = live edge)
   startKick(channel, url) {
     this.active = true;
+    this._resetCatchUp();
+    // Kick has no audio-only rendition: make sure the Audio only panel isn't left up from a Twitch stream
+    document.getElementById("audio-only-overlay")?.classList.remove("visible");
     if (channel !== this.currentChannel) {
       // same reset start() does on a real channel switch, see its comments for why each can't be left stale
       this.cachedQualities = null;
@@ -362,6 +405,7 @@ export class PlaybackControls {
       this._disableAutoMode();
       this.renderMutedSegments([], 0);
       this.renderChatHeatmap(null);
+      this.setTopClips(null);
       this._kickPreferredLevelLabel = null; // new channel, fresh quality choice
     }
     this.currentChannel = channel;
@@ -374,6 +418,7 @@ export class PlaybackControls {
     // chapters/storyboard belong to a Twitch VOD, Kick has neither, and for the failover case these belong to the ended Twitch stream
     this._chapters = [];
     this._chaptersLoaded = false;
+    this._liveChaptersVideoId = null; // don't let the menu's refresh-on-open bring the Twitch chapters back
     this._storyboard = { frameFor: () => null };
     if (this.chaptersBtn) this.chaptersBtn.style.display = "none";
     if (this.chaptersMenu) {
@@ -393,6 +438,7 @@ export class PlaybackControls {
 
   attachHlsDvr(vodUrl, vodOffsetSecs) {
     this._currentSourceUrl = vodUrl;
+    this._resetCatchUp(); // rewound into the recording: normal speed there
     this._closeNativePip();
     if (this.mseController) {
       this.mseController.stop();
@@ -802,6 +848,8 @@ export class PlaybackControls {
   }
 
   stop() {
+    document.getElementById("audio-only-overlay")?.classList.remove("visible");
+    this._resetCatchUp();
     if (this.docPipWindow) {
       // close() fires the PiP window's pagehide, whose handler synchronously puts the video element back in the main DOM, which must happen BEFORE the src teardown below so load() runs on an element in its real home
       this.docPipWindow.close();
@@ -840,6 +888,7 @@ export class PlaybackControls {
     this.seekBarFill.style.width = "0%";
     this.renderMutedSegments([], 0);
     this.renderChatHeatmap(null);
+    this.setTopClips(null);
     this.isVod = false;
     this.vodTotalSeconds = 0;
     this._liveDvr = null;
@@ -1106,6 +1155,25 @@ export class PlaybackControls {
       });
       pillsRow.appendChild(item);
     }
+
+    // Audio only: Twitch's audio rendition (no video track), for listening in the background at a
+    // fraction of the bandwidth. the live player + relay both handle audio-only streams (see
+    // buildCodecStringFromInitSegment in stream-player.js and spawn_pipeline in stream_relay.rs)
+    const audioSep = document.createElement("div");
+    audioSep.className = "quality-menu-sep";
+    pillsRow.appendChild(audioSep);
+    const audioItem = document.createElement("button");
+    audioItem.className = "quality-menu-item quality-menu-audio" +
+      (!this.autoQualityMode && this.currentQuality === "audio_only" ? " active" : "");
+    audioItem.title = "Sound only, no video: uses a fraction of the bandwidth";
+    audioItem.innerHTML =
+      '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/></svg>' +
+      '<span>Audio only</span>';
+    audioItem.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.selectQuality("audio_only");
+    });
+    pillsRow.appendChild(audioItem);
     this.qualityMenu.appendChild(pillsRow);
 
     if (!this.isVod) {
@@ -1135,6 +1203,26 @@ export class PlaybackControls {
       });
 
       this.qualityMenu.appendChild(toggle);
+
+      // Catch up to live (see _updateCatchUp). Twitch only; takes effect immediately, no restart
+      if (!this._isKickSession) {
+        const cu = document.createElement("button");
+        cu.className = "quality-menu-toggle" + (this._catchUpEnabled() ? " on" : "");
+        cu.title = "When you fall a few seconds behind live, play slightly faster (up to 1.2x) until caught up";
+        const cuSwitch = document.createElement("span");
+        cuSwitch.className = "quality-toggle-switch";
+        const cuLabel = document.createElement("span");
+        cuLabel.textContent = "Catch up to live";
+        cu.append(cuSwitch, cuLabel);
+        cu.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const on = !this._catchUpEnabled();
+          try { localStorage.setItem("catchUpToLive", on ? "1" : "0"); } catch { /* ignore */ }
+          cu.classList.toggle("on", on);
+          if (!on) this._resetCatchUp(); // turned off mid-catch-up: back to 1x right away
+        });
+        this.qualityMenu.appendChild(cu);
+      }
     }
 
     {
@@ -1338,6 +1426,46 @@ export class PlaybackControls {
     }
   }
 
+  // Chapters for a LIVE Twitch stream, read from its in-progress recording (the same VOD live-DVR
+  // rewinds into; main.js calls this once session.liveDvrInfo is known). Lets you jump to an earlier game
+  // mid-stream. Also re-run on each menu open, since the streamer may have switched games since.
+  async loadLiveChapters(videoId) {
+    if (!videoId || this.isVod) return;
+    this._liveChaptersVideoId = videoId;
+    try {
+      const chapters = await fetchVodChapters(videoId);
+      if (this._liveChaptersVideoId !== videoId || this.isVod) return; // stream changed meanwhile
+      this._chapters = chapters;
+      this._chaptersLoaded = chapters.length > 0;
+      if (this.chaptersBtn) {
+        this.chaptersBtn.style.display = chapters.length ? "" : "none";
+        this.chaptersBtn.style.opacity = "";
+        this.chaptersBtn.title = `Chapters (${chapters.length})`;
+      }
+      if (this.chaptersMenu?.classList.contains("open")) this._renderChapters();
+    } catch (err) {
+      console.warn("[chapters] live chapters fetch failed:", err);
+    }
+  }
+
+  // Jump to a position in the VOD timeline (a chapter start). VOD, or live already rewound into the
+  // recording: that's just a seek. Live at the edge: go through live-DVR, which takes "seconds behind
+  // live" and converts it back into a recording position by subtracting its VOD-behind-live allowance,
+  // so add the same allowance here to land exactly on the chapter start.
+  _seekToVodPosition(sec) {
+    if (this.isVod || this._liveDvr) {
+      this.videoEl.currentTime = sec;
+      this.onSeek(this.videoEl.currentTime);
+      return;
+    }
+    if (this.liveDvrStreamStartedAt && this.onLiveDvrSeek) {
+      const VOD_LIVE_DELAY_SECS = 45; // must match onLiveDvrSeek in main.js
+      const elapsed = (Date.now() - this.liveDvrStreamStartedAt) / 1000;
+      // >= 1: onLiveDvrSeek treats 0 as "go live"
+      this.onLiveDvrSeek(Math.max(1, elapsed - sec - VOD_LIVE_DELAY_SECS));
+    }
+  }
+
   // VOD-only: Twitch's storyboard CDN 403s for the underlying VOD while the broadcast is still live (storyboards aren't generated until it ends). never throws or blocks: loadVodStoryboard() resolves to a no-op on failure, and a stale videoId/isVod guard drops the result if the user navigated away
   async _fetchStoryboard() {
     if (!this.isVod || !this.currentChannel) return;
@@ -1364,6 +1492,11 @@ export class PlaybackControls {
 
   // VOD-relative seconds (removes the HLS timestamp offset)
   _vodPositionSec() {
+    // live at the edge (not rewound): currentTime isn't a recording position, estimate it from how long
+    // the stream has been running
+    if (!this.isVod && !this._liveDvr && this.liveDvrStreamStartedAt) {
+      return Math.max(0, (Date.now() - this.liveDvrStreamStartedAt) / 1000);
+    }
     // HLS.js sets videoEl.currentTime in VOD seconds (0 = start of VOD)
     return this.videoEl.currentTime || 0;
   }
@@ -1378,12 +1511,134 @@ export class PlaybackControls {
     return active;
   }
 
+  // ---- Top clips ----
+  // clips: [{ title, views, offset, duration, thumbnail, url, creator }] sorted by views (from
+  // get_vod_top_clips). Shows the Top clips button, marks the 10 most-viewed on the seek bar, and backs the
+  // list menu. null clears everything. videoId guards against a slow load landing on a different VOD.
+  setTopClips(clips, videoId) {
+    if (clips == null) {
+      this._topClips = [];
+      if (this.seekBarClips) this.seekBarClips.innerHTML = "";
+      if (this.clipsBtn) this.clipsBtn.style.display = "none";
+      if (this.clipsMenu) { this.clipsMenu.innerHTML = ""; this.clipsMenu.classList.remove("open"); }
+      return;
+    }
+    if (!this.isVod || (videoId && this.currentChannel !== `vod:${videoId}`)) return;
+    this._topClips = Array.isArray(clips) ? clips.filter((c) => Number.isFinite(c.offset)) : [];
+    if (this.clipsBtn) this.clipsBtn.style.display = this._topClips.length ? "" : "none";
+    this._renderClipMarkers();
+  }
+
+  _vodDuration() {
+    return this.vodTotalSeconds > 0 ? this.vodTotalSeconds
+      : (Number.isFinite(this.videoEl.duration) ? this.videoEl.duration : 0);
+  }
+
+  _renderClipMarkers() {
+    const el = this.seekBarClips;
+    if (!el) return;
+    el.innerHTML = "";
+    const total = this._vodDuration();
+    if (!(total > 0)) {
+      // length not known yet (e.g. resumed VOD): draw once the player reports it
+      if (this._topClips.length) {
+        this.videoEl.addEventListener("loadedmetadata", () => this._renderClipMarkers(), { once: true });
+      }
+      return;
+    }
+    for (const c of this._topClips.slice(0, 10)) {
+      const m = document.createElement("span");
+      m.className = "seek-clip-marker";
+      m.style.left = `${Math.min(100, (c.offset / total) * 100)}%`;
+      m.style.width = `${Math.max(0, ((c.duration || 0) / total) * 100)}%`;
+      el.appendChild(m);
+    }
+  }
+
+  // the most-viewed clip covering (or right next to) a VOD position, for the hover label
+  _clipNear(sec) {
+    const total = this._vodDuration();
+    const slack = total * 0.006;
+    return this._topClips.slice(0, 10).find((c) =>
+      sec >= c.offset - slack && sec <= c.offset + (c.duration || 0) + slack) || null;
+  }
+
+  toggleClipsMenu() {
+    if (!this.clipsMenu || !this._topClips.length) return;
+    const opening = !this.clipsMenu.classList.contains("open");
+    this.chaptersMenu?.classList.remove("open");
+    if (opening) {
+      this._renderClips();
+      const rect = this.clipsBtn.getBoundingClientRect();
+      this.clipsMenu.style.right  = `${window.innerWidth - rect.right}px`;
+      this.clipsMenu.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+    }
+    this.clipsMenu.classList.toggle("open", opening);
+  }
+
+  _renderClips() {
+    const menu = this.clipsMenu;
+    menu.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "clips-menu-head";
+    head.textContent = "Top clips from this VOD";
+    menu.appendChild(head);
+    const list = document.createElement("div");
+    list.className = "clips-menu-list";
+    this._topClips.forEach((c, i) => {
+      const item = document.createElement("button");
+      item.className = "clips-item";
+      item.title = `Jump to ${this._formatChapterTime(c.offset)}`;
+
+      const rank = document.createElement("span");
+      rank.className = "clips-item-rank";
+      rank.textContent = String(i + 1);
+
+      const thumb = document.createElement("img");
+      thumb.className = "clips-item-thumb";
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      if (c.thumbnail) thumb.src = c.thumbnail;
+      thumb.onerror = () => thumb.classList.add("no-thumb");
+
+      const meta = document.createElement("span");
+      meta.className = "clips-item-meta";
+      const title = document.createElement("span");
+      title.className = "clips-item-title";
+      title.textContent = c.title || "Untitled clip";
+      const sub = document.createElement("span");
+      sub.className = "clips-item-sub";
+      const views = Number(c.views) || 0;
+      sub.textContent = `${formatViewerCount(views)} view${views === 1 ? "" : "s"}` +
+        (c.creator ? ` · by ${c.creator}` : "");
+      meta.appendChild(title);
+      meta.appendChild(sub);
+
+      const time = document.createElement("span");
+      time.className = "clips-item-time";
+      time.textContent = this._formatChapterTime(c.offset);
+
+      item.append(rank, thumb, meta, time);
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.videoEl.currentTime = c.offset;
+        this.onSeek(this.videoEl.currentTime);
+        menu.classList.remove("open");
+      });
+      list.appendChild(item);
+    });
+    menu.appendChild(list);
+  }
+
   toggleChaptersMenu() {
     if (!this._chaptersLoaded) return;
     const opening = !this.chaptersMenu.classList.contains("open");
+    this.clipsMenu?.classList.remove("open");
     if (opening) {
       this._renderChapters();
       this._positionChaptersMenu();
+      // live: pick up a game change since chapters were last loaded (re-renders if the list changed)
+      if (!this.isVod && this._liveChaptersVideoId) this.loadLiveChapters(this._liveChaptersVideoId);
     }
     this.chaptersMenu.classList.toggle("open", opening);
   }
@@ -1398,6 +1653,13 @@ export class PlaybackControls {
 
   _renderChapters() {
     this.chaptersMenu.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "chapters-menu-head";
+    head.textContent = this.isVod ? "Chapters" : "Chapters (this stream)";
+    const list = document.createElement("div");
+    list.className = "chapters-menu-list";
+    this.chaptersMenu.append(head, list);
+
     const activeIdx = this._activeChapterIndex();
     this._chapters.forEach((ch, i) => {
       const item = document.createElement("button");
@@ -1413,16 +1675,21 @@ export class PlaybackControls {
 
       item.appendChild(timeEl);
       item.appendChild(titleEl);
+      if (i === activeIdx) {
+        const now = document.createElement("span");
+        now.className = "chapters-item-now";
+        now.textContent = "Now";
+        item.appendChild(now);
+      }
       item.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.videoEl.currentTime = ch.positionSec;
-        this.onSeek(this.videoEl.currentTime);
+        this._seekToVodPosition(ch.positionSec);
         this.chaptersMenu.classList.remove("open");
       });
-      this.chaptersMenu.appendChild(item);
+      list.appendChild(item);
     });
 
-    const activeEl = this.chaptersMenu.querySelector(".chapters-item.active");
+    const activeEl = list.querySelector(".chapters-item.active");
     activeEl?.scrollIntoView({ block: "nearest" });
   }
 
@@ -1440,7 +1707,15 @@ export class PlaybackControls {
     this._disableAutoMode();
     if (quality === this.currentQuality) return;
     this.currentQuality = quality;
+    // (the Audio only panel is synced in start() when the new stream actually attaches; the previous
+    // stream keeps playing until then, so showing/hiding it here would describe the wrong stream)
     this.onQualityChange(quality);
+  }
+
+  // the "Audio only" panel over the video area, shown while the audio-only quality plays (Twitch only)
+  _syncAudioOnlyUi() {
+    const on = this.currentQuality === "audio_only" && !this.autoQualityMode && !this._isKickSession;
+    document.getElementById("audio-only-overlay")?.classList.toggle("visible", on);
   }
 
   showControls() {
@@ -1697,8 +1972,12 @@ export class PlaybackControls {
       );
       // near one of the heatmap's chat spikes (within ~1.5% of the VOD): say so
       const nearSpike = this._heatPeaksSec.some((p) => Math.abs(p - absSeconds) <= total * 0.015);
+      // over one of the top-clip markers: show that clip's title
+      const clip = this._clipNear(absSeconds);
+      const clipTitle = clip ? (clip.title || "Clip").slice(0, 60) : "";
       this.seekBarTooltip.textContent =
-        this.formatDuration(absSeconds) + (muted ? " (Muted)" : "") + (nearSpike ? " · Chat spike" : "");
+        this.formatDuration(absSeconds) + (muted ? " (Muted)" : "") +
+        (clip ? ` · Clipped: ${clipTitle}` : nearSpike ? " · Chat spike" : "");
 
       this._updateSeekThumbnail(absSeconds);
     } else {
@@ -1743,7 +2022,56 @@ export class PlaybackControls {
   }
 
   // normal live: seeks to the end of the MSE buffer. live-DVR mode (watching the in-progress VOD via HLS.js): fires onLiveDvrSeek(0) to signal "go back to live relay", main.js tears down HLS.js and reconnects the MSE feeder
+  // ---- catch up to live ----
+  _catchUpEnabled() {
+    try { return localStorage.getItem("catchUpToLive") !== "0"; } catch { return true; } // default on
+  }
+
+  // Runs every progress tick. Speeds playback up (1.06-1.2x, faster the further behind) while a Twitch
+  // live stream has drifted behind the live edge (after a pause, a buffering hiccup, a tab switch), back
+  // to 1x once caught up. Chromium keeps voices at their normal pitch at these rates. Kick is excluded: hls.js deliberately
+  // plays several seconds behind its buffer end, so the same rule would keep pushing it into stalls.
+  _updateCatchUp() {
+    const v = this.videoEl;
+    const current = this._catchUpRate || 1;
+    let rate = 1;
+    const eligible = this._catchUpEnabled() && !this.isVod && !this._liveDvr && !this._isKickSession &&
+      !!this.mseController && !v.paused && !this._catchUpSuspended;
+    if (eligible) {
+      const r = this._getActualBufferedRange();
+      if (r) {
+        const behind = r.end - v.currentTime;
+        if (behind <= CATCHUP_MAX_BEHIND) {
+          const step = CATCHUP_STEPS.find(([over]) => behind > over);
+          if (step) rate = step[1];
+          // already catching up: keep going (gently) until within target + 0.5s
+          else if (current > 1 && behind > CATCHUP_TARGET + 0.5) rate = CATCHUP_RATE_FINAL;
+        }
+      }
+    }
+    if (rate !== current) v.playbackRate = rate;
+    this._catchUpRate = rate;
+    if (this.timeDisplay) {
+      this.timeDisplay.classList.toggle("catching-up", rate > 1);
+      this.timeDisplay.dataset.rate = rate > 1 ? `${+rate.toFixed(2)}×` : "";
+      this.timeDisplay.title = rate > 1 ? "Catching up to live" : "";
+    }
+  }
+
+  // back to normal speed and a clean slate (new stream, VOD, stop)
+  _resetCatchUp() {
+    if ((this._catchUpRate || 1) !== 1) this.videoEl.playbackRate = 1;
+    this._catchUpRate = 1;
+    this._catchUpSuspended = false;
+    if (this.timeDisplay) {
+      this.timeDisplay.classList.remove("catching-up");
+      this.timeDisplay.dataset.rate = "";
+      this.timeDisplay.title = "";
+    }
+  }
+
   jumpToLive() {
+    this._catchUpSuspended = false; // explicitly going live: catch-up applies again
     if (this._liveDvr) {
       // signal main.js to switch back to the live relay (0 = live edge)
       if (this.onLiveDvrSeek) this.onLiveDvrSeek(0);
@@ -1784,6 +2112,7 @@ export class PlaybackControls {
 
   pollProgress() {
     if (!this.active) return;
+    this._updateCatchUp();
 
     const position = this.videoEl.currentTime;
     let duration;

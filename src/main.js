@@ -15,6 +15,10 @@ import { initWhispers } from "./whispers.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
+import { initTooltips } from "./tooltips.js";
+
+// themed tooltips app-wide (replaces the OS-drawn `title` tooltips, see tooltips.js)
+initTooltips();
 import { TwitchAuth } from "./auth.js";
 import { ChannelsSidebar } from "./sidebar.js";
 import { startHypeBadgePolling } from "./hype-badges.js";
@@ -1032,6 +1036,23 @@ async function tryKickFailover(channelAtDeath) {
 }
 
 // VODs save position and resume at the same second; live streams rejoin near the live edge
+// After a live quality switch: once the new stream actually plays, show how long it took in the status
+// line ("Audio only · switched in 2.3s") and log the split between stream startup (relay: streamlink +
+// remux + first chunk) and buffering (player: first second of media). Real numbers from the user's
+// machine, so slow switches can be diagnosed instead of guessed at.
+function reportQualitySwitchTiming(quality, startedAt, relayReadyAt) {
+  const v = playbackControls.videoEl;
+  const onPlaying = () => {
+    const total = (performance.now() - startedAt) / 1000;
+    const relay = (relayReadyAt - startedAt) / 1000;
+    const label = quality === "audio_only" ? "Audio only" : quality === "best" ? "Best quality" : quality;
+    setStatus(`${label} · switched in ${total.toFixed(1)}s`);
+    console.log(`[quality-switch] ${quality}: ${total.toFixed(2)}s total ` +
+      `(stream startup ${relay.toFixed(2)}s, buffering ${(total - relay).toFixed(2)}s)`);
+  };
+  v.addEventListener("playing", onPlaying, { once: true });
+}
+
 async function restartStreamWithQuality(quality, { auto = false } = {}) {
   if (!session.playing || !session.intendedChannel) return;
   session.currentQuality = quality;
@@ -1075,10 +1096,12 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
       playbackControls.expectRelayTeardown();
       // capture the channel this restart is FOR: start_stream takes a second or two, and a switch mid-flight moves session.intendedChannel, so attaching with the live value would play the new channel through this one's relay URL. bind once, re-check after the await
       const restartChannel = session.intendedChannel;
+      const switchStartedAt = performance.now();
       const relayUrl = await invoke("start_stream", { channel: restartChannel, quality, lowLatency: session.lowLatency });
       if (session.intendedChannel !== restartChannel) return; // superseded mid-restart
       playbackControls.lowLatency = session.lowLatency;
       playbackControls.start(restartChannel, relayUrl, quality);
+      reportQualitySwitchTiming(quality, switchStartedAt, performance.now());
       // a successful Twitch start means we're on (or back on) Twitch, if this session had failed over to Kick, stop the Kick chat client and rejoin Twitch chat
       if (session.kickFailover) {
         invoke("stop_kick_chat").catch(() => {});
@@ -1310,6 +1333,8 @@ async function watchChannel(channel, stream) {
                 streamStartedAt: new Date(info.created_at).getTime(),
               };
               playbackControls.liveDvrStreamStartedAt = session.liveDvrInfo.streamStartedAt;
+              // chapters of the in-progress recording, so you can jump to an earlier game mid-stream
+              playbackControls.loadLiveChapters(info.video_id);
               prefetchLiveDvrM3u8();
             }
           })
@@ -1356,6 +1381,8 @@ async function watchChannel(channel, stream) {
           };
           // expand the seek bar to cover the full stream immediately
           playbackControls.liveDvrStreamStartedAt = session.liveDvrInfo.streamStartedAt;
+          // chapters of the in-progress recording, so you can jump to an earlier game mid-stream
+          playbackControls.loadLiveChapters(info.video_id);
           console.log(`[live-dvr] VOD ready: id=${info.video_id} started=${info.created_at}`);
           // resolve the VOD's m3u8 in the background now so it's cached by the time the user seeks past the buffer
           prefetchLiveDvrM3u8();
@@ -1488,6 +1515,10 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
       .catch((err) => console.warn("Failed to load muted segments:", err));
     // chat heatmap on the seek bar (vod-heatmap.js). fire-and-forget like the muted segments
     startChatHeatmap(videoId, vodTotalSeconds);
+    // most-viewed clips of this VOD: seek-bar markers + the Top clips list (get_vod_top_clips in helix.rs)
+    invoke("get_vod_top_clips", { videoId: String(videoId) })
+      .then((r) => playbackControls.setTopClips(r?.clips || [], videoId))
+      .catch((err) => console.warn("Failed to load top clips:", err));
   } catch (err) {
     setTheaterMode(false);
     setStatus(`Error: ${err}`);

@@ -390,12 +390,23 @@ function renderNew(modal) {
 // (7TV / BTTV / FFZ via sevenTvEmotes, plus Twitch native by name). Everything that isn't a known
 // emote word is inserted as an escaped text node, so this is XSS-safe. Falls back to plain text if the
 // chat emote maps aren't available yet.
-function renderTextWithEmotes(container, text) {
+// fromSelf: your own whispers are never filtered (same rule as chat)
+function renderTextWithEmotes(container, text, fromSelf = false) {
   const map = chatRef && chatRef.sevenTvEmotes;
   const twitchByName = chatRef && chatRef.twitchNativeEmotes;
   if (!text) return;
   if (!map && !twitchByName) { container.textContent = text; return; }
-  const parts = text.split(" ");
+  // the chat filter's blocked emotes apply to whispers too (skip them, like chat does)
+  const blocked = !fromSelf && chatRef?._compiledFilter?.emotes?.size ? chatRef._compiledFilter.emotes : null;
+  const isEmoteWord = (w) => !!((map && map.get(w)) || (twitchByName && twitchByName.get(w)));
+  const parts = text.split(" ").filter((w) => !(blocked && blocked.has(w) && isEmoteWord(w)));
+  if (!parts.length || parts.every((w) => !w)) {
+    const note = document.createElement("span");
+    note.className = "chat-filtered-note";
+    note.textContent = "hidden by your chat filter";
+    container.appendChild(note);
+    return;
+  }
   parts.forEach((word, i) => {
     if (i > 0) container.appendChild(document.createTextNode(" "));
     const emote = map ? map.get(word) : null;
@@ -432,7 +443,7 @@ function appendMessageEl(fromSelf, text, ts, bodyEl) {
   line.className = "whisper-msg" + (fromSelf ? " self" : "");
   const bubble = document.createElement("div");
   bubble.className = "whisper-bubble";
-  renderTextWithEmotes(bubble, text);
+  renderTextWithEmotes(bubble, text, fromSelf);
   const time = document.createElement("div");
   time.className = "whisper-msg-time";
   time.textContent = fmtTime(ts);

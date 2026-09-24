@@ -217,7 +217,12 @@ function renderInto(body) {
       txt.className = "modchat-text";
       // reuse the chat renderer so Twitch/7TV/BTTV/FFZ emotes resolve exactly as in chat
       if (chatRef && typeof chatRef.renderMessageBody === "function") {
-        try { txt.appendChild(chatRef.renderMessageBody(m.message, m.emotesTag || null)); }
+        // _filteredBody applies the chat filter's blocked emotes, same as everywhere else
+        try {
+          txt.appendChild(typeof chatRef._filteredBody === "function"
+            ? chatRef._filteredBody(m.message, m.emotesTag || null, m.username)
+            : chatRef.renderMessageBody(m.message, m.emotesTag || null));
+        }
         catch { txt.textContent = m.message; }
       } else {
         txt.textContent = m.message;

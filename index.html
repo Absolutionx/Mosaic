@@ -187,6 +187,12 @@
               player attribute (no effect on desktop).
             -->
             <video id="video-element" playsinline></video>
+            <!-- shown while the "Audio only" quality plays, so a pictureless player doesn't look broken -->
+            <div id="audio-only-overlay" class="audio-only-overlay" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 16a2 2 0 0 1-2 2h-1v-6h1a2 2 0 0 1 2 2zM3 16a2 2 0 0 0 2 2h1v-6H5a2 2 0 0 0-2 2z"/></svg>
+              <div class="audio-only-title">Audio only</div>
+              <div class="audio-only-sub">Choose a video quality in the settings menu to bring the picture back</div>
+            </div>
             <div class="placeholder" id="video-placeholder">
               Pick a channel to start watching
             </div>
@@ -264,6 +270,8 @@
                 <div id="seek-bar-muted-segments" class="seek-bar-muted-segments"></div>
                 <!-- VOD chat heatmap (vod-heatmap.js): chat activity across the VOD, drawn just above the bar -->
                 <div id="seek-bar-heatmap" class="seek-bar-heatmap"></div>
+                <!-- top-clip markers on the bar itself (setTopClips in playback-controls.js) -->
+                <div id="seek-bar-clips" class="seek-bar-clips"></div>
                 <div id="seek-bar-thumbnail" class="seek-bar-thumbnail"></div>
                 <div id="seek-bar-tooltip" class="seek-bar-tooltip"></div>
               </div>
@@ -303,6 +311,13 @@
                     <circle cx="3" cy="4.5" r="1.5"/><rect x="6.5" y="3.5" width="10" height="2" rx="1"/>
                     <circle cx="3" cy="10" r="1.5"/><rect x="6.5" y="9" width="10" height="2" rx="1"/>
                     <circle cx="3" cy="15.5" r="1.5"/><rect x="6.5" y="14.5" width="10" height="2" rx="1"/>
+                  </svg>
+                </button>
+                <!-- Top clips: most-viewed clips made from this VOD; only visible for VODs that have some -->
+                <button id="clips-btn" class="control-btn clips-btn" title="Top clips" style="display:none">
+                  <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+                    <path d="M20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12"/>
                   </svg>
                 </button>
                 <button id="settings-btn" class="control-btn" title="Quality settings">
@@ -452,6 +467,7 @@
 
     <!-- VOD chapters panel: fixed-position, opens above the chapters button. -->
     <div id="chapters-menu" class="chapters-menu"></div>
+    <div id="clips-menu" class="clips-menu"></div>
     <!-- Track ID result popup; positioned in JS like the quality/chapters menus -->
     <div id="track-id-panel" class="track-id-panel" style="display:none"></div>
 

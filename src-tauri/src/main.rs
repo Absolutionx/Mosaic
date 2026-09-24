@@ -323,6 +323,7 @@ fn main() {
             helix::get_streams_for_game_id,
             helix::search_categories,
             helix::get_vod_chat_density,
+            helix::get_vod_top_clips,
             helix::get_category_viewer_counts,
             helix::get_videos_for_login,
             helix::get_vod_muted_segments,

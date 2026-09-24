@@ -14,6 +14,15 @@ const COLLAPSED_LIVE_COUNT = 8;
 // max rows in the "Live Channels" (top live) sidebar section
 const TOP_LIVE_LIMIT = 10;
 
+// "2h 13m" / "45m" since an ISO start time, for the hover preview. "" if unknown
+function previewUptime(startedAt) {
+  const t = Date.parse(startedAt || "");
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
 export class ChannelsSidebar {
   constructor({ followedListEl, showMoreBtn, loginPromptEl, topLiveListEl, onChannelSelect }) {
     this.followedListEl = followedListEl;
@@ -164,6 +173,9 @@ export class ChannelsSidebar {
           viewers: live ? live.viewer_count : 0,
           game: live ? live.game_name : "",
           dropsEnabled: live ? streamHasDropsEnabled(live) : false,
+          // for the hover preview card
+          thumbnail: live ? live.thumbnail_url || "" : "",
+          startedAt: live ? live.started_at || "" : "",
         };
       })
       // live first (highest viewers), then offline alphabetically, the official sidebar's default sort
@@ -460,6 +472,7 @@ export class ChannelsSidebar {
   }
 
   renderFollowed() {
+    this._hidePreview(); // the hovered row is about to be replaced
     this.followedListEl.innerHTML = "";
     const kick = isKick();
 
@@ -549,6 +562,7 @@ export class ChannelsSidebar {
       }
     }
 
+    this._hidePreview();
     this.topLiveListEl.innerHTML = "";
     let shown = 0;
     for (const s of rows) {
@@ -565,6 +579,8 @@ export class ChannelsSidebar {
         title: s.title,
         game: s.game_name,
         dropsEnabled: streamHasDropsEnabled(s),
+        thumbnail: s.thumbnail_url || "",
+        startedAt: s.started_at || "",
       };
       this.topLiveListEl.appendChild(this.buildChannelRow(ch));
     }
@@ -595,8 +611,15 @@ export class ChannelsSidebar {
     // right-click → hide this channel everywhere
     btn.addEventListener("contextmenu", (e) => {
       e.preventDefault();
+      this._hidePreview();
       showHideChannelMenu(e.clientX, e.clientY, ch.login, ch.name || ch.login);
     });
+    // hover preview card (live channels only), see _showPreview
+    if (ch.live) {
+      btn.addEventListener("mouseenter", () => this._schedulePreview(btn, ch));
+      btn.addEventListener("mouseleave", () => this._hidePreview());
+      btn.addEventListener("mousedown", () => this._hidePreview());
+    }
 
     const avatarWrap = document.createElement("div");
     avatarWrap.className = "sidebar-channel-avatar-wrap";
@@ -920,6 +943,89 @@ export class ChannelsSidebar {
       }
     };
     setTimeout(() => document.addEventListener("mousedown", close), 0);
+  }
+
+  // ---- hover preview card ----
+  // A short pause before showing, so sweeping the mouse down the list doesn't flash a card per row.
+  _schedulePreview(row, ch) {
+    clearTimeout(this._previewTimer);
+    this._previewTimer = setTimeout(() => this._showPreview(row, ch), 350);
+  }
+
+  _hidePreview() {
+    clearTimeout(this._previewTimer);
+    if (this._previewEl) this._previewEl.style.display = "none";
+  }
+
+  _showPreview(row, ch) {
+    if (!row.isConnected) return;
+    if (!this._previewEl) {
+      this._previewEl = document.createElement("div");
+      this._previewEl.className = "sidebar-preview";
+      this._previewEl.style.display = "none";
+      document.body.appendChild(this._previewEl);
+      // the card follows its row, so scrolling the list would leave it pointing at the wrong one
+      this.followedListEl?.closest("#channels-sidebar")?.addEventListener("scroll", () => this._hidePreview(), true);
+    }
+    const el = this._previewEl;
+    el.innerHTML = "";
+
+    // live thumbnail. Helix's URL is a {width}x{height} template; add a per-minute cache-buster so the
+    // image is current instead of whatever the webview cached the first time
+    if (ch.thumbnail) {
+      const media = document.createElement("div");
+      media.className = "sidebar-preview-media";
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = ch.thumbnail.replace("{width}", "440").replace("{height}", "248") +
+        `?t=${Math.floor(Date.now() / 60000)}`;
+      img.onerror = () => media.remove();
+      media.appendChild(img);
+      const badge = document.createElement("span");
+      badge.className = "sidebar-preview-live";
+      const up = previewUptime(ch.startedAt);
+      badge.textContent = up ? `LIVE · ${up}` : "LIVE";
+      media.appendChild(badge);
+      el.appendChild(media);
+    }
+
+    const body = document.createElement("div");
+    body.className = "sidebar-preview-body";
+    const top = document.createElement("div");
+    top.className = "sidebar-preview-top";
+    const name = document.createElement("span");
+    name.className = "sidebar-preview-name";
+    name.textContent = ch.name || ch.login;
+    const viewers = document.createElement("span");
+    viewers.className = "sidebar-preview-viewers";
+    viewers.textContent = `${formatViewerCount(ch.viewers || 0)} viewers`;
+    top.append(name, viewers);
+    body.appendChild(top);
+    if (ch.title) {
+      const title = document.createElement("div");
+      title.className = "sidebar-preview-title";
+      title.textContent = ch.title;
+      body.appendChild(title);
+    }
+    const meta = [ch.game, !ch.thumbnail ? previewUptime(ch.startedAt) && `live for ${previewUptime(ch.startedAt)}` : ""]
+      .filter(Boolean).join(" · ");
+    if (meta) {
+      const game = document.createElement("div");
+      game.className = "sidebar-preview-game";
+      game.textContent = meta;
+      body.appendChild(game);
+    }
+    el.appendChild(body);
+
+    // place to the right of the row, vertically centered on it, kept inside the window
+    el.style.display = "block";
+    const r = row.getBoundingClientRect();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let left = r.right + 10;
+    if (left + w > window.innerWidth - 8) left = Math.max(8, r.left - w - 10);
+    const top2 = Math.min(window.innerHeight - h - 8, Math.max(8, r.top + r.height / 2 - h / 2));
+    el.style.left = `${left}px`;
+    el.style.top = `${top2}px`;
   }
 
   // A channel is a favorite when the user explicitly added it via "Add to Favorites" in the bell menu.

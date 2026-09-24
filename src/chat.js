@@ -1499,7 +1499,7 @@ export class TwitchChat {
     line.appendChild(document.createTextNode(": "));
     const bodyEl = document.createElement("span");
     bodyEl.className = "thread-line-body";
-    try { bodyEl.appendChild(this.renderMessageBody(m.body, m.emotesTag || null)); }
+    try { bodyEl.appendChild(this._filteredBody(m.body, m.emotesTag || null, m.user)); }
     catch { bodyEl.textContent = m.body; }
     line.appendChild(bodyEl);
     return line;
@@ -2286,7 +2286,37 @@ export class TwitchChat {
     return outer;
   }
 
-  renderMessageBody(message, emotesTag = null, stripEmotes = false) {
+  // Should this user's message have blocked emotes stripped? Yes when the chat filter blocks any emotes,
+  // except for your own messages (same rule as main chat, see renderMessage)
+  _stripEmotesFor(username) {
+    if (!(this._compiledFilter && this._compiledFilter.emotes.size)) return false;
+    const u = String(username || "").toLowerCase();
+    if (!u) return true;
+    const own = [(this._isKickChat ? this._kickLogin : this.ownLogin), this.ownDisplayName]
+      .filter(Boolean).map((x) => String(x).toLowerCase());
+    return !own.includes(u);
+  }
+
+  // A message body for secondary views (thread panel, Mod Chat): blocked emotes stripped per the chat
+  // filter; a message that is ONLY blocked emotes becomes a muted "hidden" note (main chat drops those
+  // entirely, but a thread or log needs to keep its shape, e.g. a thread's root message)
+  _filteredBody(message, emotesTag, username) {
+    const strip = this._stripEmotesFor(username);
+    if (strip && this._messageIsOnlyBlockedEmotes(message, emotesTag)) {
+      const note = document.createElement("span");
+      note.className = "chat-filtered-note";
+      note.textContent = "hidden by your chat filter";
+      return note;
+    }
+    return this.renderMessageBody(message, emotesTag, strip);
+  }
+
+  // stripEmotes: remove the chat filter's blocked emotes. null (the default) = apply the filter, so every
+  // place that shows messages (thread panel, reply banner, Mod Chat, sub/announcement messages, and any
+  // future one) is filtered unless it explicitly opts out; main chat passes an explicit value because it
+  // exempts your own messages. see _stripEmotesFor / _filteredBody
+  renderMessageBody(message, emotesTag = null, stripEmotes = null) {
+    if (stripEmotes === null) stripEmotes = !!(this._compiledFilter && this._compiledFilter.emotes.size);
     const fragment = document.createDocumentFragment();
     const twitchEmotes = this.parseTwitchEmotesTag(message, emotesTag);
     const words = message.split(" ");
@@ -2455,7 +2485,7 @@ export class TwitchChat {
     // images, matching how the message appears in chat. Fall back to plain text if it isn't stored.
     // reuse the parent message looked up above (for the thread root); it carries the emotesTag
     try {
-      textSpan.appendChild(this.renderMessageBody(msgText, parent?.emotesTag || null));
+      textSpan.appendChild(this.renderMessageBody(msgText, parent?.emotesTag || null, this._stripEmotesFor(username)));
     } catch {
       textSpan.textContent = msgText;
     }

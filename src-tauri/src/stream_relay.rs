@@ -294,9 +294,14 @@ async fn spawn_pipeline(
     if probe[0] == 0x47 || force_remux {
         // MPEG-TS -> ffmpeg remux, OR fMP4-on-macOS forced through remux. no empty_moov here: ffmpeg probes the input first, then writes a complete moov once it knows the codec parameters. frag_keyframe + default_base_moof produce self-contained fragments MSE's SourceBuffer expects
         let mut ff_cmd = Command::new(resolve_dep_path("ffmpeg"));
+        ff_cmd.arg("-loglevel").arg("error");
+        // audio-only arrives at ~20 KB/s (vs ~750 KB/s for video), so ffmpeg's default input analysis and
+        // output buffering, sized for video, each cost seconds. AAC's parameters are in its very first frame,
+        // so a short analysis is enough. (input options must come before -i)
+        if quality == "audio_only" {
+            ff_cmd.arg("-probesize").arg("32768").arg("-analyzeduration").arg("500000");
+        }
         ff_cmd
-            .arg("-loglevel")
-            .arg("error")
             .arg("-i")
             .arg("pipe:0")
             .arg("-c")
@@ -304,7 +309,17 @@ async fn spawn_pipeline(
             .arg("-f")
             .arg("mp4")
             .arg("-movflags")
-            .arg("frag_keyframe+default_base_moof")
+            .arg("frag_keyframe+default_base_moof");
+        // Audio-only quality (the player's "Audio only" option): frag_keyframe cuts fragments at VIDEO
+        // keyframes, and an audio-only stream has none, so ffmpeg would never emit a fragment and the
+        // player would get nothing. Cut a fragment every second instead. Video streams are untouched.
+        // flush_packets: write each fragment to the pipe right away instead of waiting to fill ffmpeg's 32 KB
+        // output buffer (~1.6s per flush at audio bitrates). 0.5s fragments so the player's 1s start buffer
+        // fills sooner. video is untouched
+        if quality == "audio_only" {
+            ff_cmd.arg("-frag_duration").arg("500000").arg("-flush_packets").arg("1");
+        }
+        ff_cmd
             .arg("pipe:1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -774,15 +789,20 @@ pub async fn start_relay(
         return Err("superseded by a newer stream start".to_string());
     }
 
-    // stop whatever was running before, switching channels while one is active must not leave the previous streamlink process running alongside the new one
-    stop_current_stream(&state).await;
-
-    let pipeline = spawn_pipeline(&target_url, &quality, &extra_args)
-        .await
-        .map_err(|e| format!("Failed to launch stream pipeline: {e}"))?;
+    // the PREVIOUS stream keeps playing while the new one starts up (streamlink launch, playlist fetch,
+    // remux, first chunk: a few seconds). it used to be killed right here, before spawning, which left the
+    // viewer frozen or silent for that whole startup on every quality switch / channel change. now it's
+    // stopped at the handover below (or on any failure, so a failed switch can't leave it playing)
+    let pipeline = match spawn_pipeline(&target_url, &quality, &extra_args).await {
+        Ok(p) => p,
+        Err(e) => {
+            stop_current_stream(&state).await;
+            return Err(format!("Failed to launch stream pipeline: {e}"));
+        }
+    };
 
     // resolve the pipeline into (first_chunk, fmp4_stream, children). for native fMP4 (Passthrough), the probe bytes are already the first chunk and we skip the wait step. for MPEG-TS (FfmpegMediated), we race a read of ffmpeg's stdout against ffmpeg exiting to detect startup failures early
-    let (first_chunk, fmp4_stream, mut pipeline_children) = match pipeline {
+    let (mut first_chunk, mut fmp4_stream, mut pipeline_children) = match pipeline {
         PipelineResult::Passthrough { first_chunk, rest, sl_child } => {
             let stream: Box<dyn AsyncRead + Unpin + Send + 'static> = Box::new(rest);
             (first_chunk, stream, vec![sl_child])
@@ -793,6 +813,7 @@ pub async fn start_relay(
                     Ok(result) => result,
                     Err(e) => {
                         let _ = ff_child.kill().await;
+                        stop_current_stream(&state).await; // failed switch: don't leave the old stream playing
                         return Err(e);
                     }
                 };
@@ -801,6 +822,23 @@ pub async fn start_relay(
         }
     };
 
+    // Audio-only: bank ~2s of audio before the handover. the handover used to happen at the very first chunk,
+    // and audio arrives slowly (~20 KB/s, in ~2s bursts), so the player got too little to start on and sat in
+    // silence waiting for more. the previous stream keeps playing while this banks, so the listener hears no
+    // gap, and the player can start the moment it attaches. bounded by a deadline so a trickle can't hang the
+    // switch; the banked bytes stay contiguous with what the pump reads next (it resumes after them)
+    if quality == "audio_only" {
+        const AUDIO_PREROLL_BYTES: usize = 40 * 1024; // ~2s at Twitch's ~160 kbps audio_only
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(4);
+        let mut buf = vec![0u8; 16 * 1024];
+        while first_chunk.len() < AUDIO_PREROLL_BYTES {
+            match tokio::time::timeout_at(deadline, fmp4_stream.read(&mut buf)).await {
+                Ok(Ok(n)) if n > 0 => first_chunk.extend_from_slice(&buf[..n]),
+                _ => break, // deadline, EOF, or read error: hand over with what we have (EOF/errors surface via the pump as usual)
+            }
+        }
+    }
+
     // spawning took real time (streamlink launch + first-chunk wait). if a newer start_relay claimed its ticket meanwhile, WE are stale: storing our children/chunk_tx now would make us the "current" relay over the newer one, and our later stop_current_stream (or the newer call's) would then kill whichever pipeline the user actually wants. kill our own just-spawned processes and abort instead. (kill_on_drop would reap them anyway, but do it explicitly and promptly.)
     if state.start_requests.load(Ordering::SeqCst) != my_ticket {
         for mut child in pipeline_children.drain(..) {
@@ -808,6 +846,10 @@ pub async fn start_relay(
         }
         return Err("superseded by a newer stream start".to_string());
     }
+
+    // handover: the new pipeline is producing, so stop the previous one now (it only knows the children
+    // still registered in state, i.e. the old ones; ours aren't stored until just below)
+    stop_current_stream(&state).await;
 
     let (chunk_tx, _initial_rx) = broadcast::channel(CHUNK_BUFFER_CAPACITY);
 
@@ -831,8 +873,13 @@ pub async fn start_relay(
         cache.total_bytes = first_chunk.len() as u64;
         cache.walker = BoxWalker::new();
         cache.walker.feed(&first_chunk, 0);
+        // bump the generation BEFORE releasing the cache lock. the old pump checks the generation under this
+        // same lock, so with the bump inside it there's no window where an old pump sees the reset cache but
+        // the old generation and appends a stale chunk into the new session (the "worked great, then black
+        // screens" corruption). that window used to exist but was mostly harmless because the old stream had
+        // been killed well before; now it keeps playing until the handover, so it must be closed
+        state.generation.fetch_add(1, Ordering::SeqCst);
     }
-    state.generation.fetch_add(1, Ordering::SeqCst);
     // the first chunk's bytes need a subscriber-visible path too, same as every later chunk gets via pump_stdout_to_broadcast, sending it here (before any HTTP connection could possibly have subscribed) is fine precisely because handle_connection's snapshot-then-subscribe sequence reads init_cache under the same lock this chunk was just written under, so it'll see this chunk in its snapshot regardless of subscribing before or after this send
     let _ = chunk_tx.send(Arc::from(first_chunk.as_slice()));
 
