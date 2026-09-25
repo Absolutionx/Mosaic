@@ -1,6 +1,7 @@
 // emote loading, parsing, rendering, and the autocomplete popup. mixed onto TwitchChat (see ../chat.js)
 import { invoke } from "@tauri-apps/api/core";
 import { SEVENTV_API_BASE, BTTV_API_BASE } from "./shared.js";
+import { getSetting } from "../settings.js";
 import {
   parseTwitchEmotesTag,
   parseCheermoteWord,
@@ -70,6 +71,7 @@ export const chatEmotesMixin = {
   },
 
   async loadSevenTvGlobalEmotes() {
+    if (!getSetting("emotes7tv")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${SEVENTV_API_BASE}/emote-sets/global`);
       if (!res.ok) {
@@ -86,6 +88,7 @@ export const chatEmotesMixin = {
   },
 
   async loadSevenTvChannelEmotes(twitchUserId) {
+    if (!getSetting("emotes7tv")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${SEVENTV_API_BASE}/users/twitch/${twitchUserId}`);
       if (!res.ok) {
@@ -121,6 +124,7 @@ export const chatEmotesMixin = {
   // 7TV supports Kick first-class, same lookup as Twitch just /users/kick/{kick user id}.
   // BTTV/FFZ have no Kick support, so no Kick counterparts (their globals still load in Kick chat)
   async loadSevenTvKickChannelEmotes(kickUserId) {
+    if (!getSetting("emotes7tv")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${SEVENTV_API_BASE}/users/kick/${kickUserId}`);
       if (!res.ok) {
@@ -172,6 +176,7 @@ export const chatEmotesMixin = {
   },
 
   async loadBttvGlobalEmotes() {
+    if (!getSetting("emotesBttv")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/emotes/global`);
       if (!res.ok) return;
@@ -192,6 +197,7 @@ export const chatEmotesMixin = {
 
   // same numeric-user-id requirement as loadSevenTvChannelEmotes; 404 just means no BTTV page
   async loadBttvChannelEmotes(twitchUserId) {
+    if (!getSetting("emotesBttv")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/users/twitch/${twitchUserId}`);
       if (!res.ok) {
@@ -236,6 +242,7 @@ export const chatEmotesMixin = {
   // FFZ was previously not loaded at all, which is why common FFZ emotes (LOLW/KEKW, both FFZ
   // channel emotes) rendered as plain text
   async loadFfzGlobalEmotes() {
+    if (!getSetting("emotesFfz")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/frankerfacez/emotes/global`);
       if (!res.ok) {
@@ -251,6 +258,7 @@ export const chatEmotesMixin = {
 
   // same numeric-id requirement and 404-is-normal semantics as the other channel loaders
   async loadFfzChannelEmotes(twitchUserId) {
+    if (!getSetting("emotesFfz")) return; // Settings > Chat > emote providers
     try {
       const res = await fetch(`${BTTV_API_BASE}/cached/frankerfacez/users/twitch/${twitchUserId}`);
       if (!res.ok) {
@@ -338,7 +346,9 @@ export const chatEmotesMixin = {
   },
 
   _updateEmotePopup() {
-    const { word } = this._currentEmoteWord();
+    // a leading ":" is the "emote suggestions" trigger (Settings > Chat), not part of the name; picking a
+    // suggestion replaces the whole word, colon included
+    const word = this._currentEmoteWord().word.replace(/^:/, "");
     if (!word || word.length < 2) {
       this._hideEmotePopup();
       return;

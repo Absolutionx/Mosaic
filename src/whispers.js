@@ -4,6 +4,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";
+import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
 
 let chatRef = null;
 let overlay = null;
@@ -64,6 +66,15 @@ export function initWhispers(chat) {
         text: p.text || "",
       });
       updateBadge(unread);
+      // Settings > Notifications > Whispers: a desktop notification while Mosaic isn't the focused window
+      if ((document.hidden || !document.hasFocus()) && notificationAllowed("whisper")) {
+        isPermissionGranted().then((ok) => {
+          if (ok) sendNotification(notificationOptions({
+            title: `Whisper from ${p.from_user_name || p.from_user_login || "someone"}`,
+            body: String(p.text || "").slice(0, 180),
+          }));
+        }).catch(() => {});
+      }
       // if we're looking at this exact thread, append live + mark read
       if (overlay && view === "thread" && activeContact && activeContact.id === p.from_user_id) {
         appendMessageEl(false, p.text || "", Date.now());
@@ -97,7 +108,7 @@ function close() {
   if (overlay) { overlay.remove(); overlay = null; }
 }
 
-function openWhispers() {
+export function openWhispers() {
   if (overlay) { close(); return; }
   view = "list";
   activeContact = null;
@@ -331,7 +342,7 @@ async function renderThread(modal) {
   // leading ":" (e.g. ":kekw"). Ordinary typing never opens them (it used to, on nearly every word, since
   // most short words appear inside some emote name). Once open, typing keeps refining the list
   input.addEventListener("input", () => {
-    if (acVisible() || /^:\S{2,}$/.test(currentWord())) refreshAc();
+    if (acVisible() || (getSetting("emoteColonTrigger") && /^:\S{2,}$/.test(currentWord()))) refreshAc();
   });
   input.addEventListener("keydown", (e) => {
     if (!acVisible()) {

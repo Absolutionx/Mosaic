@@ -1,3 +1,4 @@
+import { getSetting } from "./settings.js";
 // MultiView: full-screen grid of several streams at once. built outside the single-stream
 // relay stack, each tile is a bare <video> fed by attachHlsVod + get_live_m3u8_url (native-HLS,
 // no relay). tiles get weaker ad-stripping than the main player, fine for a grid
@@ -6,6 +7,20 @@ import { attachHlsVod } from "./vod-player.js";
 import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { TwitchChat } from "./chat.js";
+
+// tile control icons (SVG, themed via currentColor) replacing the emoji/text glyphs the tiles used to show
+const MV_ICON = (d, extra = "") =>
+  `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
+const MV_ICONS = {
+  sound: MV_ICON('<path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/>'),
+  muted: MV_ICON('<path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>'),
+  pip: MV_ICON('<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor"/>'),
+  fullscreen: MV_ICON('<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>'),
+  close: MV_ICON('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+  chevron: MV_ICON('<path d="m6 9 6 6 6-6"/>', 'class="mv-q-chevron"'),
+};
+// quality choices, in menu order ("best" is shown as Source)
+const MV_QUALITY_LABELS = { best: "Source", "720p60": "720p60", "720p": "720p", "480p": "480p", "360p": "360p", "160p": "160p" };
 
 export class MultiView {
   constructor() {
@@ -323,6 +338,12 @@ export class MultiView {
 
   open(initialChannels = [], hooks = {}) {
     if (this._open) return; // already open, don't leak a second esc handler
+    // Settings > Home & MultiView > Default layout, unless the caller (Home's launcher) just chose one
+    if (!this._layoutChosen) {
+      const pref = getSetting("multiviewLayout");
+      this.setLayout(pref === "grid" ? "grid" : "spotlight"); // focus layout applies once there are 3+ streams
+    }
+    this._layoutChosen = false;
     this._ensureRoot();
     this._open = true;
     this._hooks = hooks;
@@ -380,6 +401,13 @@ export class MultiView {
     this._multiAudio = false;
     this.rootEl?.classList.remove("multiview-multiaudio-on");
     this.rootEl?.querySelector(".multiview-multiaudio")?.classList.remove("active");
+    // remember this set of streams for Home's launcher ("Last time: ... Reopen")
+    const lastChannels = [...this.tiles.keys()];
+    if (lastChannels.length >= 2) {
+      try {
+        localStorage.setItem("multiviewLastSession", JSON.stringify({ channels: lastChannels, at: Date.now() }));
+      } catch { /* ignore quota */ }
+    }
     // free the HLS instances
     for (const ch of [...this.tiles.keys()]) this.removeChannel(ch);
     // so its IRC connection doesn't linger
@@ -403,19 +431,12 @@ export class MultiView {
         <div class="multiview-tile-overlay">
           <span class="multiview-tile-name">${channel}</span>
           <div class="multiview-tile-actions">
-            <select class="multiview-tile-quality" title="Quality">
-              <option value="best">Source</option>
-              <option value="720p60">720p60</option>
-              <option value="720p">720p</option>
-              <option value="480p">480p</option>
-              <option value="360p">360p</option>
-              <option value="160p">160p</option>
-            </select>
-            <button class="multiview-tile-mute" title="Mute/unmute">🔇</button>
+            <button class="multiview-tile-quality" type="button" title="Quality"><span class="mv-q-label">Source</span>${MV_ICONS.chevron}</button>
+            <button class="multiview-tile-mute" type="button" title="Mute/unmute">${MV_ICONS.muted}</button>
             <input class="multiview-tile-volume" type="range" min="0" max="1" step="0.05" value="0" title="Volume" />
-            <button class="multiview-tile-pip" title="Picture in Picture">⧉</button>
-            <button class="multiview-tile-fs" title="Fullscreen">⛶</button>
-            <button class="multiview-tile-remove" title="Remove">&times;</button>
+            <button class="multiview-tile-pip" type="button" title="Picture in Picture">${MV_ICONS.pip}</button>
+            <button class="multiview-tile-fs" type="button" title="Fullscreen">${MV_ICONS.fullscreen}</button>
+            <button class="multiview-tile-remove" type="button" title="Remove">${MV_ICONS.close}</button>
           </div>
         </div>
       </div>
@@ -446,7 +467,10 @@ export class MultiView {
     tileEl.querySelector(".multiview-tile-volume")
       .addEventListener("input", (e) => { e.stopPropagation(); this.setTileVolume(channel, parseFloat(e.target.value)); });
     tileEl.querySelector(".multiview-tile-quality")
-      .addEventListener("change", (e) => this._setQuality(channel, e.target.value));
+      .addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._toggleQualityMenu(channel, e.currentTarget);
+      });
     tileEl.querySelector(".multiview-tile-pip")
       .addEventListener("click", (e) => {
         e.stopPropagation();
@@ -470,8 +494,9 @@ export class MultiView {
     });
 
     await this._loadVideo(record, loadingEl);
-    // first tile added becomes the audio focus automatically
-    if (!this.focusedChannel) this.focus(channel);
+    // first tile added becomes the audio focus automatically, unless Settings > MultiView starts muted
+    // (a stream Home's launcher picks for sound is focused explicitly, so it still gets it)
+    if (!this.focusedChannel && getSetting("multiviewSound") !== "muted") this.focus(channel);
     this._refreshLayout();
   }
 
@@ -587,10 +612,62 @@ export class MultiView {
     }
   }
 
+  // Themed quality menu for a tile (replaces the native <select>, whose popup can't be themed). Attached to the
+  // fullscreen element when a tile is fullscreen (a body-level menu would be invisible there), else to <body>.
+  _toggleQualityMenu(channel, btn) {
+    const existing = document.querySelector(".mv-quality-menu");
+    const wasForThis = existing && existing.dataset.channel === channel;
+    this._closeQualityMenu();
+    if (wasForThis) return;
+    const record = this.tiles.get(channel);
+    if (!record) return;
+    const menu = document.createElement("div");
+    menu.className = "mv-quality-menu";
+    menu.dataset.channel = channel;
+    for (const q of Object.keys(MV_QUALITY_LABELS)) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "mv-quality-item" + ((record.quality || "best") === q ? " active" : "");
+      item.textContent = MV_QUALITY_LABELS[q];
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this._closeQualityMenu();
+        this._setQuality(channel, q);
+      });
+      menu.appendChild(item);
+    }
+    (document.fullscreenElement || document.body).appendChild(menu);
+    const r = btn.getBoundingClientRect();
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    // above the button (the controls sit at the bottom of the tile), flipped below if there's no room
+    let top = r.top - h - 6;
+    if (top < 8) top = Math.min(window.innerHeight - h - 8, r.bottom + 6);
+    menu.style.top = `${top}px`;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w))}px`;
+    this._qualityMenuClose = (e) => {
+      if (e.type === "keydown" ? e.key === "Escape" : !menu.contains(e.target)) this._closeQualityMenu();
+    };
+    setTimeout(() => {
+      document.addEventListener("mousedown", this._qualityMenuClose, true);
+      document.addEventListener("keydown", this._qualityMenuClose, true);
+    }, 0);
+  }
+
+  _closeQualityMenu() {
+    document.querySelectorAll(".mv-quality-menu").forEach((m) => m.remove());
+    if (this._qualityMenuClose) {
+      document.removeEventListener("mousedown", this._qualityMenuClose, true);
+      document.removeEventListener("keydown", this._qualityMenuClose, true);
+      this._qualityMenuClose = null;
+    }
+  }
+
   async _setQuality(channel, quality) {
     const record = this.tiles.get(channel);
     if (!record || record.quality === quality) return;
     record.quality = quality;
+    const label = record.tileEl.querySelector(".mv-q-label");
+    if (label) label.textContent = MV_QUALITY_LABELS[quality] || quality;
     const loadingEl = record.tileEl.querySelector(".multiview-tile-loading");
     if (loadingEl) { loadingEl.style.display = ""; loadingEl.textContent = `Loading ${channel}...`; }
     await this._loadVideo(record, loadingEl);
@@ -600,6 +677,15 @@ export class MultiView {
     record.videoEl.muted = vol === 0;
     if (vol > 0) record.videoEl.play().catch(() => {});
     this._updateTileAudioUi(record);
+  }
+
+  // "grid" (even grid) or "spotlight" (focused stream big, the rest in a strip). used by Home's MultiView
+  // launcher; the toolbar's spotlight button stays in sync
+  setLayout(mode) {
+    this._layoutChosen = true; // an explicit choice for the next open() (see open)
+    this._spotlight = mode === "spotlight";
+    this.rootEl?.querySelector(".multiview-spotlight")?.classList.toggle("active", this._spotlight);
+    if (this._open) this._refreshLayout();
   }
 
   toggleTheater() {
@@ -706,10 +792,18 @@ export class MultiView {
   _updateTileAudioUi(rec) {
     const audible = !rec.videoEl.muted && (rec.volumeLevel ?? 0) > 0;
     const btn = rec.tileEl.querySelector(".multiview-tile-mute");
-    if (btn) btn.textContent = audible ? "🔊" : "🔇";
+    if (btn) {
+      btn.innerHTML = audible ? MV_ICONS.sound : MV_ICONS.muted;
+      btn.classList.toggle("audible", audible);
+    }
     const slider = rec.tileEl.querySelector(".multiview-tile-volume");
-    // show the saved level even when muted, so it can be pre-set
-    if (slider) slider.value = String(rec.volumeLevel ?? 0);
+    // show the saved level even when muted, so it can be pre-set. --vol drives the themed fill; the
+    // "muted" class greys it out
+    if (slider) {
+      slider.value = String(rec.volumeLevel ?? 0);
+      slider.style.setProperty("--vol", `${Math.round((rec.volumeLevel ?? 0) * 100)}%`);
+      slider.classList.toggle("muted", !audible);
+    }
   }
 
   // only one shared chat is ever connected
@@ -803,6 +897,7 @@ export class MultiView {
   }
 
   removeChannel(channel) {
+    if (document.querySelector(`.mv-quality-menu[data-channel="${CSS.escape(channel)}"]`)) this._closeQualityMenu();
     const record = this.tiles.get(channel);
     if (!record) return;
     if (record.hls) { record.hls.destroy(); record.hls = null; }

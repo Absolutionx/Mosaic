@@ -461,10 +461,6 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
   let _teardownExpected = false;
   // has onSilence fired for the CURRENT silent spell? reset when bytes arrive, so a later spell can probe again
   let _silenceSignaled = false;
-  // DEV: set by simulateSilence() to reproduce a stream end. arriving chunks are DROPPED and
-  // _lastByteAt goes stale, exactly what the player sees when a broadcast ends (the relay stops
-  // supplying without closing). everything downstream then runs on real timers
-  let _simulateSilence = false;
   // counters for the pre-playback mismatch watchdog in checkForStall
   let _bytesAppended = 0;
   let _firstAppendAt = 0;
@@ -518,7 +514,6 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
           break;
         }
         // DEV silence: drop the chunk and DON'T touch _lastByteAt, so the starvation timers age as if the relay went quiet
-        if (_simulateSilence) continue;
         _lastByteAt = performance.now();
         // bytes flowing again, re-arm the early-silence probe (it's once-per-spell)
         _silenceSignaled = false;
@@ -717,10 +712,6 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
     // reported as a death. buffered bytes keep playing until the replacement calls stop()
     expectTeardown() {
       _teardownExpected = true;
-    },
-    // DEV ONLY (the "Test failover" button): make this attachment behave as though the broadcast just ended
-    simulateSilence() {
-      _simulateSilence = true;
     },
     stop() {
       stopped = true;

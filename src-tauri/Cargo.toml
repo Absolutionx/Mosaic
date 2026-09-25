@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.3.0"
+version = "1.4.0"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
@@ -79,6 +79,8 @@ tauri-plugin-updater = "2"
 # are cross-platform crates; registered unconditionally (cheap, harmless).
 tauri-plugin-process = "2"
 tauri-plugin-os = "2"
+# Settings > App > Start Mosaic with your computer
+tauri-plugin-autostart = "2"
 
 [dependencies.time]
 version = "=0.3.49"

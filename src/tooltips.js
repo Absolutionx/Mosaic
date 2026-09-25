@@ -36,6 +36,9 @@ function titledAncestor(node) {
 
 function position() {
   if (!tipEl) return;
+  // measure at the top-left first, so the size is the tooltip's own and not squeezed by wherever it was last
+  tipEl.style.left = "0px";
+  tipEl.style.top = "0px";
   const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
   let left = mouseX + 2;
   let top = mouseY + CURSOR_GAP + 6;

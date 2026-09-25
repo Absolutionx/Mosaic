@@ -4,6 +4,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { normalizeUrl, LINK_PREVIEW_HOVER_DELAY_MS } from "./shared.js";
+import { parseClipSlug, buildClipCard } from "./chat-clips.js";
+import { getSetting } from "../settings.js";
 
 export const chatLinkPreviewMixin = {
   // real href but intercept the click for openUrl(), target="_blank" does nothing in a Tauri webview
@@ -23,11 +25,15 @@ export const chatLinkPreviewMixin = {
     });
     a.addEventListener("mouseenter", () => this._scheduleLinkPreview(a, url));
     a.addEventListener("mouseleave", () => this._cancelLinkPreview());
+    // Twitch clip links become a clip card that plays in-app (chat-clips.js); `a` is its fallback
+    const clipSlug = parseClipSlug(url);
+    if (clipSlug && getSetting("clipCards")) return buildClipCard(clipSlug, a);
     return a;
   },
 
   // cancel any in-flight timer/request first, so moving across links only fetches the one settled on
   _scheduleLinkPreview(linkEl, url) {
+    if (!getSetting("linkPreviews")) return; // Settings > Chat
     this._cancelLinkPreview();
     const myToken = ++this._linkPreviewToken;
 

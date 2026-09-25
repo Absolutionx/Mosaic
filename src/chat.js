@@ -1,3 +1,4 @@
+import { getSetting, onSettingChange, playChime } from "./settings.js";
 // Twitch chat: connection lifecycle and the message render pipeline. the IRC WebSocket lives in
 // Rust (chat.rs), WebView2's Tracking Prevention silently killed it in this webview. this file is
 // TwitchChat's core (start/stop, the chat-* listeners, send/render); emotes, badges, AutoMod, user
@@ -18,6 +19,8 @@ import { chatLinkPreviewMixin } from "./chat/chat-link-preview.js";
 import { chatAutocompleteMixin } from "./chat/chat-autocomplete.js";
 import { chatEventsMixin } from "./chat/chat-events.js";
 import { looksLikeUrl, USER_CARD_HISTORY_LIMIT } from "./chat/shared.js";
+import { chatLiveEventsMixin } from "./chat/chat-live-events.js";
+import { chatBadgePickerMixin } from "./chat/chat-badge-picker.js";
 
 // must match .chat-input's max-height in index.html, duplicated (not read via getComputedStyle) since _autosizeChatInput() needs it every keystroke
 const CHAT_INPUT_MAX_HEIGHT_PX = 120;
@@ -68,6 +71,9 @@ export class TwitchChat {
     this._emoteBtnEl = emoteBtn ?? document.getElementById("chat-emote-btn");
     this._emotePickerMenuEl = emotePickerMenu ?? document.getElementById("emote-picker-menu");
     this._inputBadgeEl = inputBadge ?? document.getElementById("chat-input-badge");
+    // click your badge (next to the input, or one of yours in chat) to change it (chat-badge-picker.js)
+    this._initBadgePicker();
+    this._initHoverPause();
     this._jumpToLatestBtnEl = jumpToLatestBtn ?? null;
     this._jumpToLatestCountEl = jumpToLatestCount ?? null;
     this.channel = null;
@@ -114,7 +120,9 @@ export class TwitchChat {
     this.badgeMap = new Map();
     // prefix.toLowerCase() -> tiers sorted DESCENDING by minBits, so Array.find gives the highest matching tier first
     this.cheermoteMap = new Map();
-    this.maxLines = 250;
+    // Settings > Chat > Chat history: applies live (this chat and MultiView's, both constructed here)
+    this.maxLines = Number(getSetting("chatHistory")) || 250;
+    onSettingChange((id, v) => { if (id === "chatHistory") this.maxLines = Number(v) || 250; });
     this.unlisteners = [];
     // serializes AND supersedes the lifecycle methods (connect/connectKick/disconnect/setVodMode/
     // setKickVodMode). two needs: (1) no interleaving, overlapping teardown/setup pairs would double
@@ -252,8 +260,10 @@ export class TwitchChat {
         if (this._popupMode === "user") {
           this._hideEmotePopup();
         }
-        // emote popup refresh while it's already open (Tab-triggered)
+        // emote popup: refresh while it's already open (Tab-triggered), or open it for a ":name" word when
+        // Settings > Chat > ":" opens emote suggestions is on (typing a colon is never accidental)
         if (this._emotePopup.style.display !== "none") this._updateEmotePopup();
+        else if (getSetting("emoteColonTrigger") && /^:\S{2,}$/.test(this._currentEmoteWord().word)) this._updateEmotePopup();
       });
       this.inputEl.addEventListener("blur", () => {
         // small delay so a popup click registers before the popup hides
@@ -495,9 +505,20 @@ export class TwitchChat {
     // trimming shifts scrollTop, which must not read as a user scroll (that would resume auto-scroll).
     // two guards: overflow-anchor:none + exact scrollHeight-delta compensation prevent drift, and a boolean
     // (not a counter, which desynced when the browser coalesced writes) marks the next scroll event as ours
+    // while paused (scrolled up), never remove a line that's on screen: once the backlog reached the lines
+    // being read, trimming deleted them, the view couldn't scroll any higher, and chat visibly "resumed" while
+    // still paused (the button stayed up). so paused chat may grow past maxLines, trimming only lines fully
+    // above the viewport; at a hard cap it resumes cleanly instead (jump to latest, button hidden)
+    if (this.userScrolledUp && this.container.children.length > this.maxLines * 6) {
+      this.scrollToLatest();
+    }
     const heightBefore = this.container.scrollHeight;
+    const viewTop = this.userScrolledUp ? this.container.getBoundingClientRect().top : 0;
     while (this.container.children.length > this.maxLines) {
-      this.container.removeChild(this.container.firstChild);
+      const first = this.container.firstElementChild;
+      if (!first) break;
+      if (this.userScrolledUp && first.getBoundingClientRect().bottom > viewTop) break; // on screen: keep it
+      this.container.removeChild(first);
     }
     const removedHeight = heightBefore - this.container.scrollHeight;
     if (removedHeight > 0 && this.userScrolledUp) {
@@ -1214,6 +1235,7 @@ export class TwitchChat {
   }
 
   _applyPaint(el, userId) {
+    if (!getSetting("sevenTvPaints")) return; // Settings > Chat
     if (!userId || !this._userPaints || !this._paintDefs) return;
     const paintId = this._userPaints.get(userId);
     if (!paintId) return;
@@ -1625,11 +1647,14 @@ export class TwitchChat {
     this._renderPin([]);
   }
 
-  // renders the first pin as a banner (dismissible until a different message is pinned). uses
-  // textContent for user/message so pinned content can't inject markup
+  // renders the first pin as a banner (dismissible until a different message is pinned). the message goes
+  // through the chat renderer (clickable links, emotes, your chat filter), which builds DOM nodes, never
+  // markup, so pinned content can't inject HTML; the sender name stays plain textContent
   _renderPin(pins) {
     const el = document.getElementById("pinned-message");
     if (!el) return;
+    this._lastPins = pins; // kept so turning the pinned banner back on can redraw it
+    if (!getSetting("pinnedBanner")) { el.style.display = "none"; return; } // Settings > Chat
     const pin = pins && pins[0];
     if (!pin || !pin.text) {
       el.style.display = "none";
@@ -1648,7 +1673,11 @@ export class TwitchChat {
     const textEl = el.querySelector(".pinned-text");
     userEl.textContent = pin.sender_name || "";
     if (pin.sender_color && /^#[0-9a-fA-F]{6}$/.test(pin.sender_color)) userEl.style.color = pin.sender_color;
-    textEl.textContent = pin.text;
+    try {
+      textEl.appendChild(this.renderMessageBody(pin.text, null, this._stripEmotesFor(pin.sender_name)));
+    } catch {
+      textEl.textContent = pin.text; // renderer unavailable for some reason: plain text beats no pin
+    }
     el.style.display = "flex";
     el.querySelector(".pinned-dismiss").onclick = () => {
       this._dismissedPinId = pin.message_id || "";
@@ -1661,7 +1690,6 @@ export class TwitchChat {
   // read-only web GQL, works for any channel (unlike the broadcaster-only EventSub path)
   _startHypePoll(login) {
     this._stopHypePoll();
-    this._stopPredictionPoll();
     if (!login) return;
     this._hypePollActive = true;
     // adaptive cadence (matches StreamNook): poll fast while a train runs so the bar tracks
@@ -1728,6 +1756,7 @@ export class TwitchChat {
   _renderHype(levelUp) {
     const el = document.getElementById("hype-train-banner");
     if (!el || !this._hype) return;
+    if (!getSetting("hypeGiftBanners")) { el.style.display = "none"; return; } // Settings > Chat
     const h = this._hype;
     const pct = h.goal > 0 ? Math.min(100, Math.round((h.progress / h.goal) * 100)) : 0;
     el.className = "hype-train-banner" + (h.is_golden ? " golden" : "");
@@ -1752,87 +1781,7 @@ export class TwitchChat {
     }
   }
 
-  // Twitch prediction: poll GetChannelPrediction (via Rust) for the watched channel and show an
-  // overlay atop chat (title, outcomes with vote bars + point/user totals, status, countdown). needs
-  // the device login (same token as pins); nothing shows otherwise
-  _startPredictionPoll(login) {
-    this._stopPredictionPoll();
-    if (!login) return;
-    const poll = async () => {
-      try {
-        const p = await invoke("get_channel_prediction", { channelLogin: login });
-        this._prediction = p && p.id ? p : null;
-        this._renderPrediction();
-        if (this._prediction && !this._predTick) this._predTick = setInterval(() => this._tickPrediction(), 1000);
-      } catch (err) {
-        console.error("[prediction] GetChannelPrediction failed:", err);
-      }
-    };
-    poll();
-    this._predPollTimer = setInterval(poll, 5000);
-  }
-
-  _stopPredictionPoll() {
-    if (this._predPollTimer) { clearInterval(this._predPollTimer); this._predPollTimer = null; }
-    this._prediction = null;
-    if (this._predTick) { clearInterval(this._predTick); this._predTick = null; }
-    const el = document.getElementById("prediction-overlay");
-    if (el) { el.style.display = "none"; el.replaceChildren(); }
-  }
-
-  _predSecondsLeft() {
-    const p = this._prediction;
-    if (!p || !p.created_at) return 0;
-    const start = Date.parse(p.created_at);
-    if (isNaN(start)) return 0;
-    return Math.max(0, Math.round((start + p.window_seconds * 1000 - Date.now()) / 1000));
-  }
-
-  _tickPrediction() {
-    if (!this._prediction) return;
-    if (this._prediction.status === "ACTIVE") {
-      const c = document.getElementById("prediction-countdown");
-      if (c) c.textContent = this._predSecondsLeft() + "s";
-    }
-  }
-
-  _renderPrediction() {
-    const el = document.getElementById("prediction-overlay");
-    if (!el) return;
-    const p = this._prediction;
-    if (!p) { el.style.display = "none"; el.replaceChildren(); return; }
-
-    const totalPoints = p.outcomes.reduce((a, o) => a + (o.total_points || 0), 0);
-    const statusText =
-      p.status === "ACTIVE" ? `<span id="prediction-countdown">${this._predSecondsLeft()}s</span>`
-      : p.status === "LOCKED" ? "Locked" : "Result";
-
-    const rows = p.outcomes.map((o) => {
-      const pct = totalPoints > 0 ? Math.round((o.total_points / totalPoints) * 100) : 0;
-      const isWinner = p.winning_outcome_id && o.id === p.winning_outcome_id;
-      const colorClass = (o.color || "BLUE").toLowerCase() === "pink" ? "pink" : "blue";
-      return (
-        `<div class="pred-outcome ${colorClass}${isWinner ? " winner" : ""}">` +
-          `<div class="pred-fill" style="width:${pct}%"></div>` +
-          `<div class="pred-outcome-row">` +
-            `<span class="pred-title"></span>` +
-            `<span class="pred-stats">${pct}% · ${fmtCount(o.total_points)}</span>` +
-          `</div>` +
-        `</div>`
-      );
-    }).join("");
-
-    el.innerHTML =
-      `<div class="pred-head"><span class="pred-badge">Prediction</span><span class="pred-name"></span><span class="pred-status">${statusText}</span></div>` +
-      `<div class="pred-outcomes">${rows}</div>`;
-    el.querySelector(".pred-name").textContent = p.title || "";
-    // set outcome titles via textContent (avoid markup injection)
-    el.querySelectorAll(".pred-outcome").forEach((node, i) => {
-      const t = node.querySelector(".pred-title");
-      if (t) t.textContent = p.outcomes[i] ? p.outcomes[i].title : "";
-    });
-    el.style.display = "block";
-  }
+  // predictions + polls (with betting / voting) live in chat/chat-live-events.js (chatLiveEventsMixin)
 
   // persistent channel-points balance pill next to the chatbox. polls the current channel's balance
   // (device login required); hides when not connected / no balance / on Kick
@@ -1889,6 +1838,12 @@ export class TwitchChat {
     const _own = (this._isKickChat ? this._kickLogin : this.ownLogin) || this.ownDisplayName;
     const isOwnMsg = !!(_own && username && username.toLowerCase() === _own.toLowerCase());
     const stripEmotes = !isOwnMsg && !!(this._compiledFilter && this._compiledFilter.emotes.size);
+    // Settings > Chat > Highlight my name: messages mentioning you (or a keyword) stand out, optional chime
+    // (never for VOD chat replay, where "new" messages aren't new)
+    if (!isOwnMsg && getSetting("highlightMentions") && this._mentionsMe(message)) {
+      line.classList.add("chat-mention");
+      if (getSetting("highlightSound") && !this._vodReplayStop) playChime();
+    }
     if (stripEmotes && this._messageIsOnlyBlockedEmotes(message, emotesTag)) return;
 
     const line = document.createElement("div");
@@ -1979,6 +1934,12 @@ export class TwitchChat {
     badgeSlot.dataset.badgesTag = badgesTag || "";
     const badgeFragment = this.renderBadges(badgesTag);
     if (badgeFragment) badgeSlot.appendChild(badgeFragment);
+    // time the message arrived: always rendered, shown only when Settings > Chat > Show timestamps is on
+    // (a body class), so toggling it applies instantly to chat already on screen
+    const ts = document.createElement("span");
+    ts.className = "chat-ts";
+    ts.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    line.appendChild(ts);
     line.appendChild(badgeSlot);
 
     const nameSpan = document.createElement("span");
@@ -1986,7 +1947,7 @@ export class TwitchChat {
     nameSpan.style.color = this.normalizeColor(color);
     nameSpan.textContent = username + ":";
     if (userId) this._applyPaint(nameSpan, userId);
-    // clicking the username opens the user card (avatar, account age, timeout/ban, delete). timeout/ban are card-only (like Twitch); delete is also on the hover row. needs the sender's userId, absent only for the local echo. VOD lines have a real userId, so their cards work; timeout/ban stay disabled there (no roomId)
+    // clicking the username opens the user card (avatar, account age, timeout/ban, delete); the same mod actions are also in the message's right-click menu. needs the sender's userId, absent only for the local echo. VOD lines have a real userId, so their cards work; timeout/ban stay disabled there (no roomId)
     if (userId) {
       nameSpan.classList.add("chat-username-clickable");
       nameSpan.addEventListener("click", (e) => {
@@ -2041,92 +2002,8 @@ export class TwitchChat {
       line.appendChild(badge);
     }
 
-    // built lazily on first mouseenter to avoid creating DOM nodes for every message up front
-    line.addEventListener("mouseenter", () => {
-      if (line.querySelector(".chat-line-actions")) return; // already built
-      const actions = document.createElement("div");
-      actions.className = "chat-line-actions";
-
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "chat-line-action-btn";
-      copyBtn.title = "Copy message";
-      copyBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-        <path d="M4 2h7a1 1 0 0 1 1 1v9h-1V3H4V2zm-1 2h7a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm0 10h7V5H3v9z"/>
-      </svg>`;
-      copyBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        navigator.clipboard.writeText(line.dataset.msgText || "").catch(() => {});
-      });
-
-      if (this.isLoggedIn && line.dataset.msgId) {
-        const replyBtn = document.createElement("button");
-        replyBtn.className = "chat-line-action-btn";
-        replyBtn.title = "Reply";
-        replyBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-          <path d="M6 3.5L1 7.5l5 4V9c3.5 0 6 1 7.5 4C13 9 11 5 6 5V3.5z"/>
-        </svg>`;
-        replyBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this._setReplyTarget(line.dataset.msgId, line.dataset.msgUsername, line.dataset.msgText || "");
-        });
-        actions.appendChild(replyBtn);
-      }
-
-      actions.appendChild(copyBtn);
-
-      // Mod-only hover actions (delete / timeout / ban): rendered only when you're a mod of this
-      // channel. Non-mods don't see them at all (previously they showed greyed-out and disabled).
-      // Enforcement is still server-side; this is purely to declutter chat for non-mods.
-      if (this.isMod && this.roomId) {
-        const targetUsername = line.dataset.msgUsername || "";
-        const isSelf = this._isSelf(targetUsername);
-
-        const canDelete = Boolean(line.dataset.msgId) && !isSelf;
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "chat-line-action-btn mod-action-btn";
-        deleteBtn.title = canDelete ? "Delete message" : "Delete message (unavailable)";
-        deleteBtn.disabled = !canDelete;
-        deleteBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-          <path d="M5.5 1a1 1 0 0 0-1 1v1H2v1h12V3h-2.5V2a1 1 0 0 0-1-1h-3zM3 5l.7 8.4A1 1 0 0 0 4.7 14h6.6a1 1 0 0 0 1-.94L13 5H3zm3 2h1v5H6V7zm3 0h1v5H9V7z"/>
-        </svg>`;
-        deleteBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (!canDelete) return;
-          this._deleteMessage(line.dataset.msgId, deleteBtn);
-        });
-        actions.appendChild(deleteBtn);
-
-        // Timeout (with a duration menu) + Ban, matching StreamNook's per-message dock
-        const canMod = Boolean(line.dataset.msgUserId) && !isSelf;
-        const toBtn = document.createElement("button");
-        toBtn.className = "chat-line-action-btn mod-action-btn";
-        toBtn.title = canMod ? "Timeout" : "Timeout (unavailable)";
-        toBtn.disabled = !canMod;
-        toBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5a5.5 5.5 0 0 1 0 11zM7.25 4v4.31l3.4 2 .75-1.25-2.65-1.56V4h-1.5z"/></svg>`;
-        toBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (!canMod) return;
-          this._showTimeoutMenu(toBtn, line.dataset.msgUserId, line.dataset.msgUsername);
-        });
-        actions.appendChild(toBtn);
-
-        const banBtn = document.createElement("button");
-        banBtn.className = "chat-line-action-btn mod-action-btn";
-        banBtn.title = canMod ? "Ban" : "Ban (unavailable)";
-        banBtn.disabled = !canMod;
-        banBtn.innerHTML = `<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM2.5 8a5.5 5.5 0 0 1 8.9-4.32l-7.72 7.72A5.47 5.47 0 0 1 2.5 8zm5.5 5.5c-1.28 0-2.46-.44-3.4-1.18l7.72-7.72A5.5 5.5 0 0 1 8 13.5z"/></svg>`;
-        banBtn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (!canMod) return;
-          this._confirmAndBan(line.dataset.msgUserId, line.dataset.msgUsername);
-        });
-        actions.appendChild(banBtn);
-      }
-
-      line.appendChild(actions);
-    });
-
-    // copy/reply only; mod actions (besides the hover Delete) live in the user card
+    // right-click: reply / copy / profile, plus delete / timeout / ban for mods (see _showMessageContextMenu).
+    // these used to be a row of buttons shown on hover, which cluttered chat and covered message text
     line.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       this._showMessageContextMenu(e.clientX, e.clientY, line);
@@ -2230,7 +2107,51 @@ export class TwitchChat {
   // ASCII-art detection, same rule as Chatterino (messages/AsciiArt.cpp): at least 40 grapheme
   // clusters containing a Unicode "Symbol, other" (So) or "Symbol, modifier" (Sk) code point. That
   // covers Braille (the vast majority of Twitch art), block elements and box drawing.
+  // does a message mention you (login / display name, as a whole word, with or without @) or one of your
+  // highlight keywords? the regex is rebuilt only when the names or keywords change
+  _mentionsMe(message) {
+    const names = [this.ownLogin, this.ownDisplayName, this._kickLogin].filter(Boolean).map((n) => String(n).toLowerCase());
+    const kws = String(getSetting("highlightKeywords") || "").split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
+    const key = names.join("|") + "#" + kws.join("|");
+    if (this._mentionKey !== key) {
+      this._mentionKey = key;
+      const terms = [...new Set([...names, ...kws])].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      this._mentionRe = terms.length ? new RegExp(`(^|[^\\p{L}\\p{N}_])@?(${terms.join("|")})(?=$|[^\\p{L}\\p{N}_])`, "iu") : null;
+    }
+    return !!(this._mentionRe && this._mentionRe.test(String(message || "")));
+  }
+
+  // Settings > Chat > Pause chat on hover: the mouse over chat pauses it ("Chat paused due to hover");
+  // leaving resumes, unless you scrolled while hovering, then it stays paused like a normal scroll-pause
+  _initHoverPause() {
+    const c = this.container;
+    if (!c) return;
+    c.addEventListener("mouseenter", () => {
+      if (!getSetting("pauseOnHover") || this.userScrolledUp) return;
+      this._hoverPaused = true;
+      this._hoverScrolled = false;
+      this.userScrolledUp = true;
+      this._setPausedReason("hover");
+      this.updateJumpToLatestVisibility();
+    });
+    c.addEventListener("wheel", () => { if (this._hoverPaused) this._hoverScrolled = true; }, { passive: true });
+    c.addEventListener("mouseleave", () => {
+      if (!this._hoverPaused) return;
+      this._hoverPaused = false;
+      this._setPausedReason("scroll");
+      if (this._hoverScrolled) this.updateJumpToLatestVisibility(); // you scrolled: stay paused
+      else this.scrollToLatest();
+    });
+  }
+
+  _setPausedReason(reason) {
+    const btn = this.jumpToLatestBtn;
+    const last = btn && btn.lastChild;
+    if (last && last.nodeType === 3) last.nodeValue = ` Chat paused due to ${reason}`;
+  }
+
   _isAsciiArt(message) {
+    if (!getSetting("asciiArt")) return false; // Settings > Chat > ASCII art
     if (!message || message.length < ASCII_ART_MIN_GRAPHEMES) return false;
     let n = 0;
     for (const { segment } of graphemeSegmenter().segment(message)) {
@@ -2526,12 +2447,6 @@ export class TwitchChat {
     if (this.isMod !== wasMod) {
       // the AutoMod toggle's visibility depends on isMod, refresh even with an empty queue so the button appears the moment USERSTATE confirms mod status
       this._renderAutomodPanel();
-      // Hover action bars are built lazily and cached per line; the mod buttons (delete/timeout/ban)
-      // are only added when isMod. If mod status flips mid-session, drop the cached bars so each line
-      // rebuilds its correct button set on the next hover.
-      try {
-        this.container?.querySelectorAll(".chat-line-actions").forEach((el) => el.remove());
-      } catch { /* container may not exist yet */ }
       for (const fn of this._modStatusListeners) {
         try { fn(this.isMod); } catch (err) { console.error("mod status listener error:", err); }
       }
@@ -2549,7 +2464,7 @@ export class TwitchChat {
 }
 
 // mixed in here rather than inline to keep this file manageable. all run with the same `this` as everything above; no behavioral difference from one giant class body
-Object.assign(TwitchChat.prototype, chatEmotesMixin, chatEmotePickerMixin, chatVodReplayMixin, chatBadgesMixin, chatAutomodMixin, chatUserCardMixin, chatModActionsMixin, chatLinkPreviewMixin, chatAutocompleteMixin, chatEventsMixin);
+Object.assign(TwitchChat.prototype, chatEmotesMixin, chatEmotePickerMixin, chatVodReplayMixin, chatBadgesMixin, chatAutomodMixin, chatUserCardMixin, chatModActionsMixin, chatLinkPreviewMixin, chatAutocompleteMixin, chatEventsMixin, chatLiveEventsMixin, chatBadgePickerMixin);
 
 // compact number formatter for prediction point/vote totals (12500 -> "12.5K")
 function fmtCount(n) {

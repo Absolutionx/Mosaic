@@ -1,3 +1,4 @@
+import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
 // channels sidebar: followed channels (live + offline) and a Live Channels list. data via
 // Rust-proxied Helix (followed, streams-for-users, users-info, top-live), since api.twitch.tv
 // isn't reachable from WebView2
@@ -12,7 +13,7 @@ import { isHidden, hideChannel, onHiddenChange, showHideChannelMenu } from "./hi
 const REFRESH_INTERVAL_MS = 60_000;
 const COLLAPSED_LIVE_COUNT = 8;
 // max rows in the "Live Channels" (top live) sidebar section
-const TOP_LIVE_LIMIT = 10;
+// Live Channels count: Settings > Sidebar (liveChannelsCount)
 
 // "2h 13m" / "45m" since an ISO start time, for the hover preview. "" if unknown
 function previewUptime(startedAt) {
@@ -197,11 +198,6 @@ export class ChannelsSidebar {
   // / rendering, so the two concerns can't re-entangle. costs one extra batched Helix call per refresh
   // while in Twitch mode (the view fetches the same rows separately), negligible next to the correctness
   async _pollTwitchGoLive() {
-    // DEBUG heartbeat: records that a poll tick ran and when, so you can confirm the background poll
-    // keeps ticking while the window is hidden to tray (window.__notifyPollStatus()). Harmless in prod.
-    this._lastPollAt = Date.now();
-    this._pollTickCount = (this._pollTickCount || 0) + 1;
-
     // needs the Twitch follow list, which requires a Twitch login; and skip the round-trip when
     // nothing is opted in (a later opt-in seeds its own baseline on the first tick after it's added)
     if (!this.loggedIn || (this.notifyChannels.size === 0 && this.categoryTargets.size === 0)) return;
@@ -293,126 +289,27 @@ export class ChannelsSidebar {
       return;
     }
 
-    for (const ch of newlyLive) {
+    // Settings > Notifications: per-kind switches + quiet hours (notificationAllowed), sound (notificationOptions)
+    for (const ch of notificationAllowed("golive") ? newlyLive : []) {
       try {
-        sendNotification({
+        sendNotification(notificationOptions({
           title: `${ch.name} is live!`,
           body: ch.title || ch.game || "Started streaming on Twitch",
-        });
+        }));
       } catch (err) {
         console.error(`Failed to send go-live notification for ${ch.login}:`, err);
       }
     }
-    for (const ch of categoryHits) {
+    for (const ch of notificationAllowed("category") ? categoryHits : []) {
       try {
-        sendNotification({
+        sendNotification(notificationOptions({
           title: `${ch.name} is now playing ${ch.game}`,
           body: ch.title || `Switched to ${ch.game}`,
-        });
+        }));
       } catch (err) {
         console.error(`Failed to send category notification for ${ch.login}:`, err);
       }
     }
-  }
-
-  // DEBUG ONLY (window.__testGoLiveNotification, see main.js): force "last seen offline" and feed a
-  // live row straight into the real _checkForNewlyLiveChannels(), so detection, opt-in check, and
-  // notify all fire without waiting for a channel to actually go live. works while viewing the Kick
-  // side too (which is the case this whole path exists to prove), since it no longer needs the channel
-  // to be present in this.followed
-  async debugTestGoLiveNotification(login) {
-    const targetLogin = login || [...this.notifyChannels][0];
-    if (!targetLogin) {
-      throw new Error(
-        "No channel opted into notifications yet - click the bell on a followed channel first, or pass a login explicitly: window.__testGoLiveNotification('somechannel')"
-      );
-    }
-    if (!this.notifyChannels.has(targetLogin)) {
-      throw new Error(
-        `"${targetLogin}" isn't opted into notifications - click its bell icon first, or pass a login that already is.`
-      );
-    }
-    // use real title/game text if the channel happens to be in the current view, else synthesize a
-    // minimal row (still exercises the real detection + notify path either way)
-    const known = this.followed.find((c) => c.login === targetLogin);
-    const ch = {
-      login: targetLogin,
-      name: known?.name || targetLogin,
-      live: true,
-      title: known?.title || "",
-      game: known?.game || "",
-    };
-    // force "last seen offline" so the real function reads this as a genuine transition
-    this._lastLiveState.set(targetLogin, false);
-    console.log(`[debug] Faking go-live transition for "${targetLogin}" and re-running the real notification check...`);
-    await this._checkForNewlyLiveChannels([ch]);
-    console.log("[debug] Done - check your OS notifications if nothing appeared, see console for any errors logged above.");
-  }
-
-  // DEBUG ONLY (window.__testCategoryNotification, see main.js): force a "switched category"
-  // transition through the real _checkForNewlyLiveChannels(), so the category-notify path fires
-  // without waiting for a streamer to actually change games. Requires the channel to be opted into a
-  // category (click the bell → add a category), and uses the FIRST category it's tracking as the fake
-  // "new game" so it matches.
-  async debugTestCategoryNotification(login) {
-    const targetLogin = login || [...this.categoryTargets.keys()][0];
-    if (!targetLogin) {
-      throw new Error(
-        "No channel has a category notification set yet - click a channel's bell and add a category first, or pass a login explicitly: window.__testCategoryNotification('somechannel')"
-      );
-    }
-    const targets = this.categoryTargets.get(targetLogin);
-    if (!targets || !targets.length) {
-      throw new Error(`"${targetLogin}" has no category notifications set - add one via its bell icon first.`);
-    }
-    const fakeGame = targets[0]; // notify fires when the channel switches INTO a tracked category
-    const known = this.followed.find((c) => c.login === targetLogin);
-    const ch = {
-      login: targetLogin,
-      name: known?.name || targetLogin,
-      live: true,
-      title: known?.title || "",
-      game: fakeGame,
-    };
-    // seed a DIFFERENT previous game so the current game reads as a genuine change into the target
-    this._lastGame.set(targetLogin, "__something_else__");
-    console.log(`[debug] Faking a category switch for "${targetLogin}" into "${fakeGame}" and re-running the real notification check...`);
-    await this._checkForNewlyLiveChannels([ch]);
-    console.log("[debug] Done - check your OS notifications if nothing appeared, see console for any errors logged above.");
-  }
-
-  // DEBUG ONLY (window.__testFireNotification): fire a notification straight through the real
-  // sendNotification path, NO opt-in required. This is the simplest "does an OS notification actually
-  // display right now (e.g. while minimized to tray)?" check - it bypasses detection and just proves
-  // the notification plumbing + OS permission are working.
-  async debugFireNotification() {
-    try {
-      let granted = await isPermissionGranted();
-      if (!granted) granted = (await requestPermission()) === "granted";
-      if (!granted) { console.warn("[debug] Notification permission not granted - can't display."); return; }
-      sendNotification({ title: "Mosaic test notification", body: "If you can see this, notifications work while the window is hidden." });
-      console.log("[debug] Fired a test notification. If nothing appeared, the OS is suppressing it (check Focus Assist / Do Not Disturb / notification settings).");
-    } catch (err) {
-      console.error("[debug] Failed to fire test notification:", err);
-    }
-  }
-
-  // DEBUG ONLY (window.__notifyPollStatus): reports whether the background go-live/category poll is
-  // still ticking, and how long ago the last tick ran. Use it after reopening from tray to confirm the
-  // poll kept running while hidden (the tick count should have advanced).
-  debugPollStatus() {
-    const now = Date.now();
-    const last = this._lastPollAt || 0;
-    const agoSec = last ? Math.round((now - last) / 1000) : null;
-    const status = {
-      pollTickCount: this._pollTickCount || 0,
-      lastTickAgoSeconds: agoSec,
-      loggedIn: this.loggedIn,
-      optedInChannels: this.notifyChannels.size,
-      categoryTargets: this.categoryTargets.size,
-    };
-    console.log("[debug] Notify poll status:", status);
-    return status;
   }
 
   // local follow list + one batched kick_followed_status lookup. live first, offline greyed
@@ -473,11 +370,20 @@ export class ChannelsSidebar {
 
   renderFollowed() {
     this._hidePreview(); // the hovered row is about to be replaced
+    // Home's MultiView launcher shows live favorites: let it refresh (after this render finishes)
+    queueMicrotask(() => window.dispatchEvent(new CustomEvent("mosaic:live-favorites-changed")));
     this.followedListEl.innerHTML = "";
     const kick = isKick();
 
     // drop hidden channels from the followed list entirely
-    const followedVisible = this.followed.filter((ch) => !isHidden(ch.login));
+    let followedVisible = this.followed.filter((ch) => !isHidden(ch.login));
+    // Settings > Sidebar: hide offline channels; sort by name (live channels always stay on top). "By
+    // viewers" is the list's natural order (live-first, most viewers first)
+    if (!getSetting("showOfflineFollowed")) followedVisible = followedVisible.filter((ch) => ch.live);
+    if (getSetting("followedSort") === "name") {
+      followedVisible = [...followedVisible].sort((a, b) =>
+        (Number(!!b.live) - Number(!!a.live)) || String(a.name || a.login).localeCompare(String(b.name || b.login), undefined, { sensitivity: "base" }));
+    }
 
     // Favorites = followed channels the user explicitly favorited (bell menu → "Add to Favorites").
     // They get their own section above Followed Channels (Twitch only — Kick rows have no bell menu)
@@ -566,7 +472,7 @@ export class ChannelsSidebar {
     this.topLiveListEl.innerHTML = "";
     let shown = 0;
     for (const s of rows) {
-      if (shown >= TOP_LIVE_LIMIT) break; // Live Channels is capped; counted after hidden-filtering
+      if (shown >= (Number(getSetting("liveChannelsCount")) || Infinity)) break; // Settings > Sidebar (0 = all); counted after hidden-filtering
       if (isHidden(s.user_login)) continue; // user hid this channel
       shown++;
       const ch = {
@@ -945,11 +851,33 @@ export class ChannelsSidebar {
     setTimeout(() => document.addEventListener("mousedown", close), 0);
   }
 
+  // Channels for Home's MultiView launcher: followed Twitch channels that are live right now and that you
+  // either favorited or turned "Notify when live" on for (the bell). Favorites first, then by viewers, so
+  // when more are live than MultiView holds, favorites fill it first. Empty in Kick mode (both are Twitch-only)
+  getLiveFavorites() {
+    if (isKick()) return [];
+    return this.followed
+      .filter((ch) => ch.live && !isHidden(ch.login) &&
+        (this._isFavorite(ch.login) || this.notifyChannels.has(ch.login)))
+      .map((ch) => ({
+        login: ch.login, name: ch.name || ch.login, viewers: ch.viewers || 0, game: ch.game || "",
+        title: ch.title || "", thumbnail: ch.thumbnail || "", startedAt: ch.startedAt || "", avatar: ch.avatar || "",
+        favorite: this._isFavorite(ch.login),
+      }))
+      .sort((a, b) => (b.favorite - a.favorite) || (b.viewers - a.viewers));
+  }
+
+  // logins of followed channels live right now (lowercase), e.g. to check a past MultiView set is still live
+  getLiveLogins() {
+    return new Set(this.followed.filter((ch) => ch.live).map((ch) => String(ch.login).toLowerCase()));
+  }
+
   // ---- hover preview card ----
   // A short pause before showing, so sweeping the mouse down the list doesn't flash a card per row.
   _schedulePreview(row, ch) {
     clearTimeout(this._previewTimer);
-    this._previewTimer = setTimeout(() => this._showPreview(row, ch), 350);
+    if (!getSetting("hoverPreviews")) return; // Settings > Sidebar > Hover previews
+    this._previewTimer = setTimeout(() => this._showPreview(row, ch), Number(getSetting("hoverPreviewDelay")) || 350);
   }
 
   _hidePreview() {
@@ -1055,6 +983,8 @@ export class ChannelsSidebar {
   }
 
   async _saveNotifyPrefs() {
+    // Home's MultiView launcher includes channels with "Notify when live" on: let it refresh
+    window.dispatchEvent(new CustomEvent("mosaic:live-favorites-changed"));
     try {
       await invoke("set_notify_channels", { channels: [...this.notifyChannels] });
       await invoke("set_notify_category_targets", { targets: Object.fromEntries(this.categoryTargets) });

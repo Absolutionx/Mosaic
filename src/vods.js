@@ -150,11 +150,19 @@ export class VodsPage {
     // Helix hands back a "_404_processing" URL for VODs still transcoding, treat as no
     // thumbnail rather than firing a 403
     const isProcessing = thumbUrl.includes("404_processing") || !thumbUrl;
+    // no thumbnail (still recording/processing, or it failed to load): show a themed placeholder. the old
+    // fallback set src="" which Chromium draws as a broken image (a light outline around an empty box)
+    const markNoThumb = () => {
+      thumb.onerror = null;
+      thumb.removeAttribute("src");
+      thumb.classList.add("no-thumb");
+      thumbWrap.classList.add("vod-thumb-missing");
+    };
     if (isProcessing) {
-      thumb.style.background = "#1a1a1d";
+      markNoThumb();
     } else {
       thumb.src = resolveThumbnailUrl(thumbUrl);
-      thumb.onerror = () => { thumb.src = ""; thumb.style.background = "#1a1a1d"; };
+      thumb.onerror = markNoThumb;
     }
     thumbWrap.appendChild(thumb);
 
@@ -255,9 +263,14 @@ export class VodsPage {
             const ts = h > 0
               ? `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`
               : `${m}:${String(s).padStart(2,"0")}`;
-            item.innerHTML =
-              `<span class="vod-chapters-popup-time">${ts}</span>` +
-              `<span class="vod-chapters-popup-title">${ch.title}</span>`;
+            // built with textContent: chapter titles come from Twitch and must never be parsed as markup
+            const timeEl = document.createElement("span");
+            timeEl.className = "vod-chapters-popup-time";
+            timeEl.textContent = ts;
+            const titleEl = document.createElement("span");
+            titleEl.className = "vod-chapters-popup-title";
+            titleEl.textContent = ch.title;
+            item.append(timeEl, titleEl);
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
               closePopup();

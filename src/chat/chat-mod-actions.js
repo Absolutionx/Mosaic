@@ -167,10 +167,11 @@ export const chatModActionsMixin = {
   },
 
   // disable the btn while in flight so a slow connection doesn't invite a second click
-  async _deleteMessage(msgId, btn) {
+  // btn (optional): greyed out while the request runs. the right-click menu closes itself instead, so passes none
+  async _deleteMessage(msgId, btn = null) {
     if (!msgId || !this.roomId) return;
-    const original = btn.innerHTML;
-    btn.disabled = true;
+    const original = btn ? btn.innerHTML : "";
+    if (btn) btn.disabled = true;
     try {
       await invoke("delete_chat_message", { broadcasterId: this.roomId, messageId: msgId });
       // no optimistic update: Twitch's CLEARMSG for this arrives over IRC and is handled centrally in _handleClearMsg, same as any other client
@@ -178,8 +179,10 @@ export const chatModActionsMixin = {
       console.error("Failed to delete message:", err);
       this.systemLine(`Failed to delete message: ${err}`);
     } finally {
-      btn.disabled = false;
-      btn.innerHTML = original;
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = original;
+      }
     }
   },
 
@@ -247,54 +250,142 @@ export const chatModActionsMixin = {
     }
   },
 
-  // copy + reply only, mod actions live in the user card now. rebuilt each right-click since reply depends on isLoggedIn/msgId
+  // Right-click menu on a chat message: Reply / Copy message / Copy username / View profile for everyone,
+  // plus Delete / Timeout / Ban when you're a mod here (these replaced the old hover buttons). Rebuilt on
+  // every right-click, so it always reflects the current login and mod status.
   _showMessageContextMenu(x, y, line) {
     this._closeMessageContextMenu();
+    const ICON = {
+      reply: '<path d="M9 17 4 12l5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
+      copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
+      user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+      at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
+      trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/>',
+      clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+      ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+    };
+    const svg = (k) =>
+      `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
 
     const menu = document.createElement("div");
     menu.className = "chat-context-menu";
+    menu.setAttribute("role", "menu");
 
-    const addItem = (label, onClick, opts = {}) => {
+    const username = line.dataset.msgUsername || "";
+    const userId = line.dataset.msgUserId || "";
+    const msgId = line.dataset.msgId || "";
+
+    const addItem = (icon, label, onClick, opts = {}) => {
       const item = document.createElement("button");
+      item.type = "button";
       item.className = "chat-context-menu-item" + (opts.danger ? " chat-context-menu-item-danger" : "");
-      item.textContent = label;
+      item.setAttribute("role", "menuitem");
+      item.innerHTML = svg(icon);
+      const text = document.createElement("span");
+      text.textContent = label;
+      item.appendChild(text);
+      if (opts.hint) {
+        const hint = document.createElement("span");
+        hint.className = "chat-context-menu-hint";
+        hint.textContent = opts.hint;
+        item.appendChild(hint);
+      }
       item.disabled = Boolean(opts.disabled);
       if (!opts.disabled) {
         item.addEventListener("click", (e) => {
           e.stopPropagation();
-          this._closeMessageContextMenu();
-          onClick();
+          if (!opts.keepOpen) this._closeMessageContextMenu();
+          onClick(item);
         });
       }
       menu.appendChild(item);
       return item;
     };
+    const addDivider = () => {
+      const d = document.createElement("div");
+      d.className = "chat-context-menu-divider";
+      menu.appendChild(d);
+    };
 
-    addItem("Copy message", () => {
+    if (username) {
+      const head = document.createElement("div");
+      head.className = "chat-context-menu-head";
+      head.textContent = username;
+      menu.appendChild(head);
+    }
+
+    if (this.isLoggedIn && msgId) {
+      addItem("reply", "Reply", () => this._setReplyTarget(msgId, username, line.dataset.msgText || ""));
+    }
+    addItem("copy", "Copy message", () => {
       navigator.clipboard.writeText(line.dataset.msgText || "").catch(() => {});
     });
-
-    if (this.isLoggedIn && line.dataset.msgId) {
-      addItem("Reply", () => {
-        this._setReplyTarget(line.dataset.msgId, line.dataset.msgUsername, line.dataset.msgText || "");
+    if (username) {
+      addItem("at", "Copy username", () => {
+        navigator.clipboard.writeText(username).catch(() => {});
       });
+    }
+    const nameEl = line.querySelector(".chat-username-clickable");
+    if (nameEl) addItem("user", "View profile", () => nameEl.click());
+
+    // mod actions: only when you moderate this channel (enforcement is server-side regardless)
+    if (this.isMod && this.roomId) {
+      const isSelf = this._isSelf(username);
+      const canDelete = Boolean(msgId) && !isSelf;
+      const canMod = Boolean(userId) && !isSelf;
+      addDivider();
+      addItem("trash", "Delete message", () => this._deleteMessage(msgId, null), { disabled: !canDelete });
+
+      // Timeout expands its durations right inside the menu (no side flyout to chase near screen edges)
+      const toItem = addItem("clock", "Timeout", () => {
+        const open = menu.classList.toggle("timeout-open");
+        toItem.setAttribute("aria-expanded", String(open));
+        this._positionContextMenu(menu, x, y);
+      }, { disabled: !canMod, keepOpen: true, hint: "▸" });
+      if (canMod) {
+        const row = document.createElement("div");
+        row.className = "chat-context-menu-durations";
+        for (const [label, secs] of [["1s", 1], ["1m", 60], ["10m", 600], ["1h", 3600], ["24h", 86400]]) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = label;
+          b.title = `Timeout ${username} for ${label}`;
+          b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this._closeMessageContextMenu();
+            this._timeoutUser(userId, username, secs);
+          });
+          row.appendChild(b);
+        }
+        menu.appendChild(row);
+      }
+      addItem("ban", "Ban", () => this._confirmAndBan(userId, username), { danger: true, disabled: !canMod });
     }
 
     document.body.appendChild(menu);
-    menu.style.position = "fixed";
-    const menuWidth = menu.offsetWidth;
-    const menuHeight = menu.offsetHeight;
-    menu.style.left = `${Math.min(x, window.innerWidth - menuWidth - 8)}px`;
-    menu.style.top = `${Math.min(y, window.innerHeight - menuHeight - 8)}px`;
+    this._positionContextMenu(menu, x, y);
 
     this._contextMenuEl = menu;
     this._contextMenuOutsideHandler = (e) => {
+      if (e.type === "keydown") {
+        if (e.key === "Escape") this._closeMessageContextMenu();
+        return;
+      }
       if (!menu.contains(e.target)) this._closeMessageContextMenu();
     };
     setTimeout(() => {
       document.addEventListener("click", this._contextMenuOutsideHandler, true);
       document.addEventListener("contextmenu", this._contextMenuOutsideHandler, true);
+      document.addEventListener("keydown", this._contextMenuOutsideHandler, true);
     }, 0);
+  },
+
+  // keep the menu inside the window (re-run when the Timeout durations expand it)
+  _positionContextMenu(menu, x, y) {
+    menu.style.position = "fixed";
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - w - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - h - 8))}px`;
   },
 
   _closeMessageContextMenu() {
@@ -305,6 +396,7 @@ export const chatModActionsMixin = {
     if (this._contextMenuOutsideHandler) {
       document.removeEventListener("click", this._contextMenuOutsideHandler, true);
       document.removeEventListener("contextmenu", this._contextMenuOutsideHandler, true);
+      document.removeEventListener("keydown", this._contextMenuOutsideHandler, true);
       this._contextMenuOutsideHandler = null;
     }
   },

@@ -1161,6 +1161,96 @@ async fn handle_hls_proxy(
     Ok(())
 }
 
+// Streams a Twitch clip MP4 to the in-app clip player. Unlike /hls-proxy (which buffers whole, small HLS
+// segments), clips can be tens of MB: this passes the body through as it arrives (no total timeout) and
+// forwards the player's Range header, so playback starts right away and seeking works. It also sends the
+// Twitch-player Origin/Referer the clip CDN expects (the webview's own origin can be refused), and serving
+// from 127.0.0.1 keeps it within the CSP's media-src. Only Twitch CDN hosts are fetched (not an open proxy)
+async fn handle_clip_proxy(
+    socket: &mut tokio::net::TcpStream,
+    path: &str,
+    req_str: &str,
+) -> std::io::Result<()> {
+    use futures_util::StreamExt;
+    let raw_url = path.split('?').nth(1)
+        .and_then(|q| q.split('&').find(|p| p.starts_with("url=")))
+        .map(|p| pct_decode(&p[4..]))
+        .unwrap_or_default();
+    let host_ok = reqwest::Url::parse(&raw_url).ok()
+        .filter(|u| u.scheme() == "https")
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+        .map(|h| ["twitchcdn.net", "twitch.tv", "ttvnw.net", "cloudfront.net"]
+            .iter().any(|d| h == *d || h.ends_with(&format!(".{d}"))))
+        .unwrap_or(false);
+    if !host_ok {
+        socket.write_all(b"HTTP/1.1 400 Bad Request\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n").await?;
+        return Ok(());
+    }
+    // the player's Range header (seeking / resumed loads), forwarded as-is
+    let range = req_str.lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("range:"))
+        .map(|l| l[6..].trim().to_string());
+
+    let client = match reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            socket.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n").await?;
+            return Ok(());
+        }
+    };
+    let mut req = client
+        .get(&raw_url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .header("Origin", "https://player.twitch.tv")
+        .header("Referer", "https://player.twitch.tv/");
+    if let Some(r) = &range {
+        req = req.header("Range", r);
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("[clip-proxy] fetch failed: {e}");
+            socket.write_all(b"HTTP/1.1 502 Bad Gateway\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n").await?;
+            return Ok(());
+        }
+    };
+    let status = resp.status();
+    if !status.is_success() {
+        eprintln!("[clip-proxy] upstream returned {status}");
+    }
+    let h = resp.headers();
+    let get = |name: &str| h.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
+    let mut head = format!(
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nAccept-Ranges: bytes\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n",
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("OK"),
+        get("content-type").unwrap_or_else(|| "video/mp4".to_string()),
+    );
+    if let Some(v) = get("content-length") { head.push_str(&format!("Content-Length: {v}\r\n")); }
+    if let Some(v) = get("content-range") { head.push_str(&format!("Content-Range: {v}\r\n")); }
+    head.push_str("\r\n");
+    socket.write_all(head.as_bytes()).await?;
+
+    let mut body = resp.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        match chunk {
+            Ok(bytes) => {
+                if socket.write_all(&bytes).await.is_err() {
+                    break; // player closed / seeked elsewhere
+                }
+            }
+            Err(e) => {
+                eprintln!("[clip-proxy] body error: {e}");
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_accept_loop(listener: TcpListener, state: Arc<StreamRelayState>) {
     loop {
         match listener.accept().await {
@@ -1197,6 +1287,10 @@ async fn handle_connection(
     // route: /hls-proxy?url=... proxies a Twitch CDN request with CORS headers. all other paths fall through to the stream relay
     if path.starts_with("/hls-proxy") {
         return handle_hls_proxy(&mut socket, &state, path).await;
+    }
+    // route: /clip-proxy?url=... streams a Twitch clip MP4 (chat clip cards' in-app player)
+    if path.starts_with("/clip-proxy") {
+        return handle_clip_proxy(&mut socket, path, req_str).await;
     }
 
     let my_generation = state.generation.load(Ordering::SeqCst);
@@ -1442,6 +1536,54 @@ pub async fn get_vod_m3u8_url(
 
     // wrap in the local proxy so HLS.js fetches through localhost, sidestepping the Twitch CDN's missing CORS headers
     proxied_hls_url(&state, &cdn_url).await
+}
+
+// Resolves a Twitch clip for the in-app clip player (chat clip cards). Helix doesn't expose clip video files;
+// streamlink does (it handles Twitch's clip access token). Returns { kind, url } with the url routed through
+// the local server: an MP4 via /clip-proxy (streamed, Range-aware, Twitch-player headers), an HLS playlist
+// via /hls-proxy (played with hls.js). slug is validated so it can only ever be a clip id
+#[tauri::command]
+pub async fn resolve_clip_url(
+    slug: String,
+    state: tauri::State<'_, Arc<StreamRelayState>>,
+) -> Result<serde_json::Value, String> {
+    if slug.is_empty() || slug.len() > 100 || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("invalid clip id".to_string());
+    }
+    let target = format!("https://clips.twitch.tv/{slug}");
+    let mut cmd = Command::new(resolve_streamlink_path());
+    cmd.arg(&target)
+        .arg("best")
+        .arg("--stream-url")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    augment_child_path(&mut cmd);
+    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let cdn_url = String::from_utf8(output.stdout)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("https://"))
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            format!("streamlink produced no clip URL: {stderr}")
+        })?;
+    if cdn_url.contains(".m3u8") {
+        let url = proxied_hls_url(&state, &cdn_url).await?;
+        return Ok(serde_json::json!({ "kind": "hls", "url": url }));
+    }
+    ensure_listener_running(&state).await?;
+    let port = state.port.load(Ordering::Relaxed);
+    Ok(serde_json::json!({
+        "kind": "mp4",
+        "url": format!("http://127.0.0.1:{port}/clip-proxy?url={}", pct_encode(&cdn_url)),
+    }))
 }
 
 // live-channel counterpart of get_vod_m3u8_url: resolves a LIVE channel's ad-free HLS playlist URL

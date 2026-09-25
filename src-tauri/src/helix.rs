@@ -487,6 +487,34 @@ pub async fn get_vod_top_clips(
     Ok(serde_json::json!({ "clips": clips }))
 }
 
+// ---- clip cards in chat ----
+// details for one clip (title, channel, views, length, thumbnail, clipper) so a clip link in chat can
+// show as a card. slug validated to a clip id; an unknown/deleted clip returns null (the link stays a link)
+#[tauri::command]
+pub async fn get_clip_info(
+    state: State<'_, ChatState>,
+    slug: String,
+) -> Result<serde_json::Value, String> {
+    if slug.is_empty() || slug.len() > 100 || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("invalid clip id".to_string());
+    }
+    let (token, _) = require_auth(&state)?;
+    let body = helix_get(&format!("https://api.twitch.tv/helix/clips?id={slug}"), Some(token)).await?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let Some(c) = json.pointer("/data/0") else { return Ok(serde_json::Value::Null) };
+    Ok(serde_json::json!({
+        "slug": slug,
+        "title": c["title"],
+        "channel": c["broadcaster_name"],
+        "creator": c["creator_name"],
+        "views": c["view_count"],
+        "duration": c["duration"],
+        "thumbnail": c["thumbnail_url"],
+        "created_at": c["created_at"],
+        "url": c["url"],
+    }))
+}
+
 // ---- VOD chat heatmap ----
 // Samples VOD chat activity at many positions for the seek-bar heatmap. For each requested offset,
 // fetches ONE page of VOD chat starting there (same GQL query as get_vod_chat, first-page form) and
@@ -1027,35 +1055,66 @@ pub async fn get_hype_train(channel_login: String) -> Result<serde_json::Value, 
 // Android device-login token (same one pins use), so it works for any channel you watch. returns the
 // prediction (title/status/outcomes with point+user totals/timing) or null when there's none / not
 // device-connected. query + shape from the StreamNook project.
+// Twitch's web GraphQL (unofficial) with the device login, as used by pins / predictions / polls / points.
+// GraphQL-level errors are returned as Err (with Twitch's message) instead of being read as "nothing
+// active": a rejected query used to look exactly like "no prediction running", so breakage was invisible
+async fn device_gql(
+    app: &tauri::AppHandle,
+    operation: &str,
+    query: &str,
+    variables: serde_json::Value,
+) -> Result<Option<serde_json::Value>, String> {
+    let token = match crate::twitch_device_auth::get_device_token(app).await {
+        Some(t) => t,
+        None => return Ok(None), // not connected: callers treat as "nothing to show"
+    };
+    let resp = reqwest::Client::new()
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Authorization", format!("OAuth {token}"))
+        .json(&serde_json::json!({ "operationName": operation, "query": query, "variables": variables }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("{operation} HTTP {}", resp.status()));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(errs) = json.get("errors").and_then(|e| e.as_array()) {
+        if !errs.is_empty() {
+            let msg = errs[0].get("message").and_then(|m| m.as_str()).unwrap_or("GraphQL error");
+            return Err(format!("{operation}: {msg}"));
+        }
+    }
+    Ok(Some(json))
+}
+
 #[tauri::command]
 pub async fn get_channel_prediction(
     channel_login: String,
     app: tauri::AppHandle,
 ) -> Result<serde_json::Value, String> {
-    let token = match crate::twitch_device_auth::get_device_token(&app).await {
-        Some(t) => t,
+    // Twitch's schema has no singular Channel.activePredictionEvent (the old query was always rejected, so
+    // predictions never showed); its web client reads the plural lists on user.channel instead
+    const FIELDS: &str = "id status title predictionWindowSeconds createdAt lockedAt endedAt winningOutcome { id } outcomes { id title color totalPoints totalUsers }";
+    let query = format!(
+        "query GetChannelPrediction($login: String!) {{ user(login: $login) {{ id channel {{ id activePredictionEvents {{ {FIELDS} }} lockedPredictionEvents {{ {FIELDS} }} }} }} }}"
+    );
+    let Some(json) = device_gql(&app, "GetChannelPrediction", &query,
+        serde_json::json!({ "login": channel_login.to_lowercase() })).await? else {
+        return Ok(serde_json::Value::Null);
+    };
+    // the running one (betting open) wins over a locked one waiting for its result
+    let first_of = |key: &str| -> Option<serde_json::Value> {
+        json.pointer(&format!("/data/user/channel/{key}"))
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .cloned()
+    };
+    let json = match first_of("activePredictionEvents").or_else(|| first_of("lockedPredictionEvents")) {
+        Some(p) => serde_json::json!({ "data": { "channel": { "activePredictionEvent": p } } }),
         None => return Ok(serde_json::Value::Null),
     };
-
-    const QUERY: &str = "query GetChannelPrediction($login: String!) { channel(name: $login) { id activePredictionEvent { id status title predictionWindowSeconds createdAt lockedAt endedAt winningOutcome { id } outcomes { id title color totalPoints totalUsers } } } }";
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
-        .header("Authorization", format!("OAuth {token}"))
-        .json(&serde_json::json!({
-            "operationName": "GetChannelPrediction",
-            "query": QUERY,
-            "variables": { "login": channel_login.to_lowercase() }
-        }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("GetChannelPrediction HTTP {}", resp.status()));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
 
     let pred = match json.pointer("/data/channel/activePredictionEvent") {
         Some(p) if !p.is_null() => p.clone(),
@@ -1084,6 +1143,361 @@ pub async fn get_channel_prediction(
         "winning_outcome_id": pred.pointer("/winningOutcome/id").and_then(|v| v.as_str()),
         "outcomes": outcomes,
     }))
+}
+
+// The channel's current poll (unofficial GQL, device login), normalized for the chat poll card. null when
+// there's no poll or the device login isn't connected; Err when Twitch rejects the query (surfaced by the
+// "Preview predictions & polls" live check instead of silently showing nothing)
+#[tauri::command]
+pub async fn get_channel_poll(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    // Where Twitch exposes the current poll isn't documented (Channel.viewablePoll was rejected), so try the
+    // known locations in order and remember the first one Twitch accepts. only "Cannot query field" moves on
+    // to the next; any other error is real and returned
+    const FIELDS: &str = "id title status durationSeconds startedAt remainingDurationMilliseconds choices { id title votes { total } }";
+    const CANDIDATES: &[(&str, &str)] = &[
+        ("user(login: $login) { id viewablePoll { F } }", "/data/user/viewablePoll"),
+        ("user(login: $login) { id activePoll { F } }", "/data/user/activePoll"),
+        ("channel(name: $login) { id activePoll { F } }", "/data/channel/activePoll"),
+        ("user(login: $login) { id channel { id activePoll { F } } }", "/data/user/channel/activePoll"),
+        ("user(login: $login) { id channel { id viewablePoll { F } } }", "/data/user/channel/viewablePoll"),
+    ];
+    static WORKING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
+    let vars = serde_json::json!({ "login": channel_login.to_lowercase() });
+    let known = WORKING.load(std::sync::atomic::Ordering::Relaxed);
+    let order: Vec<usize> = if known < CANDIDATES.len() { vec![known] } else { (0..CANDIDATES.len()).collect() };
+    let mut schema_errors: Vec<String> = Vec::new();
+    let mut found: Option<(serde_json::Value, &str)> = None;
+    for i in order {
+        let (shape, pointer) = CANDIDATES[i];
+        let query = format!("query ChannelPoll($login: String!) {{ {} }}", shape.replace('F', FIELDS));
+        match device_gql(&app, "ChannelPoll", &query, vars.clone()).await {
+            Ok(Some(json)) => {
+                WORKING.store(i, std::sync::atomic::Ordering::Relaxed);
+                found = Some((json, pointer));
+                break;
+            }
+            Ok(None) => return Ok(serde_json::Value::Null), // device login not connected
+            Err(e) if e.contains("Cannot query field") => schema_errors.push(e),
+            Err(e) => return Err(e),
+        }
+    }
+    let Some((json, pointer)) = found else {
+        return Err(format!("no poll field Twitch accepts ({})", schema_errors.join(" | ")));
+    };
+    let poll = match json.pointer(pointer) {
+        Some(p) if !p.is_null() => p,
+        _ => return Ok(serde_json::Value::Null),
+    };
+    let choices: Vec<serde_json::Value> = poll.get("choices").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().map(|c| serde_json::json!({
+            "id": c.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": c.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+            "votes": c.pointer("/votes/total").and_then(|v| v.as_i64()).unwrap_or(0),
+        })).collect()
+    }).unwrap_or_default();
+    Ok(serde_json::json!({
+        "id": poll.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": poll.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "status": poll.get("status").and_then(|v| v.as_str()).unwrap_or("ACTIVE"),
+        "duration_seconds": poll.get("durationSeconds").and_then(|v| v.as_i64()).unwrap_or(0),
+        "started_at": poll.get("startedAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "remaining_ms": poll.get("remainingDurationMilliseconds").and_then(|v| v.as_i64()).unwrap_or(0),
+        "choices": choices,
+    }))
+}
+
+// Final state of a prediction that left the active/locked lists (i.e. it resolved or was canceled), so the
+// card can show who won and whether you did. Where Twitch exposes finished predictions isn't documented, so
+// the known shapes are tried in order (the first accepted one is remembered). Ok(Null) = not found (yet);
+// the frontend then falls back to reading the result from your channel-points balance
+#[tauri::command]
+pub async fn get_prediction_result(
+    channel_login: String,
+    event_id: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    use std::sync::atomic::{AtomicUsize, Ordering as O};
+    const F: &str = "id status title predictionWindowSeconds createdAt lockedAt endedAt winningOutcome { id } outcomes { id title color totalPoints totalUsers }";
+    // (variable declaration, query body, pointer, is_list)
+    const CANDIDATES: &[(&str, &str, &str, bool)] = &[
+        ("($id: ID!)", "predictionEvent(id: $id) { F }", "/data/predictionEvent", false),
+        ("($login: String!)", "user(login: $login) { id channel { id resolvedPredictionEvents { F } } }", "/data/user/channel/resolvedPredictionEvents", true),
+        ("($login: String!)", "user(login: $login) { id channel { id predictionEvents { F } } }", "/data/user/channel/predictionEvents", true),
+        ("($login: String!)", "user(login: $login) { id channel { id recentPredictionEvents { F } } }", "/data/user/channel/recentPredictionEvents", true),
+    ];
+    static WORKING: AtomicUsize = AtomicUsize::new(usize::MAX);
+    let known = WORKING.load(O::Relaxed);
+    let order: Vec<usize> = if known < CANDIDATES.len() { vec![known] } else { (0..CANDIDATES.len()).collect() };
+    let mut schema_errors = Vec::new();
+    for i in order {
+        let (decl, body, pointer, is_list) = CANDIDATES[i];
+        let query = format!("query PredictionResult{decl} {{ {} }}", body.replace(" F ", &format!(" {F} ")));
+        let vars = if decl.contains("$id") {
+            serde_json::json!({ "id": event_id })
+        } else {
+            serde_json::json!({ "login": channel_login.to_lowercase() })
+        };
+        match device_gql(&app, "PredictionResult", &query, vars).await {
+            Ok(Some(json)) => {
+                WORKING.store(i, O::Relaxed);
+                let found = if is_list {
+                    json.pointer(pointer).and_then(|v| v.as_array())
+                        .and_then(|a| a.iter().find(|e| e.get("id").and_then(|v| v.as_str()) == Some(event_id.as_str())).cloned())
+                } else {
+                    json.pointer(pointer).filter(|v| !v.is_null()).cloned()
+                };
+                return Ok(found.map(|p| normalize_prediction(&p)).unwrap_or(serde_json::Value::Null));
+            }
+            Ok(None) => return Ok(serde_json::Value::Null),
+            Err(e) if e.contains("Cannot query field") || e.contains("Unknown argument") => schema_errors.push(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!("no prediction-result field Twitch accepts ({})", schema_errors.join(" | ")))
+}
+
+// the prediction shape the frontend uses (same as get_channel_prediction returns)
+fn normalize_prediction(pred: &serde_json::Value) -> serde_json::Value {
+    let outcomes: Vec<serde_json::Value> = pred.get("outcomes").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().map(|o| serde_json::json!({
+            "id": o.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+            "title": o.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+            "color": o.get("color").and_then(|v| v.as_str()).unwrap_or("BLUE"),
+            "total_points": o.get("totalPoints").and_then(|v| v.as_i64()).unwrap_or(0),
+            "total_users": o.get("totalUsers").and_then(|v| v.as_i64()).unwrap_or(0),
+        })).collect()
+    }).unwrap_or_default();
+    serde_json::json!({
+        "id": pred.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "title": pred.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+        "status": pred.get("status").and_then(|v| v.as_str()).unwrap_or("RESOLVED"),
+        "window_seconds": pred.get("predictionWindowSeconds").and_then(|v| v.as_i64()).unwrap_or(60),
+        "created_at": pred.get("createdAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "winning_outcome_id": pred.pointer("/winningOutcome/id").and_then(|v| v.as_str()),
+        "outcomes": outcomes,
+    })
+}
+
+// ---- command palette: Twitch channel search ----
+// channels matching what you typed (official Helix search), live ones first, for the command palette's
+// "On Twitch" group. only the fields the palette shows are returned
+#[tauri::command]
+pub async fn search_twitch_channels(
+    state: State<'_, ChatState>,
+    query: String,
+) -> Result<serde_json::Value, String> {
+    let q = query.trim();
+    if q.is_empty() || q.len() > 60 {
+        return Ok(serde_json::json!([]));
+    }
+    let (token, _) = require_auth(&state)?;
+    // percent-encode every UTF-8 byte (so non-ASCII names like "Mañana" encode correctly)
+    let enc: String = q.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    let url = format!("https://api.twitch.tv/helix/search/channels?query={enc}&first=8");
+    let body = helix_get(&url, Some(token)).await?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let mut out: Vec<serde_json::Value> = json["data"].as_array().cloned().unwrap_or_default().into_iter().map(|c| serde_json::json!({
+        "login": c["broadcaster_login"], "name": c["display_name"], "live": c["is_live"].as_bool().unwrap_or(false),
+        "game": c["game_name"], "title": c["title"], "avatar": c["thumbnail_url"],
+    })).collect();
+    out.sort_by_key(|c| !c["live"].as_bool().unwrap_or(false)); // live first, Twitch's relevance order otherwise
+    Ok(serde_json::Value::Array(out))
+}
+
+// ---- follow / unfollow ----
+// Twitch removed follow/unfollow from its official API (Helix) in 2021, so this uses the web GQL mutations
+// (unofficial, device login) like pins / predictions / badges. The channel is resolved from its login via
+// Helix. follow=true -> followUser (Twitch's business errors come back in .error.code), false -> unfollowUser
+#[tauri::command]
+pub async fn follow_channel(
+    state: State<'_, ChatState>,
+    login: String,
+    follow: bool,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let login = login.to_lowercase();
+    if login.is_empty() || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("invalid channel".to_string());
+    }
+    let (token, _) = require_auth(&state)?;
+    let body = helix_get(&format!("https://api.twitch.tv/helix/users?login={login}"), Some(token)).await?;
+    let users: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let target_id = users.pointer("/data/0/id").and_then(|v| v.as_str())
+        .ok_or_else(|| "channel not found".to_string())?
+        .to_string();
+
+    let not_connected = || "Connect Twitch (Enable pinned messages) to follow channels from Mosaic".to_string();
+    if follow {
+        const Q: &str = "mutation FollowUser($input: FollowUserInput!) { followUser(input: $input) { error { code } } }";
+        let vars = serde_json::json!({ "input": { "targetID": target_id, "disableNotifications": false } });
+        let json = device_gql(&app, "FollowUser", Q, vars).await?.ok_or_else(not_connected)?;
+        if let Some(code) = json.pointer("/data/followUser/error/code").and_then(|c| c.as_str()) {
+            return Err(match code {
+                "TOO_MANY_FOLLOWS" => "You're following the maximum number of channels".to_string(),
+                "FORBIDDEN" => "Twitch didn't allow following this channel".to_string(),
+                other => format!("Twitch refused the follow ({other})"),
+            });
+        }
+    } else {
+        const Q: &str = "mutation UnfollowUser($input: UnfollowUserInput!) { unfollowUser(input: $input) { __typename } }";
+        let vars = serde_json::json!({ "input": { "targetID": target_id } });
+        device_gql(&app, "UnfollowUser", Q, vars).await?.ok_or_else(not_connected)?;
+    }
+    Ok(())
+}
+
+// ---- chat badge selection (chat identity) ----
+// runs `candidates` (query body, JSON pointer to the list) in order until Twitch accepts one, remembering the
+// winner in `cache`. only "Cannot query field" errors move on to the next candidate. Ok(None) = device login
+// not connected
+async fn gql_first_accepted(
+    app: &tauri::AppHandle,
+    operation: &str,
+    var_decl: &str,
+    candidates: &[(&str, &str)],
+    vars: serde_json::Value,
+    cache: &std::sync::atomic::AtomicUsize,
+) -> Result<Option<Vec<serde_json::Value>>, String> {
+    use std::sync::atomic::Ordering as O;
+    let known = cache.load(O::Relaxed);
+    let order: Vec<usize> = if known < candidates.len() { vec![known] } else { (0..candidates.len()).collect() };
+    let mut schema_errors = Vec::new();
+    for i in order {
+        let (body, pointer) = candidates[i];
+        let query = format!("query {operation}{var_decl} {{ {body} }}");
+        match device_gql(app, operation, &query, vars.clone()).await {
+            Ok(Some(json)) => {
+                cache.store(i, O::Relaxed);
+                let list = json.pointer(pointer).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                return Ok(Some(list));
+            }
+            Ok(None) => return Ok(None),
+            Err(e) if e.contains("Cannot query field") || e.contains("Unknown argument") => schema_errors.push(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(format!("no badge field Twitch accepts ({})", schema_errors.join(" | ")))
+}
+
+// The badges you can wear: { global: [{setID, version}], channel: [{setID, version}] } for the channel you're
+// in. Only set/version are requested (titles + images come from the badge lists Mosaic already loads), which
+// keeps the query small and robust. Unknown schema -> Err with Twitch's messages (the picker offers a
+// diagnostics button that lists the real field names)
+#[tauri::command]
+pub async fn get_badge_options(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    const GLOBAL: &[(&str, &str)] = &[
+        ("currentUser { id availableBadges { setID version } }", "/data/currentUser/availableBadges"),
+        ("currentUser { id earnedBadges { setID version } }", "/data/currentUser/earnedBadges"),
+        ("currentUser { id badges { setID version } }", "/data/currentUser/badges"),
+    ];
+    const CHANNEL: &[(&str, &str)] = &[
+        ("user(login: $login) { id channel { id self { availableBadges { setID version } } } }", "/data/user/channel/self/availableBadges"),
+        ("channel(name: $login) { id self { availableBadges { setID version } } }", "/data/channel/self/availableBadges"),
+        ("user(login: $login) { id self { availableBadges { setID version } } }", "/data/user/self/availableBadges"),
+    ];
+    static G: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
+    static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
+    // each query declares only the variables it uses (GraphQL rejects unused ones): the global list needs none
+    let global = gql_first_accepted(&app, "ChatBadgesGlobal", "", GLOBAL, serde_json::json!({}), &G).await?;
+    let channel = gql_first_accepted(&app, "ChatBadgesChannel", "($login: String!)", CHANNEL,
+        serde_json::json!({ "login": channel_login.to_lowercase() }), &C).await?;
+    let (Some(global), Some(channel)) = (global, channel) else {
+        return Err("Connect Twitch (Enable pinned messages) to change badges".to_string());
+    };
+    let norm = |list: Vec<serde_json::Value>| -> Vec<serde_json::Value> {
+        list.into_iter()
+            .filter_map(|b| {
+                let set = b.get("setID").and_then(|v| v.as_str())?.to_string();
+                let ver = b.get("version").and_then(|v| v.as_str()).unwrap_or("1").to_string();
+                Some(serde_json::json!({ "setID": set, "version": ver }))
+            })
+            .collect()
+    };
+    Ok(serde_json::json!({ "global": norm(global), "channel": norm(channel) }))
+}
+
+// Wear a badge: scope "global" (selectGlobalBadge) or "channel" (selectChannelBadge for channel_id).
+// Only __typename is selected, so a payload change can't break it; rejections come back as Err
+#[tauri::command]
+pub async fn set_chat_badge(
+    scope: String,
+    channel_id: String,
+    set_id: String,
+    version: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let (op, query, input) = if scope == "global" {
+        ("SelectGlobalBadge",
+         "mutation SelectGlobalBadge($input: SelectGlobalBadgeInput!) { selectGlobalBadge(input: $input) { __typename } }",
+         serde_json::json!({ "input": { "badgeSetID": set_id, "badgeSetVersion": version } }))
+    } else {
+        ("SelectChannelBadge",
+         "mutation SelectChannelBadge($input: SelectChannelBadgeInput!) { selectChannelBadge(input: $input) { __typename } }",
+         serde_json::json!({ "input": { "channelID": channel_id, "badgeSetID": set_id, "badgeSetVersion": version } }))
+    };
+    match device_gql(&app, op, query, input).await? {
+        Some(_) => Ok(()),
+        None => Err("Connect Twitch (Enable pinned messages) to change badges".to_string()),
+    }
+}
+
+// Bet channel points on a prediction outcome (unofficial GQL MakePrediction, device login). Twitch's
+// business errors (not enough points, prediction locked, ...) come back in makePrediction.error.code and
+// are returned as a readable Err for the bet UI
+#[tauri::command]
+pub async fn make_prediction(
+    event_id: String,
+    outcome_id: String,
+    points: i64,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if points <= 0 {
+        return Err("Enter an amount of channel points".to_string());
+    }
+    const QUERY: &str = "mutation MakePrediction($input: MakePredictionInput!) { makePrediction(input: $input) { error { code } } }";
+    let input = serde_json::json!({ "input": {
+        "eventID": event_id, "outcomeID": outcome_id, "points": points,
+        "transactionID": uuid::Uuid::new_v4().simple().to_string(),
+    }});
+    let Some(json) = device_gql(&app, "MakePrediction", QUERY, input).await? else {
+        return Err("Connect Twitch (Enable pinned messages) to predict".to_string());
+    };
+    if let Some(code) = json.pointer("/data/makePrediction/error/code").and_then(|c| c.as_str()) {
+        return Err(match code {
+            "NOT_ENOUGH_POINTS" => "You don't have enough channel points".to_string(),
+            "EVENT_NOT_ACTIVE" | "PREDICTION_LOCKED" => "Predictions are locked".to_string(),
+            "MAX_POINTS_PER_EVENT" | "EXCEEDS_MAX_POINTS" => "That's more than the maximum for this prediction".to_string(),
+            "DUPLICATE_TRANSACTION" => "That prediction was already placed".to_string(),
+            other => format!("Twitch refused the prediction ({other})"),
+        });
+    }
+    Ok(())
+}
+
+// Vote in a poll (unofficial GQL VoteOnPoll, device login). only the typename is selected so a payload
+// shape change can't break voting; GraphQL-level rejections still come back as Err via device_gql
+#[tauri::command]
+pub async fn vote_on_poll(
+    poll_id: String,
+    choice_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    const QUERY: &str = "mutation VoteOnPoll($input: VoteOnPollInput!) { voteOnPoll(input: $input) { __typename } }";
+    let input = serde_json::json!({ "input": {
+        "pollID": poll_id, "choiceID": choice_id, "voteID": uuid::Uuid::new_v4().to_string(),
+    }});
+    match device_gql(&app, "VoteOnPoll", QUERY, input).await? {
+        Some(_) => Ok(()),
+        None => Err("Connect Twitch (Enable pinned messages) to vote".to_string()),
+    }
 }
 
 #[derive(serde::Serialize)]

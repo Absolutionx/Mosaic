@@ -39,6 +39,9 @@
     "updater:default",
     "process:default",
     "process:allow-restart",
-    "os:default"
+    "os:default",
+    "autostart:default",
+    "core:window:allow-hide",
+    "core:webview:allow-set-webview-zoom"
   ]
 }

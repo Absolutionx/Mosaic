@@ -1,3 +1,6 @@
+import { getSetting, setSetting } from "./settings.js";
+// VOD playback speeds offered (menu, < / > keys, command palette)
+const VOD_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 // custom playback controls for the <video> element, fed via MSE from the local relay
 // (stream_relay.rs, stream-player.js). streamlink's remuxed output is relayed over local HTTP
 // and appended with attachMseStream() (hls.js has no continuous-byte-stream mode). controls use
@@ -106,6 +109,8 @@ export class PlaybackControls {
     this.chaptersBtn  = document.getElementById("chapters-btn");
     this.chaptersMenu = document.getElementById("chapters-menu");
     // most-viewed clips of the current VOD (setTopClips): list button/menu + seek-bar markers
+    this.speedBtn  = document.getElementById("speed-btn");
+    this.speedMenu = document.getElementById("speed-menu");
     this.clipsBtn  = document.getElementById("clips-btn");
     this.clipsMenu = document.getElementById("clips-menu");
     this.seekBarClips = document.getElementById("seek-bar-clips");
@@ -217,6 +222,7 @@ export class PlaybackControls {
     // the slider's 'input' fires continuously while dragging. video.volume is a synchronous set (no IPC), so unlike the old mpv version this needs no debouncing
     this.volumeSlider.addEventListener("input", (e) => {
       this.setVolume(Number(e.target.value));
+      this._rememberChannelVolume(Number(e.target.value));
     });
 
     this.seekBarTrack.addEventListener("click", (e) => {
@@ -252,11 +258,16 @@ export class PlaybackControls {
       e.stopPropagation();
       this.toggleClipsMenu();
     });
+    this.speedBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleSpeedMenu();
+    });
 
     document.addEventListener("click", () => {
       this.qualityMenu.classList.remove("open");
       this.chaptersMenu?.classList.remove("open");
       this.clipsMenu?.classList.remove("open");
+      this.speedMenu?.classList.remove("open");
     });
 
     // keep the play/pause icon and center button in sync with whatever changed video.paused, not just our clicks but the element's own changes (autoplay, or a shortcut calling video.play()/.pause() directly)
@@ -281,6 +292,7 @@ export class PlaybackControls {
   // kickVod is a Kick recording off a proxied master playlist. seeks are identical, but Twitch-only
   // side fetches (quality probe, chapters, storyboard) must not fire; quality uses the hls.js level menu
   start(channel, url, quality = "best", vodTotalSeconds = 0, startPositionSecs = 0, opts = {}) {
+    this._applyChannelVolume(channel);
     const kickVod = Boolean(opts.kickVod);
     // macOS native-HLS live path: live m3u8 via hls.js instead of the MSE relay, but all of start()'s control/UI setup is identical, which is why this must go THROUGH start() (going around it left PiP, the overlay, and cursor auto-hide uninitialized)
     this._nativeHlsLive = Boolean(opts.nativeHlsLive);
@@ -309,6 +321,7 @@ export class PlaybackControls {
     this._resetCatchUp();
     // channels prefixed with "vod:" are past broadcasts, fixed duration and no live edge, so live-specific UI is hidden
     this.isVod = channel.startsWith("vod:");
+    this._syncSpeed();
     this.vodTotalSeconds = vodTotalSeconds;
     this._chapters = [];
     this._chaptersLoaded = false;
@@ -395,6 +408,7 @@ export class PlaybackControls {
   // since Kick is a plain live playlist through hls.js (attachHlsDvr at -1 = live edge)
   startKick(channel, url) {
     this.active = true;
+    this._applyChannelVolume(channel);
     this._resetCatchUp();
     // Kick has no audio-only rendition: make sure the Audio only panel isn't left up from a Twitch stream
     document.getElementById("audio-only-overlay")?.classList.remove("visible");
@@ -410,6 +424,7 @@ export class PlaybackControls {
     }
     this.currentChannel = channel;
     this.isVod = false;
+    this._syncSpeed();
     // drives Kick-specific clamp-instead-of-DVR-swap handling in seekToClickPosition/seekRelative
     this._isKickSession = true;
     // resolved (or not) per session by main.js AFTER this returns, a previous session's availability must never leak into a new one
@@ -463,11 +478,6 @@ export class PlaybackControls {
   // which kills the old relay while this attachment still reads it. no-op on VODs and when nothing is attached
   expectRelayTeardown() {
     this.mseController?.expectTeardown?.();
-  }
-
-  // DEV ONLY: make the live relay attachment act as though the broadcast ended (bytes stop, connection stays open). drives the real silence/death detectors, not their conclusions
-  simulateRelaySilence() {
-    this.mseController?.simulateSilence?.();
   }
 
   attachLiveMse(relayUrl) {
@@ -782,6 +792,7 @@ export class PlaybackControls {
     // drives the same path as the main slider (including unmute-on-volume-up); setVolume() mirrors the value onto BOTH sliders, so they can never disagree
     this._pipEls.slider.addEventListener("input", (e) => {
       this.setVolume(Number(e.target.value));
+      this._rememberChannelVolume(Number(e.target.value));
     }, { signal });
     bar.querySelector('[data-act="mute"]').addEventListener("click", () => {
       this.toggleMute();
@@ -890,6 +901,7 @@ export class PlaybackControls {
     this.renderChatHeatmap(null);
     this.setTopClips(null);
     this.isVod = false;
+    this._syncSpeed();
     this.vodTotalSeconds = 0;
     this._liveDvr = null;
     this.liveDvrStreamStartedAt = null;
@@ -1469,6 +1481,7 @@ export class PlaybackControls {
   // VOD-only: Twitch's storyboard CDN 403s for the underlying VOD while the broadcast is still live (storyboards aren't generated until it ends). never throws or blocks: loadVodStoryboard() resolves to a no-op on failure, and a stale videoId/isVod guard drops the result if the user navigated away
   async _fetchStoryboard() {
     if (!this.isVod || !this.currentChannel) return;
+    if (!getSetting("seekThumbnails")) return; // Settings > Player > Seek thumbnails
     const videoId = this.currentChannel.replace(/^vod:/, "");
     const seekPreviewsUrl = await fetchVodSeekPreviewsUrl(videoId).catch((err) => {
       console.warn("[seek-thumbnails] failed to fetch seekPreviewsURL:", err);
@@ -1509,6 +1522,71 @@ export class PlaybackControls {
       if (this._chapters[i].positionSec <= pos) active = i;
     }
     return active;
+  }
+
+  // ---- VOD playback speed ----
+  // VODs play at the remembered speed (Settings > Player); live is always 1x (catch-up-to-live manages its
+  // own rate). defaultPlaybackRate is set too: loading a new source resets playbackRate to it
+  _syncSpeed() {
+    const v = this.videoEl;
+    const rate = this.isVod ? (Number(getSetting("vodSpeed")) || 1) : 1;
+    v.defaultPlaybackRate = rate;
+    v.playbackRate = rate;
+    v.preservesPitch = true; // natural voices at any speed
+    if (this.speedBtn) {
+      this.speedBtn.style.display = this.isVod ? "" : "none";
+      const label = this.speedBtn.querySelector(".speed-btn-label");
+      if (label) label.textContent = `${+rate.toFixed(2)}×`;
+      this.speedBtn.classList.toggle("active", this.isVod && rate !== 1);
+    }
+    if (!this.isVod) this.speedMenu?.classList.remove("open");
+  }
+
+  setVodSpeed(rate) {
+    setSetting("vodSpeed", rate);
+    this._syncSpeed();
+  }
+
+  // < / > keys and the command palette step through the same list as the menu
+  stepVodSpeed(dir) {
+    if (!this.isVod) return;
+    const cur = Number(getSetting("vodSpeed")) || 1;
+    const i = VOD_SPEEDS.findIndex((s) => s >= cur - 1e-9);
+    const next = VOD_SPEEDS[Math.max(0, Math.min(VOD_SPEEDS.length - 1, (i < 0 ? VOD_SPEEDS.indexOf(1) : i) + dir))];
+    this.setVodSpeed(next);
+  }
+
+  toggleSpeedMenu() {
+    const menu = this.speedMenu;
+    if (!menu || !this.isVod) return;
+    const opening = !menu.classList.contains("open");
+    this.qualityMenu?.classList.remove("open");
+    this.chaptersMenu?.classList.remove("open");
+    this.clipsMenu?.classList.remove("open");
+    if (opening) {
+      const cur = Number(getSetting("vodSpeed")) || 1;
+      menu.replaceChildren();
+      const head = document.createElement("div");
+      head.className = "speed-menu-head";
+      head.textContent = "Playback speed";
+      menu.appendChild(head);
+      for (const s of VOD_SPEEDS) {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "speed-menu-item" + (Math.abs(s - cur) < 1e-9 ? " active" : "");
+        item.textContent = s === 1 ? "Normal" : `${s}×`;
+        item.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.setVodSpeed(s);
+          menu.classList.remove("open");
+        });
+        menu.appendChild(item);
+      }
+      const r = this.speedBtn.getBoundingClientRect();
+      menu.style.right = `${window.innerWidth - r.right}px`;
+      menu.style.bottom = `${window.innerHeight - r.top + 6}px`;
+    }
+    menu.classList.toggle("open", opening);
   }
 
   // ---- Top clips ----
@@ -1759,6 +1837,41 @@ export class PlaybackControls {
     this.volumeIcon.style.display = muted ? "none" : "block";
     this.muteIcon.style.display = muted ? "block" : "none";
     this._syncPipMuteIcon(muted);
+  }
+
+  // ---- per-channel volume (Settings > Player) ----
+  // a channel you've adjusted starts at its own volume; others at the default. applied WITHOUT touching mute
+  // (setVolume() unmutes above 0, which must not happen just because a stream started)
+  _volumeKey(channel) {
+    return String(channel || "").toLowerCase().replace(/^vod:.*/, "vod"); // VODs share one volume
+  }
+  _applyChannelVolume(channel) {
+    let v = Number(getSetting("defaultVolume"));
+    if (getSetting("rememberVolume")) {
+      try {
+        const map = JSON.parse(localStorage.getItem("channelVolumes") || "{}");
+        const saved = map[this._volumeKey(channel)];
+        if (Number.isFinite(saved)) v = saved;
+      } catch { /* ignore */ }
+    }
+    if (!Number.isFinite(v)) return;
+    v = Math.min(100, Math.max(0, v));
+    this.videoEl.volume = v / 100;
+    this.volumeSlider.value = v;
+    if (this._pipEls) this._pipEls.slider.value = v;
+  }
+  _rememberChannelVolume(v) {
+    if (!getSetting("rememberVolume") || !this.currentChannel) return;
+    clearTimeout(this._volSaveTimer);
+    this._volSaveTimer = setTimeout(() => {
+      try {
+        const map = JSON.parse(localStorage.getItem("channelVolumes") || "{}");
+        map[this._volumeKey(this.currentChannel)] = Math.round(v);
+        const keys = Object.keys(map);
+        if (keys.length > 300) delete map[keys[0]]; // keep it small
+        localStorage.setItem("channelVolumes", JSON.stringify(map));
+      } catch { /* ignore */ }
+    }, 400);
   }
 
   // volume is 0 to 130, matching the slider. HTMLMediaElement.volume only accepts 0..1, so values above 100 (the old mpv --volume-max=130 boost) clamp to 100, the web <video> has no equivalent of mpv's amplification past unity

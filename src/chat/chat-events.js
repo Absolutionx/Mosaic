@@ -1,3 +1,4 @@
+import { getSetting } from "../settings.js";
 // rich Twitch event rendering: subs, gifts, raids, bits, Hype Train, Predictions, riding
 // the chat/EventSub pipeline in Rust. USERNOTICE covers subs/gifts/raids/announce on any
 // channel; Hype Train + Predictions need broadcaster scopes (own channel only). most render
@@ -13,7 +14,8 @@ export const chatEventsMixin = {
       await listen("eventsub-hypetrain", (e) => this.renderHypeTrain(e.payload)),
     );
     this.unlisteners.push(
-      await listen("eventsub-prediction", (e) => this.renderPrediction(e.payload)),
+      // (predictions: handled for every channel by chat-live-events.js; the broadcaster-only EventSub
+      // prediction feed is no longer rendered, it would draw over the same slot)
     );
   },
 
@@ -113,6 +115,7 @@ export const chatEventsMixin = {
   // Celebratory banner for a large gift-sub drop. Auto-dismisses after a bit; a bigger drop replaces
   // it. Lives in the banner slot near the chat header, alongside hype-train/pinned.
   _showGiftSubBanner(gifter, count, planLabel) {
+    if (!getSetting("hypeGiftBanners")) return; // Settings > Chat
     const el = document.getElementById("gift-sub-banner");
     if (!el) return;
     // if a banner is already showing for a bigger drop, keep that one
@@ -197,6 +200,7 @@ export const chatEventsMixin = {
   // bits render inline in chat.js renderMessage (see the has-bits block)
 
   renderHypeTrain(p) {
+    if (!getSetting("hypeGiftBanners")) return; // Settings > Chat
     const ev = p.event || {};
     if (p.phase === "end") {
       this._dismissOverlay("hype-train-overlay", 6000);

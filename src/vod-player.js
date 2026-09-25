@@ -48,6 +48,12 @@ export function attachHlsVod(videoEl, m3u8Url, {
 
     // Twitch fMP4 segments can have big pts/dts gaps at ad/chapter boundaries, don't be strict
     maxFragLookUpTolerance: 0.5,
+
+    // no captions/subtitles: hls.js otherwise decodes closed captions embedded in the video (streamers
+    // with a captions extension or Twitch auto-captions) and SHOWS them by default, with no way to turn
+    // them off. Twitch's own player keeps captions off unless you ask for them
+    enableCEA708Captions: false,
+    subtitleDisplay: false,
   });
 
   hls.loadSource(m3u8Url);

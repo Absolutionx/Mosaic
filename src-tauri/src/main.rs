@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 
+mod app_extras;
 mod chat;
 mod chat_commands;
 mod deps_check;
@@ -153,7 +154,13 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         // process (relaunch after update) and os (platform() gate in the updater banner). cross-platform, so registered unconditionally
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_os::init());
+        .plugin(tauri_plugin_os::init())
+        // Settings > App > Start Mosaic with your computer. launches carry --autostart so "start minimized"
+        // can tell them apart from you opening Mosaic yourself (app_extras::launched_at_startup)
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ));
 
     // auto-updater: Windows only. macOS/Linux ship via the GitHub Actions .dmg and don't self-update,
     // so the plugin isn't registered there, keeps the update-check path off platforms with no update endpoint
@@ -243,6 +250,7 @@ fn main() {
             kick_chat::start_kick_chat,
             kick_chat::stop_kick_chat,
             stream_relay::get_vod_m3u8_url,
+            stream_relay::resolve_clip_url,
             stream_relay::get_live_m3u8_url,
             stream_relay::stop_stream,
             stream_relay::get_available_qualities,
@@ -290,6 +298,16 @@ fn main() {
             helix::get_pinned_chat_messages,
             helix::get_hype_train,
             helix::get_channel_prediction,
+            helix::get_channel_poll,
+            helix::make_prediction,
+            helix::vote_on_poll,
+            helix::get_prediction_result,
+            helix::get_badge_options,
+            helix::set_chat_badge,
+            helix::follow_channel,
+            helix::search_twitch_channels,
+            app_extras::launched_at_startup,
+            app_extras::save_backup_file,
             helix::create_clip,
             helix::get_channel_points,
             helix::get_drops_inventory,
@@ -324,6 +342,7 @@ fn main() {
             helix::search_categories,
             helix::get_vod_chat_density,
             helix::get_vod_top_clips,
+            helix::get_clip_info,
             helix::get_category_viewer_counts,
             helix::get_videos_for_login,
             helix::get_vod_muted_segments,

@@ -29,6 +29,7 @@ export const chatBadgesMixin = {
 
       const img = document.createElement("img");
       img.className = "chat-badge";
+      img.dataset.badge = pair; // "setID/version", lets a click on your own badge open the badge picker
       img.src = badge.url;
       img.alt = badge.title;
       img.title = badge.title;
@@ -171,9 +172,19 @@ export const chatBadgesMixin = {
     const container = this._inputBadgeEl;
     if (!container) return;
     container.innerHTML = "";
-    if (!badgesTag) return;
-    const fragment = this.renderBadges(badgesTag);
+    const fragment = badgesTag ? this.renderBadges(badgesTag) : null;
     if (fragment) container.appendChild(fragment);
+    // clicking your badge(s) opens the badge picker (chat-badge-picker.js). wearing none on Twitch: show a
+    // small placeholder so the picker is still reachable
+    const canPick = !this._isKickChat && this.isLoggedIn && !!this.channel;
+    container.classList.toggle("badge-pickable", canPick);
+    container.title = canPick ? "Change your chat badges" : "";
+    if (canPick && !fragment) {
+      const ph = document.createElement("span");
+      ph.className = "chat-input-badge-empty";
+      ph.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>';
+      container.appendChild(ph);
+    }
   },
 
 };

@@ -11,7 +11,9 @@ import { openPinAuthModal } from "./pin-auth.js";
 import { openRewardsModal } from "./rewards.js";
 import { initModLog, openModLogModal } from "./mod-log.js";
 import { initModMenu } from "./mod-menu.js";
-import { initWhispers } from "./whispers.js";
+import { initWhispers, openWhispers } from "./whispers.js";
+import { initCommandPalette } from "./command-palette.js";
+import { showRaidBanner, showRaidArrived, hideRaidBanner } from "./raid-banner.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
@@ -22,12 +24,17 @@ initTooltips();
 import { TwitchAuth } from "./auth.js";
 import { ChannelsSidebar } from "./sidebar.js";
 import { startHypeBadgePolling } from "./hype-badges.js";
-import { startDropsAutoClaim } from "./drops-autoclaim.js";
+import { startDropsAutoClaim, stopDropsAutoClaim } from "./drops-autoclaim.js";
+import { getSetting, setSetting, onSettingChange, applyAppearance } from "./settings.js";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { exportBackup, importBackup } from "./backup.js";
+import { checkForUpdatesNow } from "./update-banner.js";
+import { openSettingsPanel, configureSettingsPanel, getSettingsIndex } from "./settings-panel.js";
 import { isKickFollowed, toggleKickFollow } from "./kick-follows.js";
 import { getKickAlias, setKickAlias, kickSlugFor } from "./kick-aliases.js";
 import { HomeFeed } from "./home.js";
 import { BrowsePage } from "./browse.js";
-import { isKick, togglePlatform, onPlatformChange, setPlatform } from "./platform.js";
+import { isKick, togglePlatform, onPlatformChange, setPlatform, feedInvoke } from "./platform.js";
 import { VodsPage } from "./vods.js";
 import { streamHasDropsEnabled } from "./drops.js";
 import { session } from "./session.js";
@@ -45,10 +52,11 @@ import {
   isAppFullscreen,
 } from "./layout.js";
 import {
-  initChannelInfoBar, setAfterAliasBtnRefresh, channelInfoKickAliasBtn,
+  initChannelInfoBar, channelInfoKickAliasBtn,
   updateChannelInfoBar, updateKickChannelInfoBar, updateStreamInfoOverlay,
   hideChannelInfoBar, resyncChannelInfoBarVisibility, refreshKickAliasBtn,
   startChannelInfoRefresh, ensureChannelInfoBarFor, showVodInInfoBar,
+  currentChannelFollowState, toggleCurrentFollow,
 } from "./channel-info-bar.js";
 
 const channelInput = document.getElementById("channel-input");
@@ -183,9 +191,6 @@ function scheduleTwitchReconnect(reason) {
 // the retry ladder). the "ended" match is anchored so it doesn't also match "appended"
 let _endedProbeInFlight = false;
 
-// DEV: channel the "Test failover" button wants the ended-probe to report offline. Twitch won't end a stream on request, so this is the one fact the test supplies
-let _devForceOfflineFor = null;
-
 // relay went quiet (5s) but isn't dead yet. ask Helix (authoritative, fast): no stream -> ended,
 // fail over to Kick now; still live -> a blip, do nothing (onDead's 20s + retry ladder still run).
 // only acts on a definite end, so a wrong guess never tears down a working stream
@@ -198,14 +203,8 @@ async function handleStreamSilent(secs) {
   const channelAtSilence = session.intendedChannel;
   _endedProbeInFlight = true;
   try {
-    let stream;
-    if (_devForceOfflineFor === channelAtSilence) {
-      console.warn(`[test] forcing Helix verdict to OFFLINE for ${channelAtSilence}`);
-      stream = null;
-    } else {
-      const raw = await invoke("get_stream_for_login", { login: channelAtSilence });
-      stream = JSON.parse(raw);
-    }
+    const raw = await invoke("get_stream_for_login", { login: channelAtSilence });
+    const stream = JSON.parse(raw);
     // Helix returns no stream object for an offline channel
     if (stream) return; // still live -> a blip, not an end. let it ride
 
@@ -388,8 +387,6 @@ const trackId = new TrackId(playbackControls.videoEl, {
   const gearBtn = document.getElementById("chat-settings-btn");
   const menu = document.getElementById("chat-settings-menu");
   if (gearBtn && menu) {
-    const openFilter = () => openChatFilterModal(() => chat.reloadChatFilter());
-    const openPins = () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); });
 
     const positionMenu = () => {
       const r = gearBtn.getBoundingClientRect();
@@ -440,24 +437,10 @@ const trackId = new TrackId(playbackControls.videoEl, {
       item.addEventListener("click", () => {
         const action = item.dataset.action;
         closeMenu();
-        if (action === "filter") openFilter();
-        else if (action === "pins") openPins();
-        else if (action === "hidden") openHiddenChannelsModal();
+        // chat filter + hidden channels live in Settings > Chat > Filters now
+        if (action === "settings") openSettingsPanel();
       });
     });
-
-    // Minimize-to-tray toggle inside the chat settings menu: keeps the setting, backend flag, and
-    // localStorage in sync. (Moved here from the account menu.)
-    const trayToggle = menu.querySelector("#close-to-tray-toggle");
-    if (trayToggle) {
-      const on = localStorage.getItem("closeToTray") !== "0"; // default on
-      trayToggle.checked = on;
-      trayToggle.addEventListener("change", () => {
-        const enabled = trayToggle.checked;
-        localStorage.setItem("closeToTray", enabled ? "1" : "0");
-        invoke("set_close_to_tray", { enabled }).catch(() => {});
-      });
-    }
   }
 }
 document.getElementById("rewards-btn")?.addEventListener("click", () => {
@@ -471,7 +454,7 @@ document.getElementById("modlog-btn")?.addEventListener("click", () => openModLo
 initModMenu(chat);
 initWhispers(chat);
 startHypeBadgePolling();
-startDropsAutoClaim();
+if (getSetting("autoClaimDrops")) startDropsAutoClaim(); // Settings > App
 // the shield (room controls) only makes sense where you can moderate
 {
   const modmenuBtn = document.getElementById("modmenu-btn");
@@ -566,6 +549,20 @@ document.getElementById("multiview-tab")?.addEventListener("click", () => {
     multiview.setLoggedIn(currentLogin.login, currentLogin.userId, currentLogin.displayName);
   }
 });
+// Home's MultiView launcher: open MultiView with exactly the streams, layout and audio picked there
+function openMultiViewWith(channels, { layout = "grid", audio = null } = {}) {
+  if (!channels || !channels.length) return;
+  if (multiview.isOpen) multiview.close();
+  multiview.setLayout(layout);
+  multiview.open(channels, multiviewHooks);
+  if (currentLogin) {
+    multiview.setLoggedIn(currentLogin.login, currentLogin.userId, currentLogin.displayName);
+  }
+  // sound from the chosen stream (and, in Focus layout, it's the big one). tiles are registered as soon as
+  // open() adds them, before their video loads, so this sticks
+  if (audio) multiview.focus(String(audio).toLowerCase());
+}
+
 // navigating to Home/Browse closes the grid, so those tabs work even with the overlay up (it previously trapped the user, escapable only via the close button)
 homeTab.addEventListener("click", () => { if (multiview.isOpen) multiview.close(); });
 browseTab.addEventListener("click", () => { if (multiview.isOpen) multiview.close(); });
@@ -640,57 +637,6 @@ getVersion()
   .catch(() => {}); // non-fatal: title just stays the static default
 setInterval(maybeSaveVodProgress, 15_000);
 
-// DEBUG: trigger a real go-live notification from the console without waiting for a channel to go
-// live. goes through the production detection path (debugTestGoLiveNotification in sidebar.js), so a
-// pass proves the feature end to end. __testGoLiveNotification() = first opted-in channel, or pass a specific one
-window.__testGoLiveNotification = (login) => sidebar.debugTestGoLiveNotification(login);
-
-// DEBUG: simulate the current Twitch stream ENDING to test Kick failover. feeds a real end-reason
-// into the REAL handler (handleStreamDead), exercising detection + tryKickFailover + alias end to
-// end. needs a Twitch stream playing; no-ops on Kick/VOD
-function testTwitchStreamEnd() {
-  if (!session.playing || !session.intendedChannel || session.intendedChannel.startsWith("vod:")) {
-    console.warn("[test] Not watching a live Twitch stream - nothing to end.");
-    setStatus("Test: not watching a live Twitch stream");
-    return;
-  }
-  if (isKick() || session.kickFailover) {
-    console.warn("[test] Already on a Kick session - the failover only runs from a live Twitch stream.");
-    setStatus("Test: already on Kick - watch a Twitch stream first");
-    return;
-  }
-  // simulate the CAUSE, not the conclusion: starve the byte stream as an ended broadcast does and let production reach its own verdict. the only supplied fact is Helix's verdict (_devForceOfflineFor)
-  console.warn(
-    `[test] Starving the relay for ${session.intendedChannel} - the real detector should ` +
-    `notice ~5s of silence, probe Helix (forced OFFLINE), and fail over to Kick.`,
-  );
-  session.streamRecoveryAttempts = 0;
-  _devForceOfflineFor = session.intendedChannel;
-  setStatus("Test: simulating stream end (waiting for the real detector…)");
-  playbackControls.simulateRelaySilence();
-}
-window.__testTwitchStreamEnd = testTwitchStreamEnd;
-
-// dev-only button on the Twitch info bar, same trigger as the console helper, faster to hit. import.meta.env.DEV is compiled OUT of production, so this button doesn't exist in a release build
-if (import.meta.env?.DEV) {
-  const testEndBtn = document.createElement("button");
-  testEndBtn.id = "channel-info-test-end-btn";
-  testEndBtn.className = "channel-info-videos-btn";
-  testEndBtn.textContent = "⚡ Test failover";
-  testEndBtn.title = "DEV: simulate this Twitch stream ending, to test Kick failover";
-  testEndBtn.style.borderColor = "#e0b000";
-  testEndBtn.style.color = "#e0b000";
-  testEndBtn.addEventListener("click", () => testTwitchStreamEnd());
-  // sits next to Videos/Link Kick; only meaningful on a Twitch session, so it hides on Kick sessions the same way the alias button does
-  channelInfoKickAliasBtn.after(testEndBtn);
-  // keep its visibility in lockstep with the alias button (both Twitch-only). refreshKickAliasBtn runs this hook at its end, so it tracks the alias button without patching that function
-  const syncTestBtn = () => {
-    testEndBtn.style.display = channelInfoKickAliasBtn.style.display;
-  };
-  setAfterAliasBtnRefresh(syncTestBtn);
-  syncTestBtn();
-}
-
 const homeFeed = new HomeFeed({
   containerEl: document.getElementById("home-feed"),
   onChannelSelect: (login, stream) => {
@@ -702,6 +648,11 @@ const homeFeed = new HomeFeed({
       watchChannel(login, stream);
     }
   },
+  // MultiView launcher (top of Home): live favorites come from the sidebar, which already tracks follows,
+  // favorites and live status. wrapped in try: the sidebar is created after Home
+  getLiveFavorites: () => { try { return sidebar.getLiveFavorites(); } catch { return []; } },
+  getLiveLogins: () => { try { return sidebar.getLiveLogins(); } catch { return new Set(); } },
+  onOpenMultiView: (channels, opts) => openMultiViewWith(channels, opts),
   // "Continue where you left off": jump straight to the saved position (an explicit start offset, so
   // it wins over the resume-prompt logic) and keep recording its metadata
   onVodResume: (item) =>
@@ -751,10 +702,192 @@ initLayout({
   browsePage,
   vodsPage,
   getCurrentChannel: () => playbackControls.currentChannel,
-  miniPlayerOn: () => activateMiniPlayer(),
+  miniPlayerOn: () => { if (getSetting("miniPlayer")) activateMiniPlayer(); }, // Settings > Player > Mini player
   miniPlayerOff: () => deactivateMiniPlayer(),
 });
-initChannelInfoBar({ watchChannel, switchPage, setStatus });
+// ---- recently watched channels (command palette "Recent") ----
+function rememberRecentChannel(login, stream) {
+  try {
+    const l = String(login).toLowerCase();
+    const list = JSON.parse(localStorage.getItem("recentChannels") || "[]").filter((r) => r.login !== l);
+    list.unshift({ login: l, name: (stream && (stream.user_name || stream.display_name)) || login, at: Date.now() });
+    localStorage.setItem("recentChannels", JSON.stringify(list.slice(0, 8)));
+  } catch { /* ignore */ }
+}
+
+// ---- Command palette (Ctrl+K, command-palette.js) ----
+function paletteWatch(login) {
+  channelInput.value = login;
+  if (isKick()) watchKickChannel(login); else watchChannel(login);
+}
+// actions offered depend on what's playing: stream actions only while something is on
+function paletteActions() {
+  const out = [];
+  const add = (title, sub, run, extra = {}) => out.push({ title, sub, run, ...extra });
+  const playing = !!session.playing;
+  const cur = String(playbackControls.currentChannel || "");
+  const isVod = cur.startsWith("vod:");
+  const channel = isVod ? "" : cur;
+  const kick = !!playbackControls._isKickSession;
+  if (playing) {
+    add("Toggle theater mode", "Current stream", () => toggleTheaterModeAndResync(), { keys: ["T"], suggested: true });
+    add("Fullscreen", "Current stream", () => toggleFullscreen(), { keys: ["F"] });
+    add("Mute / unmute", "Current stream", () => playbackControls.toggleMute(), { keys: ["M"] });
+    add("Pop out player", "Current stream", () => playbackControls.togglePip());
+    if (!kick) {
+      if (playbackControls.currentQuality === "audio_only") add("Back to video (Auto)", "Quality", () => playbackControls.selectQuality("auto"), { suggested: true });
+      else add("Switch to Audio only", "Quality", () => playbackControls.selectQuality("audio_only"), { suggested: true });
+      for (const q of playbackControls.cachedQualities || []) {
+        if (q !== "audio_only") add(`Set quality: ${q === "best" ? "Source" : q}`, "Quality", () => playbackControls.selectQuality(q));
+      }
+      add("Set quality: Auto", "Quality", () => playbackControls.selectQuality("auto"));
+    }
+    if (playbackControls.isVod) {
+      for (const sp of [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]) {
+        add(sp === 1 ? "Playback speed: Normal" : `Playback speed: ${sp}×`, "VOD", () => playbackControls.setVodSpeed(sp), { keys: sp === 1 ? [] : undefined });
+      }
+    }
+    add("Identify song (Track ID)", "Current stream", () => trackId.identify());
+    const f = currentChannelFollowState();
+    if (f) add(`${f.followed ? "Unfollow" : "Follow"} ${f.channel}`, "Current channel", () => toggleCurrentFollow(), { suggested: !f.followed });
+    if (channel && !kick) {
+      add(`Add ${channel} to MultiView`, "MultiView", () => {
+        if (multiview.isOpen) multiview.addChannel(channel); else openMultiViewWith([channel], { audio: channel });
+      }, { suggested: true });
+      add("Copy stream link", "Current stream", () => {
+        navigator.clipboard.writeText(`https://twitch.tv/${channel}`).then(() => setStatus("Stream link copied")).catch(() => {});
+      });
+      add(`Past broadcasts of ${channel}`, "Navigation", () => document.getElementById("channel-info-videos-btn")?.click(), { nav: true });
+    }
+    if (session.pageVisible) add("Back to stream", "Navigation", () => backToStreamBtn.click(), { nav: true, suggested: true });
+    add("Stop watching", "Current stream", () => stopPlayback({ returnToPage: true, goHome: true }));
+  }
+  add("Go to Home", "Navigation", () => document.getElementById("home-tab")?.click(), { nav: true, suggested: !playing });
+  add("Go to Browse", "Navigation", () => document.getElementById("browse-tab")?.click(), { nav: true, suggested: !playing });
+  add("Open MultiView", "Navigation", () => document.getElementById("multiview-tab")?.click(), { nav: true });
+  add("Open whispers", "Navigation", () => openWhispers(), { nav: true });
+  add("Open settings", "Navigation", () => openSettingsPanel(), { nav: true, keys: ["Ctrl", ","], suggested: !playing });
+  add("Check for updates", "App", () => checkForUpdatesNow().then((m) => setStatus(m)).catch(() => {}));
+  return out;
+}
+initCommandPalette({
+  getFollowed: () => (sidebar.followed || []).map((c) => ({
+    login: String(c.login || "").toLowerCase(), name: c.name || c.login, live: !!c.live, viewers: c.viewers,
+    game: c.game || "", avatar: c.avatar || "", favorite: !!sidebar._isFavorite?.(c.login),
+  })),
+  getRecent: () => { try { return JSON.parse(localStorage.getItem("recentChannels") || "[]"); } catch { return []; } },
+  watch: paletteWatch,
+  searchCategories: async (q) => JSON.parse(await feedInvoke("search_categories", { query: q })),
+  openCategory: (game) => { document.getElementById("browse-tab")?.click(); browsePage.openGame(game); },
+  getContinue: () => homeFeed.continueItems || [],
+  resumeVod: (item) => homeFeed.onVodResume(item),
+  getActions: paletteActions,
+  getSettingsIndex: () => getSettingsIndex(),
+  openSetting: (section, title) => openSettingsPanel(section, title),
+});
+
+// ---- Settings (settings.js / settings-panel.js) ----
+applyAppearance(); // chat font size, emote size, timestamps
+// settings that apply live the moment they change (the rest are read where they act)
+onSettingChange((id, v) => {
+  switch (id) {
+    case "lowLatency":
+      session.lowLatency = !!v;
+      playbackControls.lowLatency = !!v;
+      break;
+    case "closeToTray":
+      invoke("set_close_to_tray", { enabled: !!v }).catch(() => {});
+      break;
+    case "autoClaimDrops":
+      if (v) startDropsAutoClaim(); else stopDropsAutoClaim();
+      break;
+    case "pinnedBanner":
+      chat._renderPin?.(chat._lastPins || []);
+      break;
+    case "predictionsPolls":
+      chat._leRender?.("pred");
+      chat._leRender?.("poll");
+      break;
+    case "hypeGiftBanners":
+      if (v) { if (chat._hype) chat._renderHype?.(false); }
+      else {
+        for (const bid of ["hype-train-banner", "gift-sub-banner"]) {
+          const el = document.getElementById(bid);
+          if (el) el.style.display = "none";
+        }
+      }
+      break;
+    case "homeLauncher":
+      homeFeed._refreshLauncher?.();
+      break;
+    case "homeContinueRow":
+    case "homeRecommendedRow":
+      if (homeFeed.loaded) homeFeed.render();
+      break;
+    case "liveChannelsCount":
+      sidebar.refreshTopLive?.();
+      break;
+    case "showOfflineFollowed":
+    case "followedSort":
+      sidebar.renderFollowed?.();
+      break;
+    case "autostart":
+      invoke(v ? "plugin:autostart|enable" : "plugin:autostart|disable").catch((err) => {
+        console.warn("[settings] autostart:", err);
+        setStatus("Couldn't change the startup setting");
+      });
+      break;
+    case "uiZoom":
+      applyZoom();
+      break;
+  }
+});
+
+// Settings > App > Interface zoom (the webview's own zoom, like a browser's)
+function applyZoom() {
+  const z = Number(getSetting("uiZoom")) || 1;
+  getCurrentWebview().setZoom(z).catch((err) => console.warn("[settings] zoom:", err));
+}
+applyZoom();
+
+// Settings > App > Start with your computer: show the OS's real state (it can be changed outside Mosaic),
+// and on a startup launch with "start minimized" on, go straight to the tray
+(async () => {
+  try {
+    const enabled = await invoke("plugin:autostart|is_enabled");
+    if (!!enabled !== !!getSetting("autostart")) setSetting("autostart", !!enabled);
+  } catch { /* plugin unavailable: leave the setting as is */ }
+  try {
+    if (getSetting("startMinimized") && await invoke("launched_at_startup")) await getCurrentWindow().hide();
+  } catch (err) { console.warn("[settings] start minimized:", err); }
+})();
+// the panel links to the editors that already exist rather than duplicating them
+configureSettingsPanel({
+  exportBackup, importBackup, checkForUpdatesNow,
+  openChatFilter: () => openChatFilterModal(() => chat.reloadChatFilter()),
+  openHiddenChannels: () => openHiddenChannelsModal(),
+  openTwitchConnection: () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); }),
+});
+document.getElementById("settings-open-btn")?.addEventListener("click", () => openSettingsPanel());
+document.getElementById("user-menu-settings")?.addEventListener("click", () => {
+  document.getElementById("user-menu")?.classList.remove("open");
+  openSettingsPanel();
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === ",") { e.preventDefault(); openSettingsPanel(); }
+});
+
+initChannelInfoBar({
+  watchChannel, switchPage, setStatus,
+  // in-app Twitch follow (channel info bar): state from the sidebar's followed list; after a change,
+  // refresh the sidebar so the channel appears in / leaves Followed (short delay: Twitch's follow list
+  // takes a moment to catch up)
+  isTwitchFollowed: (login) => {
+    const l = String(login || "").toLowerCase();
+    return (sidebar.followed || []).some((ch) => String(ch.login || "").toLowerCase() === l);
+  },
+  onTwitchFollowChanged: () => setTimeout(() => sidebar.refreshFollowed().catch?.(() => {}), 2500),
+});
 
 vodsPage.hide();
 // reopen whatever was playing, but ONLY across an F5/reload, never a genuine launch.
@@ -794,7 +927,7 @@ function returnToFullStream() {
   vodsPage.hide();
   session.pageVisible = false;
   // restore theater mode (switchPage turned it off on the way out) now the video is back and the sidebar collapse is worth it again
-  setTheaterMode(true);
+  if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
   updateBackToStreamBtn();
   resyncChannelInfoBarVisibility();
 }
@@ -873,6 +1006,12 @@ window.addEventListener("keydown", (e) => {
   }
 
   // "M" toggles mute (the official shortcut), same text-field guard as "T", reusing toggleMute(). no is-anything-playing check needed, toggleMute() is a harmless no-op against an empty <video>
+  // < / > : VOD playback speed down / up (Shift+, / Shift+.), like YouTube
+  if ((e.key === "<" || e.key === ">") && playbackControls.isVod) {
+    e.preventDefault();
+    playbackControls.stepVodSpeed(e.key === ">" ? 1 : -1);
+    return;
+  }
   if (e.key.toLowerCase() === "m") {
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;
@@ -893,7 +1032,8 @@ window.addEventListener("keydown", (e) => {
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     if (!session.playing) return;
     e.preventDefault();
-    const step = e.shiftKey ? 10 : 5;
+    const base = Number(getSetting("seekStep")) || 5; // Settings > Player > Seek step (Shift doubles it)
+    const step = e.shiftKey ? base * 2 : base;
     playbackControls.seekRelative(e.key === "ArrowLeft" ? -step : step);
   }
 });
@@ -1193,9 +1333,10 @@ function maybeSaveVodProgress() {
 }
 
 async function watchChannel(channel, stream) {
-  _devForceOfflineFor = null; // dev test override is per-session only
   if (!channel) return;
+  hideRaidBanner(); // a raid banner belongs to the stream you were on
   session.intendedChannel = channel;
+  rememberRecentChannel(channel, stream);
   if (session.kickFailover) {
     invoke("stop_kick_chat").catch(() => {});
     // coming from a failover/Kick session into an explicit Twitch watch, restore Twitch chrome (attachKickStream may have flipped to Kick)
@@ -1269,7 +1410,7 @@ async function watchChannel(channel, stream) {
       // set up live-session state, then hand off to the shared Kick attach. the Twitch chat connected above is swapped for Kick chat, brief churn accepted so the fast path doesn't wait on a Kick lookup
       session.playing = true;
       syncWatchBtn();
-      setTheaterMode(true);
+      if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
       videoPlaceholder.style.display = "none";
       await attachKickStream(
         kickSlug,
@@ -1292,8 +1433,8 @@ async function watchChannel(channel, stream) {
   }
 
   // theater mode: collapse the channels sidebar so the video gets the extra width, same as clicking "Theater Mode" on the official site
-  setTheaterMode(true);
-  session.currentQuality = "best";
+  if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
+  session.currentQuality = getSetting("defaultQuality"); // Settings > Player > Default quality
 
   try {
     // don't spawn a streamlink pipeline for a channel already clicked away from. start_stream takes ~1-2s, so without this guard rapid switching runs every intermediate channel's pipeline in sequence and the player crawls. the Helix lookup is already guarded; this covers the expensive step
@@ -1416,6 +1557,8 @@ async function watchChannel(channel, stream) {
 }
 
 // fired by Rust (eventsub.rs channel.raid) when the watched channel raids out. auto-follows the raid like Twitch's clients rather than freezing on the last frame. guarded on playing + channel match against a stale event
+// Settings > Player > Follow raids: auto (5s countdown banner), ask, or off. the banner is the real feedback:
+// following switches channels, which clears chat, so a chat line alone vanished the moment it appeared
 listen("eventsub-raid", (event) => {
   const { to_login, to_name, viewers } = event.payload;
   if (!session.playing || !to_login) return;
@@ -1423,14 +1566,24 @@ listen("eventsub-raid", (event) => {
   // currentChannel can be "vod:<id>", which a live raid should never match anyway, but the prefix check makes "not watching a live channel" explicit
   if (!watching || watching.startsWith("vod:")) return;
 
-  chat.systemLine(`Raiding to ${to_name || to_login}${viewers ? ` with ${viewers.toLocaleString()} viewers` : ""}...`);
-  watchChannel(to_login);
+  const fromName = (sidebar.followed || []).find((c) => String(c.login).toLowerCase() === watching)?.name || watching;
+  const toName = to_name || to_login;
+  chat.systemLine(`${fromName} is raiding ${toName}${viewers ? ` with ${viewers.toLocaleString()} viewers` : ""}`);
+  const stillWatching = () => session.playing && (playbackControls.currentChannel || "").toLowerCase() === watching;
+  showRaidBanner({
+    fromName, toName, viewers, mode: getSetting("followRaids"), stillWatching,
+    go: async () => {
+      if (!stillWatching()) return;
+      await watchChannel(to_login);
+      showRaidArrived(fromName);
+    },
+  });
 });
 
 // play a Twitch VOD via HLS.js pointed at the Twitch CDN M3U8 (from streamlink --stream-url). replaces the old relay approach, instant seeking, correct buffering, no timestamp overflow
 async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", startPositionSecs) {
-  _devForceOfflineFor = null; // dev test override is per-session only
   if (!videoId) return;
+  hideRaidBanner(); // a raid banner belongs to the stream you were on
 
   // startPositionSecs is undefined for a plain VOD-card click, only then do we consult saved progress. a chapter click or explicit resume always passes a number (including 0 for chapter 1), which wins outright over older saved progress
   if (startPositionSecs == null) {
@@ -1468,8 +1621,8 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
   videoPlaceholder.textContent = "Resolving VOD…";
   videoPlaceholder.style.display = "flex";
 
-  setTheaterMode(true);
-  session.currentQuality = "best";
+  if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
+  session.currentQuality = getSetting("defaultQuality"); // Settings > Player > Default quality
 
   try {
     // chat.setVodMode() and URL resolution are independent (chat needs videoId/login/position, the URL needs videoId/quality), so run both together. this doesn't cut the dominant cost (HLS.js's own manifest fetch, which waits on the URL) but overlaps chat setup with URL resolution
@@ -1510,13 +1663,13 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
       resyncChannelInfoBarVisibility();
     }
     // fire-and-forget: muted-segment markers are a nice-to-have, never something playback waits on. shows none if the user isn't logged in (Helix only returns muted_segments for a user token) or on any failure
-    invoke("get_vod_muted_segments", { videoId })
+    if (getSetting("mutedSegments")) invoke("get_vod_muted_segments", { videoId }) // Settings > Player
       .then((raw) => playbackControls.renderMutedSegments(JSON.parse(raw), vodTotalSeconds))
       .catch((err) => console.warn("Failed to load muted segments:", err));
     // chat heatmap on the seek bar (vod-heatmap.js). fire-and-forget like the muted segments
-    startChatHeatmap(videoId, vodTotalSeconds);
+    if (getSetting("vodHeatmap")) startChatHeatmap(videoId, vodTotalSeconds); // Settings > Player
     // most-viewed clips of this VOD: seek-bar markers + the Top clips list (get_vod_top_clips in helix.rs)
-    invoke("get_vod_top_clips", { videoId: String(videoId) })
+    if (getSetting("vodTopClips")) invoke("get_vod_top_clips", { videoId: String(videoId) }) // Settings > Player
       .then((r) => playbackControls.setTopClips(r?.clips || [], videoId))
       .catch((err) => console.warn("Failed to load top clips:", err));
   } catch (err) {
@@ -1536,7 +1689,7 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
 // differences: URL via kick_vod_playback, chat is a "no replay" notice (setKickVodMode), and start()
 // runs with kickVod:true so the Twitch-only side fetches don't fire. resume shares watchVod's store
 async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
-  _devForceOfflineFor = null; // dev test override is per-session only
+  hideRaidBanner();
   if (!videoId) return;
 
   // same resume rules as watchVod: only a plain card click consults saved progress; an explicit number (even 0) always wins
@@ -1575,7 +1728,7 @@ async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
   videoPlaceholder.textContent = "Resolving Kick VOD…";
   videoPlaceholder.style.display = "flex";
 
-  setTheaterMode(true);
+  if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
   session.currentQuality = "best";
 
   try {
@@ -1617,7 +1770,7 @@ async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
 // (Helix, IRC, streamlink) and goes straight to the Kick lookup + the shared attachKickStream() the
 // failover paths use, so it lands in the identical config without ever being a Twitch session. state and stale guards mirror watchChannel's offline->Kick branch
 async function watchKickChannel(channel) {
-  _devForceOfflineFor = null; // dev test override is per-session only
+  hideRaidBanner();
   channel = (channel || "").trim().toLowerCase();
   if (!channel) return;
   session.intendedChannel = channel;
@@ -1711,7 +1864,7 @@ async function watchKickChannel(channel) {
   session.playing = true;
   rememberSession({ kind: "kickLive", id: channel });
   syncWatchBtn();
-  setTheaterMode(true);
+  if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
   session.liveDvrInfo = null; // stale session state; attachKickStream re-arms Kick DVR via resolveKickDvr
   session.liveDvrM3u8Cache = null;
   videoPlaceholder.style.display = "none";
@@ -1864,21 +2017,12 @@ applyPlatformUi();
 
 // macOS native-HLS toggle: whether Twitch LIVE plays via native HLS/hls.js (get_live_m3u8_url +
 // attachHlsDvr) instead of the fMP4 byte-relay + MSE. defaults ON for macOS (WebKit MSE is unreliable),
-// OFF elsewhere (byte-relay works and splices ads better). exposed on window for A/B testing without a rebuild: __setNativeHls(true|false), then reopen the stream
+// OFF elsewhere (byte-relay works and splices ads better)
 {
   const isMac = /Mac|iPhone|iPad/i.test(navigator.platform)
     || /Mac OS X/i.test(navigator.userAgent);
   session.useNativeHlsForLive = isMac;
-  window.__setNativeHls = (on) => {
-    session.useNativeHlsForLive = Boolean(on);
-    console.log(
-      `[native-hls] live playback path = ${session.useNativeHlsForLive ? "NATIVE HLS (hls.js)" : "byte-relay + MSE"}. Reopen the stream to apply.`,
-    );
-    return session.useNativeHlsForLive;
-  };
-  console.log(
-    `[native-hls] default live path on this platform = ${session.useNativeHlsForLive ? "NATIVE HLS (hls.js)" : "byte-relay + MSE"} (toggle with __setNativeHls(true|false))`,
-  );
+
 }
 
 function syncWatchBtn() {
@@ -1899,11 +2043,11 @@ channelInput.addEventListener("keydown", (e) => {
 // tray-minimized app is quiet and lightweight rather than streaming in the background).
 function stopPlayback({ returnToPage = true, goHome = false } = {}) {
   if (!session.playing) return;
+  hideRaidBanner();
   _heatmapHandle?.cancel(); // stop sampling a VOD we're leaving
   maybeSaveVodProgress();
   session.intendedChannel = null;
   forgetSession(); // explicit Stop must not be undone by a later reload
-  _devForceOfflineFor = null; // dev test override never survives a session
   if (session.kickFailover) invoke("stop_kick_chat").catch(() => {});
   session.kickFailover = null;
   session.liveDvrInfo = null;

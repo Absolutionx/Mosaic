@@ -14,12 +14,17 @@ import { session } from "./session.js";
 let watchChannel = () => {};
 let switchPage = () => {};
 let setStatus = () => {};
+// Twitch follow state lives in the sidebar's followed list; after a follow/unfollow the sidebar is refreshed
+let isTwitchFollowed = () => false;
+let onTwitchFollowChanged = () => {};
 
 // call once from main.js at startup, before any bar button can be clicked
 export function initChannelInfoBar(deps) {
   watchChannel = deps.watchChannel;
   switchPage = deps.switchPage;
   setStatus = deps.setStatus;
+  if (deps.isTwitchFollowed) isTwitchFollowed = deps.isTwitchFollowed;
+  if (deps.onTwitchFollowChanged) onTwitchFollowChanged = deps.onTwitchFollowChanged;
 }
 
 // runs after refreshKickAliasBtn() re-evaluates the alias button, so main.js's dev "Test failover" button can track it
@@ -97,9 +102,8 @@ export async function updateChannelInfoBar(channel, stream) {
 
   const channelUrl = `https://www.twitch.tv/${encodeURIComponent(channel)}`;
   channelInfoFollowBtn.href = channelUrl;
-  // a preceding Kick session may have left this "Following", on Twitch it's a plain link-out, always "Follow"
-  channelInfoFollowBtn.textContent = "Follow";
-  channelInfoFollowBtn.classList.remove("is-following");
+  // Twitch: a real in-app follow/unfollow (follow_channel), showing whether you already follow this channel
+  setTwitchFollowBtn(twitchFollowState(channel));
   channelInfoSubscribeBtn.href = channelUrl;
   // sync "Link Kick" to THIS channel's alias (and re-show it, the Kick populator hides it).
   // without the per-channel refresh the label followed you across channels and a fresh channel
@@ -346,9 +350,88 @@ export function blankAvatarDataUri() {
   return "data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 }
 
+// ---- Twitch follow / unfollow ----
+// a follow you just did is remembered for 2 minutes: Twitch's follow list (what the sidebar reads) can lag a
+// few seconds behind, and the bar re-populates every minute, so without this the button could flip back
+const followOverrides = new Map(); // login -> { followed, until }
+function twitchFollowState(login) {
+  const o = followOverrides.get(String(login).toLowerCase());
+  if (o && Date.now() < o.until) return o.followed;
+  return !!isTwitchFollowed(login);
+}
+function setTwitchFollowBtn(followed) {
+  const btn = channelInfoFollowBtn;
+  // don't clobber an in-flight request or an open "Unfollow?" confirmation on a periodic refresh
+  if (btn.classList.contains("follow-busy") || btn.classList.contains("confirm-unfollow")) return;
+  btn.innerHTML = "";
+  const icon = document.createElement("span");
+  icon.className = "follow-heart";
+  icon.innerHTML = followed
+    ? '<svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M12 21s-7.5-4.6-9.6-9.2C.9 8.6 2.7 5 6.3 5c2.1 0 3.4 1.1 4.2 2.3h3C14.3 6.1 15.6 5 17.7 5c3.6 0 5.4 3.6 3.9 6.8C19.5 16.4 12 21 12 21z"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 21s-7.5-4.6-9.6-9.2C.9 8.6 2.7 5 6.3 5c2.1 0 3.4 1.1 4.2 2.3h3C14.3 6.1 15.6 5 17.7 5c3.6 0 5.4 3.6 3.9 6.8C19.5 16.4 12 21 12 21z"/></svg>';
+  const label = document.createElement("span");
+  label.textContent = followed ? "Following" : "Follow";
+  btn.append(icon, label);
+  btn.classList.toggle("is-following", followed);
+  btn.title = followed ? "Click to unfollow" : "Follow this channel";
+}
+let unfollowConfirmTimer = null;
+async function onTwitchFollowClick(btn) {
+  const channel = lastChannelInfo && lastChannelInfo.channel;
+  if (!channel || btn.classList.contains("follow-busy")) return;
+  const followed = twitchFollowState(channel);
+  // unfollow asks once: the first click turns the button into "Unfollow?" for a few seconds
+  if (followed && !btn.classList.contains("confirm-unfollow")) {
+    btn.classList.add("confirm-unfollow");
+    btn.textContent = "Unfollow?";
+    btn.title = "Click again to unfollow";
+    clearTimeout(unfollowConfirmTimer);
+    unfollowConfirmTimer = setTimeout(() => {
+      btn.classList.remove("confirm-unfollow");
+      setTwitchFollowBtn(twitchFollowState(channel));
+    }, 3500);
+    return;
+  }
+  clearTimeout(unfollowConfirmTimer);
+  btn.classList.remove("confirm-unfollow");
+  btn.classList.add("follow-busy");
+  btn.textContent = followed ? "Unfollowing…" : "Following…";
+  try {
+    await invoke("follow_channel", { login: channel, follow: !followed });
+    followOverrides.set(String(channel).toLowerCase(), { followed: !followed, until: Date.now() + 120000 });
+    setStatus(followed ? `Unfollowed ${channel}` : `Following ${channel}`);
+    onTwitchFollowChanged(channel, !followed);
+  } catch (err) {
+    const msg = typeof err === "string" ? err : (err && err.message) || "Couldn't update the follow";
+    setStatus(msg);
+    console.error("[follow]", err);
+  } finally {
+    btn.classList.remove("follow-busy");
+    // the channel may have changed while the request ran; only redraw for the one still shown
+    if (lastChannelInfo && lastChannelInfo.channel === channel && !lastChannelInfo.kick) {
+      setTwitchFollowBtn(twitchFollowState(channel));
+    }
+  }
+}
+
+// ---- for the command palette ----
+// null when no Twitch channel is showing in the bar (nothing to follow)
+export function currentChannelFollowState() {
+  if (!lastChannelInfo || lastChannelInfo.kick || !lastChannelInfo.channel) return null;
+  return { channel: lastChannelInfo.channel, followed: twitchFollowState(lastChannelInfo.channel) };
+}
+// follow / unfollow the channel in the bar. choosing it in the palette is already deliberate, so the
+// button's "Unfollow?" confirmation is skipped
+export function toggleCurrentFollow() {
+  const btn = channelInfoFollowBtn;
+  if (!currentChannelFollowState()) return;
+  if (twitchFollowState(lastChannelInfo.channel)) btn.classList.add("confirm-unfollow");
+  onTwitchFollowClick(btn);
+}
+
 // same intercept-the-click, call openUrl() as dropsBannerLink (target="_blank" does nothing in
-// a Tauri webview). both just link out to the channel page, the OAuth scope lacks write perms
-// for real Follow/Subscribe actions
+// a Tauri webview). Follow is in-app on both platforms (Twitch: follow_channel; Kick: local list);
+// Subscribe links out to the channel page (paid subs can't be done from an app)
 for (const btn of [channelInfoFollowBtn, channelInfoSubscribeBtn]) {
   btn.addEventListener("click", (e) => {
     e.preventDefault();
@@ -362,6 +445,11 @@ for (const btn of [channelInfoFollowBtn, channelInfoSubscribeBtn]) {
       });
       btn.textContent = nowFollowed ? "Following" : "Follow";
       btn.classList.toggle("is-following", nowFollowed);
+      return;
+    }
+    // Twitch sessions: a real in-app follow / unfollow
+    if (btn === channelInfoFollowBtn && lastChannelInfo && !lastChannelInfo.kick) {
+      onTwitchFollowClick(btn);
       return;
     }
     openUrl(btn.href).catch((err) => {

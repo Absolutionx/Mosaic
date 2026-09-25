@@ -1,3 +1,4 @@
+import { getSetting } from "./settings.js";
 // "Update available" surfaced as a compact header button (#update-btn), matching the app's other
 // buttons, plus one-click in-app update. Windows only (the updater plugin is registered only there;
 // macOS re-downloads the .dmg). Checks latest.json at startup, then keeps checking while the app is
@@ -35,12 +36,21 @@ export async function checkForUpdate() {
   await _runCheck({ startup: true });
 }
 
+// Settings > App > "Check now": runs regardless of the automatic setting, reports what it found
+export async function checkForUpdatesNow() {
+  if (platform() !== "windows") return "Updates come with new downloads on this platform";
+  if (_shown) return "Update available: use the Update button";
+  await _runCheck({ manual: true });
+  return _shown ? "Update available: use the Update button" : "You're up to date";
+}
+
 // The actual check. Safe to call repeatedly: it no-ops once the button is shown or an install is
 // running, and swallows all errors (offline, no endpoint, not configured). `startup` marks the first
 // boot check — a button appearing then is expected, so it skips the attention pulse that a
 // mid-session (live-detected) update gets.
-async function _runCheck({ startup = false } = {}) {
+async function _runCheck({ startup = false, manual = false } = {}) {
   if (_updating || _shown) return;
+  if (!manual && !getSetting("autoUpdateCheck")) return; // Settings > App > Check for updates automatically
   try {
     const update = await check();
     if (!update?.available) return;

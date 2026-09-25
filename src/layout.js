@@ -81,7 +81,14 @@ export function updateBackToStreamBtn() {
   const shouldShow = session.playing && session.pageVisible;
   backToStreamBtn.style.display = shouldShow ? "flex" : "none";
   if (shouldShow) {
-    backToStreamLabel.textContent = `Now watching: ${getCurrentChannel() || ""}`;
+    // "Now watching:" muted, the channel name emphasised (built with textContent, never parsed as markup)
+    const pre = document.createElement("span");
+    pre.className = "back-to-stream-pre";
+    pre.textContent = "Now watching:";
+    const name = document.createElement("span");
+    name.className = "back-to-stream-name";
+    name.textContent = getCurrentChannel() || "";
+    backToStreamLabel.replaceChildren(pre, " ", name);
   }
 }
 
