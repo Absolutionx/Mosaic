@@ -9,7 +9,7 @@ use crate::ChatState;
 
 // shared HTTP fetch for both badge endpoints. always attaches Client-ID, and Authorization when a token is available
 pub(crate) async fn helix_get(url: &str, access_token: Option<String>) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let mut req = client
         .get(url)
         .header("Client-ID", oauth::CLIENT_ID);
@@ -374,7 +374,7 @@ pub async fn get_vod_chat(
         }])
     };
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let response = client
         .post(GQL_URL)
         .header("Client-ID", GQL_CLIENT_ID)
@@ -574,7 +574,7 @@ pub async fn get_vod_chat_density(
     offsets: Vec<f64>,
 ) -> Result<Vec<serde_json::Value>, String> {
     use futures_util::stream::{self, StreamExt};
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let results: Vec<(f64, Result<(usize, f64, f64), String>)> = stream::iter(offsets.into_iter().map(|off| {
         let client = client.clone();
         let vid = video_id.clone();
@@ -928,7 +928,7 @@ pub async fn get_pinned_chat_messages(
         "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let response = client
         .post(GQL_URL)
         .header("Client-Id", ANDROID_CLIENT_ID)
@@ -1002,7 +1002,7 @@ pub async fn get_hype_train(channel_login: String) -> Result<serde_json::Value, 
         "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post(GQL_URL)
         .header("Client-ID", WEB_CLIENT_ID)
@@ -1068,7 +1068,7 @@ async fn device_gql(
         Some(t) => t,
         None => return Ok(None), // not connected: callers treat as "nothing to show"
     };
-    let resp = reqwest::Client::new()
+    let resp = crate::http::client()
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
         .header("Authorization", format!("OAuth {token}"))
@@ -1523,7 +1523,7 @@ pub async fn create_clip(
         }
     };
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://api.twitch.tv/helix/clips")
         .query(&[("broadcaster_id", broadcaster_id.as_str())])
@@ -1598,7 +1598,7 @@ pub async fn get_channel_points(
         None => return Ok(None),
     };
     const QUERY: &str = "query ChannelPointsContext($channelLogin: String!) { user(login: $channelLogin) { channel { self { communityPoints { balance } } } } }";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -1626,7 +1626,7 @@ pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Va
         None => return Ok(serde_json::json!([])),
     };
     const HASH: &str = "d86775d0ef16a63a33ad52e80eaff963b2d5b72fada7c991504a57496e1d8e4b";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -1707,7 +1707,7 @@ pub async fn claim_drop(drop_instance_id: String, app: tauri::AppHandle) -> Resu
         .await
         .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
     const HASH: &str = "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -1747,7 +1747,7 @@ fn watch_streak_headers(token: &str) -> reqwest::header::HeaderMap {
 // resolve a channel's numeric broadcaster id from its login (device token). used by the point/streak/
 // redeem commands so they don't depend on the IRC room-id, which isn't reliably set on every channel.
 pub(crate) async fn resolve_broadcaster_id(login: &str, token: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -1777,7 +1777,7 @@ pub async fn get_watch_streak(
     };
     let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
     const HASH: &str = "0b1471876d7647993731b9e3c6a13bf304c67fb31d07f06a945d42286ee377c4";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .headers(watch_streak_headers(&token))
@@ -1824,7 +1824,7 @@ pub async fn share_watch_streak(
         .ok_or_else(|| "Not connected — enable device login first.".to_string())?;
     let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
     const HASH: &str = "25d20e60945d10123e8d466e30f21a1f1f578dfdea52c72095030b118eda9f39";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .headers(watch_streak_headers(&token))
@@ -1855,7 +1855,7 @@ pub async fn get_channel_rewards(
         None => return Ok(serde_json::json!([])),
     };
     const HASH: &str = "374314de591e69925fce3ddc2bcf085796f56ebb8cad67a0daa3165c03adc345";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -1980,7 +1980,7 @@ pub async fn get_available_emotes(
     };
     let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
     const HASH: &str = "6c45e0ecaa823cc7db3ecdd1502af2223c775bdcfb0f18a3a0ce9a0b7db8ef6c";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -2126,7 +2126,7 @@ async fn automatic_redeem(
 // + dashless ids, turns a nested `error.code` into a friendly message, and returns the response JSON.
 async fn post_redeem_json(token: &str, payload: serde_json::Value) -> Result<serde_json::Value, String> {
     let did = rand_hex();
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -2173,7 +2173,7 @@ pub async fn get_channel_emotes(
         None => return Ok(serde_json::json!([])),
     };
     const HASH: &str = "374314de591e69925fce3ddc2bcf085796f56ebb8cad67a0daa3165c03adc345";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -2317,7 +2317,7 @@ pub async fn redeem_reward(
     let session_id = hexid();
     let prompt_sent = prompt.unwrap_or_default();
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -2382,7 +2382,7 @@ pub async fn get_active_hype_trains(channel_ids: Vec<String>) -> Result<serde_js
         return Ok(serde_json::json!([]));
     }
     const HASH: &str = "88e62c2cbd13b7bdce93cc8934727003a5cadd821938538f74848199fbfe84a0";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", "kimne78kx3ncx6brgo4mv6wki5h1ko")
@@ -2428,7 +2428,7 @@ pub async fn get_resub_notification(
         None => return Ok(serde_json::Value::Null),
     };
     const HASH: &str = "beb55e2ecdbae3dd29c51a60597014d526466bc8f94fb88f3c3482110f4da1aa";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
@@ -2474,7 +2474,7 @@ pub async fn share_resub(
             input["message"] = serde_json::Value::String(msg);
         }
     }
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
         .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)

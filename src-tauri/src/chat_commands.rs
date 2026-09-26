@@ -154,7 +154,7 @@ pub async fn ban_user(
     reason: Option<String>,
 ) -> Result<(), String> {
     let (token, moderator_id) = require_auth(&state)?;
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let mut data = serde_json::json!({ "user_id": target_user_id });
     if let Some(secs) = duration_seconds {
@@ -193,7 +193,7 @@ pub async fn unban_user(
     target_user_id: String,
 ) -> Result<(), String> {
     let (token, moderator_id) = require_auth(&state)?;
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let resp = client
         .delete("https://api.twitch.tv/helix/moderation/bans")
@@ -226,7 +226,7 @@ pub async fn delete_chat_message(
     message_id: Option<String>,
 ) -> Result<(), String> {
     let (token, moderator_id) = require_auth(&state)?;
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let mut query = vec![
         ("broadcaster_id", broadcaster_id.clone()),
@@ -261,7 +261,7 @@ pub async fn get_chat_settings(
     broadcaster_id: String,
 ) -> Result<serde_json::Value, String> {
     let (token, moderator_id) = require_auth(&state)?;
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .get("https://api.twitch.tv/helix/chat/settings")
         .header("Client-ID", oauth::CLIENT_ID)
@@ -292,7 +292,7 @@ pub async fn update_chat_settings(
     patch: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let (token, moderator_id) = require_auth(&state)?;
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .patch("https://api.twitch.tv/helix/chat/settings")
         .header("Client-ID", oauth::CLIENT_ID)
@@ -320,7 +320,7 @@ pub async fn automod_process_message(
     action: String,
 ) -> Result<(), String> {
     let (token, moderator_id) = require_auth(&state)?;
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let resp = client
         .post("https://api.twitch.tv/helix/moderation/automod/message")

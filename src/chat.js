@@ -19,6 +19,8 @@ import { chatLinkPreviewMixin } from "./chat/chat-link-preview.js";
 import { chatAutocompleteMixin } from "./chat/chat-autocomplete.js";
 import { chatEventsMixin } from "./chat/chat-events.js";
 import { looksLikeUrl, USER_CARD_HISTORY_LIMIT } from "./chat/shared.js";
+// most recently active chatters whose user-card history + message count are kept per channel
+const CHATTER_HISTORY_CAP = 3000;
 import { chatLiveEventsMixin } from "./chat/chat-live-events.js";
 import { chatBadgePickerMixin } from "./chat/chat-badge-picker.js";
 
@@ -501,7 +503,25 @@ export class TwitchChat {
     this.trimAndScroll();
   }
 
+  // called after every appended line. the layout work (trim + keep pinned to the bottom) reads scrollHeight,
+  // which forces a synchronous layout; doing it per message cost two forced layouts per message (~100/s in
+  // a fast chat). it now runs once per frame for every line that arrived in that frame. the unread count is
+  // still counted per line, right away. rAF doesn't run while the window is hidden (tray) or occluded, so a
+  // short timer backs it up: whichever fires first does the work, and trimming can never stall
   trimAndScroll() {
+    if (this.userScrolledUp) this.newMessageCountWhileScrolledUp++;
+    if (this._trimPending) return;
+    this._trimPending = true;
+    const run = () => {
+      if (!this._trimPending) return;
+      this._trimPending = false;
+      this._trimAndScrollNow();
+    };
+    requestAnimationFrame(run);
+    setTimeout(run, 200);
+  }
+
+  _trimAndScrollNow() {
     // trimming shifts scrollTop, which must not read as a user scroll (that would resume auto-scroll).
     // two guards: overflow-anchor:none + exact scrollHeight-delta compensation prevent drift, and a boolean
     // (not a counter, which desynced when the browser coalesced writes) marks the next scroll event as ours
@@ -531,10 +551,8 @@ export class TwitchChat {
       this._suppressNextScrollEvent = true;
       this.container.scrollTop = this.container.scrollHeight;
     } else {
-      this.newMessageCountWhileScrolledUp++;
-      this.updateJumpToLatestVisibility();
+      this.updateJumpToLatestVisibility(); // the count itself was taken per line in trimAndScroll()
     }
-
   }
 
   updateJumpToLatestVisibility() {
@@ -1857,11 +1875,22 @@ export class TwitchChat {
 
     // tracked for every message with a real sender id (not the local echo / VOD replay). history is capped since only the card needs it, and only the last few
     if (userId) {
-      this._messageCountByUserId.set(userId, (this._messageCountByUserId.get(userId) || 0) + 1);
+      // both maps are kept in most-recently-active order (delete + re-set moves a user to the end) and
+      // capped: the number of chatters is unbounded in a big channel left open for hours, and each holds
+      // message text. the least recently active are dropped first; anyone chatting now is always kept
+      const count = (this._messageCountByUserId.get(userId) || 0) + 1;
+      this._messageCountByUserId.delete(userId);
+      this._messageCountByUserId.set(userId, count);
       const history = this._messageHistoryByUserId.get(userId) || [];
       history.push({ time: Date.now(), text: message });
       if (history.length > USER_CARD_HISTORY_LIMIT) history.shift();
+      this._messageHistoryByUserId.delete(userId);
       this._messageHistoryByUserId.set(userId, history);
+      if (this._messageHistoryByUserId.size > CHATTER_HISTORY_CAP) {
+        const oldest = this._messageHistoryByUserId.keys().next().value;
+        this._messageHistoryByUserId.delete(oldest);
+        this._messageCountByUserId.delete(oldest);
+      }
     }
 
     // channel point message: left-border highlight + gem prefix

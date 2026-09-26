@@ -282,6 +282,7 @@ export function startChannelInfoRefresh(channel, isStillCurrent) {
   if (channelInfoRefreshTimer) clearInterval(channelInfoRefreshTimer);
   channelInfoRefreshTimer = setInterval(() => {
     if (!isStillCurrent()) return;
+    if (document.hidden) return; // nobody can see the bar (tray / minimized); the next tick catches up
     invoke("get_stream_for_login", { login: channel })
       .then((json) => updateChannelInfoBar(channel, JSON.parse(json)))
       .catch((err) => console.error("Failed to refresh channel info bar:", err));

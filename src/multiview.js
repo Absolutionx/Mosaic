@@ -1,3 +1,4 @@
+import { smallAvatar } from "./format.js";
 import { getSetting } from "./settings.js";
 // MultiView: full-screen grid of several streams at once. built outside the single-stream
 // relay stack, each tile is a bare <video> fed by attachHlsVod + get_live_m3u8_url (native-HLS,
@@ -303,7 +304,7 @@ export class MultiView {
       item.className = "multiview-followed-item" + (r.live ? " is-live" : "");
       const already = this.tiles.has(r.login);
       const avatar = r.avatar
-        ? `<img class="multiview-followed-avatar" src="${this._escape(r.avatar)}" alt="" />`
+        ? `<img class="multiview-followed-avatar" src="${this._escape(smallAvatar(r.avatar))}" alt="" />`
         : `<span class="multiview-followed-avatar multiview-followed-avatar-fallback">${this._escape(r.name.charAt(0).toUpperCase())}</span>`;
       const sub = r.live
         ? `<span class="multiview-followed-sub">${r.game ? this._escape(r.game) : "Live"}</span>`

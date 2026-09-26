@@ -59,6 +59,7 @@ export const chatLinkPreviewMixin = {
       // nothing worth a popup, cache null so an empty/errored link isn't refetched on every hover
       const hasContent = preview && (preview.title || preview.description || preview.image);
       this._linkPreviewCache.set(url, hasContent ? preview : null);
+      if (this._linkPreviewCache.size > 300) this._linkPreviewCache.delete(this._linkPreviewCache.keys().next().value);
       if (myToken !== this._linkPreviewToken) return; // moved on while fetching
       if (hasContent) this._showLinkPreviewPopup(linkEl, preview);
     }, LINK_PREVIEW_HOVER_DELAY_MS);

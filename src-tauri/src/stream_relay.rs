@@ -1048,9 +1048,7 @@ async fn handle_hls_proxy(
     let port = state.port.load(Ordering::Relaxed);
     let proxy_base = format!("http://127.0.0.1:{port}");
 
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(HLS_PROXY_TIMEOUT_SECS))
-        .build()
+    let client = match hls_client()
     {
         Ok(c) => c,
         Err(e) => {
@@ -1191,9 +1189,7 @@ async fn handle_clip_proxy(
         .find(|l| l.to_ascii_lowercase().starts_with("range:"))
         .map(|l| l[6..].trim().to_string());
 
-    let client = match reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .build()
+    let client = match clip_client()
     {
         Ok(c) => c,
         Err(_) => {
@@ -1736,4 +1732,38 @@ pub async fn get_available_qualities(channel: String) -> Result<Vec<String>, Str
 #[tauri::command]
 pub async fn get_available_vod_qualities(video_id: String) -> Result<Vec<String>, String> {
     list_available_qualities(&format!("https://www.twitch.tv/videos/{video_id}")).await
+}
+
+
+// Long-lived media clients: the HLS proxy fetches every playlist + segment (every couple of seconds while
+// watching) and the clip proxy streams MP4 ranges. Building a client per request meant a fresh connection
+// and TLS handshake each time; these are built once and keep connections warm. Decompression is OFF so
+// media bytes and their headers pass through exactly as the CDN sent them.
+static HLS_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+static CLIP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
+fn hls_client() -> Result<reqwest::Client, reqwest::Error> {
+    if let Some(c) = HLS_CLIENT.get() {
+        return Ok(c.clone());
+    }
+    let c = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(HLS_PROXY_TIMEOUT_SECS))
+        .no_gzip()
+        .no_brotli()
+        .build()?;
+    let _ = HLS_CLIENT.set(c.clone());
+    Ok(c)
+}
+
+fn clip_client() -> Result<reqwest::Client, reqwest::Error> {
+    if let Some(c) = CLIP_CLIENT.get() {
+        return Ok(c.clone());
+    }
+    let c = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .no_gzip()
+        .no_brotli()
+        .build()?;
+    let _ = CLIP_CLIENT.set(c.clone());
+    Ok(c)
 }

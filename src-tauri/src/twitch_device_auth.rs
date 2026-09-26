@@ -88,7 +88,7 @@ pub struct DeviceCodeInfo {
 // step 1: start the device-code flow. NO scopes (matches StreamNook; the integrity-free read needs none)
 #[tauri::command]
 pub async fn twitch_device_start() -> Result<DeviceCodeInfo, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let params = [("client_id", ANDROID_CLIENT_ID), ("scopes", "")];
     let resp = client
         .post(DEVICE_URL)
@@ -122,7 +122,7 @@ pub async fn twitch_device_poll(
     interval: u64,
     expires_in: u64,
 ) -> Result<bool, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let deadline = now_secs() + expires_in as i64;
     let mut wait = interval.max(1);
     loop {
@@ -177,7 +177,7 @@ async fn refresh(app: &AppHandle, refresh_token: &str) -> Option<StoredToken> {
     if refresh_token.is_empty() {
         return None;
     }
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let params = [
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),

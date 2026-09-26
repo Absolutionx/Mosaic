@@ -259,7 +259,7 @@ async fn subscribe_channel_point_redemptions(
     broadcaster_id: &str,
     access_token: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let body = json!({
         "type":    "channel.channel_points_custom_reward_redemption.add",
@@ -296,7 +296,7 @@ async fn subscribe_automod_message_hold(
     moderator_id: &str,
     access_token: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     // version 1 rather than V2: both wrap the held text in { "text": "...", "fragments": [...] }, but V2 adds per-fragment reason annotations the AutoMod queue UI doesn't use. V1 is enough
     let body = json!({
@@ -336,7 +336,7 @@ async fn subscribe_channel_moderate(
     moderator_id: &str,
     access_token: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let body = json!({
         "type":    "channel.moderate",
         "version": "2",
@@ -371,7 +371,7 @@ async fn subscribe_channel_raid(
     broadcaster_id: &str,
     access_token: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let body = json!({
         "type":    "channel.raid",
@@ -406,7 +406,7 @@ async fn subscribe_user_whispers(
     user_id: &str,
     access_token: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let body = json!({
         "type":    "user.whisper.message",
         "version": "1",
@@ -440,7 +440,7 @@ async fn subscribe_broadcaster_event(
     event_type: &str,
     version: &str,
 ) -> Result<(), String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
 
     let body = json!({
         "type":    event_type,

@@ -28,3 +28,11 @@ export function relativeDate(isoString) {
   const years = Math.floor(days / 365);
   return `${years} year${years !== 1 ? "s" : ""} ago`;
 }
+
+// Twitch profile images come as 300x300 (tens of KB each) but are shown at ~30-40px. Twitch's CDN serves the
+// same image at 70x70 (a few KB) by changing the size in the URL; that's still 2x for high-DPI screens.
+// Any other URL (Kick, placeholders, data URIs) is returned untouched
+export function smallAvatar(url, size = 70) {
+  if (typeof url !== "string") return url;
+  return url.replace(/^(https:\/\/static-cdn\.jtvnw\.net\/.+-profile_image-)300x300(\.[a-z]+)$/i, `$1${size}x${size}$2`);
+}

@@ -1,3 +1,4 @@
+import { smallAvatar } from "./format.js";
 // Command palette (Ctrl+K): one search box for channels, categories, actions, settings and VODs.
 // - local results (follows, recents, actions, settings, Continue watching) appear instantly
 // - Twitch channel + category search runs after a short pause in typing; results merge in without moving
@@ -128,7 +129,7 @@ function scheduleRemoteSearch() {
 // ---- building results ----
 function channelRow(c, m, source) {
   const avatar = c.avatar
-    ? `<img class="cp-av-img" src="${esc(c.avatar)}" alt="">`
+    ? `<img class="cp-av-img" src="${esc(smallAvatar(c.avatar))}" alt="">`
     : `<span class="cp-av-letter" style="background:hsl(${hue(c.login)} 42% 38%)">${esc((c.name || c.login || "?")[0].toUpperCase())}</span>`;
   const sub = c.live ? (c.game || "Live") : (c.game || (source === "twitch" ? "Offline" : "Offline"));
   return {

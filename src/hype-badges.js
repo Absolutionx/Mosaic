@@ -6,10 +6,14 @@
 // per-view wiring. The glow styling lives in styles.css.
 
 import { invoke } from "@tauri-apps/api/core";
+import { getSetting } from "./settings.js";
 
 let timer = null;
 
 async function tick() {
+  // nothing to show: the window is hidden (a visibilitychange re-tick catches up on return), or the glow is
+  // turned off in Settings > Sidebar
+  if (document.hidden || !getSetting("hypeGlow")) return;
   const els = [...document.querySelectorAll("[data-hype-id]")];
   const ids = [...new Set(els.map((el) => el.dataset.hypeId).filter(Boolean))];
   if (!ids.length) return;
@@ -56,7 +60,9 @@ export function startHypeBadgePolling() {
       }
     }
   });
-  obs.observe(document.body, { childList: true, subtree: true });
+  // only where cards live (sidebar, Home, Browse). observing the whole page ran this on every chat message
+  const roots = ["channels-sidebar", "home-feed", "browse-page"].map((id) => document.getElementById(id)).filter(Boolean);
+  for (const root of roots.length ? roots : [document.body]) obs.observe(root, { childList: true, subtree: true });
 }
 
 // let a view trigger an immediate refresh right after it renders new cards

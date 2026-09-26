@@ -383,7 +383,7 @@ struct TokenResponse {
 }
 
 async fn post_form(url: &str, form: &[(&str, &str)]) -> Result<TokenResponse, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post(url)
         .form(form)
@@ -443,7 +443,7 @@ async fn refresh(refresh_token: &str) -> Result<PersistedToken, String> {
 }
 
 async fn fetch_username(access_token: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .get(USERS_URL)
         .bearer_auth(access_token)
@@ -553,7 +553,7 @@ async fn post_chat(
     broadcaster_user_id: u64,
     content: &str,
 ) -> Result<(), SendError> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post(CHAT_URL)
         .bearer_auth(access_token)

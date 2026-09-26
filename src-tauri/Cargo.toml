@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.4.0"
+version = "1.4.1"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
@@ -44,7 +44,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 # the windows-core version-pinning above: two different TLS implementations
 # in the dependency graph is extra binary size and surface area for no
 # benefit here.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# gzip + brotli: API responses (Helix, GQL, 7TV, ...) download compressed. media clients opt out (stream_relay.rs)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip", "brotli"] }
 # Used solely so the drops banner's "Watch on Twitch" link can open in the
 # user's actual default browser - a plain <a target="_blank"> does nothing
 # in a Tauri webview (there's no second tab to open into; Tauri blocks that
@@ -87,3 +88,13 @@ version = "=0.3.49"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Release builds: whole-program optimization + one codegen unit give a faster, smaller binary (Tauri's
+# recommended release settings); strip removes debug symbols from the shipped exe. Release builds take a few
+# minutes longer. panic = "abort" is deliberately NOT used: a panic in any background task would take the
+# whole app down instead of just that task
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

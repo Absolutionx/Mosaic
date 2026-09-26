@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 
 mod app_extras;
+mod http;
 mod chat;
 mod chat_commands;
 mod deps_check;

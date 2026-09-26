@@ -1,3 +1,4 @@
+import { smallAvatar } from "./format.js";
 import { getSetting } from "./settings.js";
 // home feed (in #video-column when nothing plays): carousel, recommended grid, category
 // rows, all via Rust-proxied Helix. Helix has no recommendation/genre endpoint, so this
@@ -69,13 +70,26 @@ export class HomeFeed {
     // progress changes while a VOD plays, so reload the continue row on every visit (cheap: one local
     // file read), then re-render if the rest of the feed is already loaded
     this._loadContinue().then(() => { if (this.loaded && this.topLive) this.render(); });
+    if (this.loaded && this._stale) { this._stale = false; this.refresh(); } // missed refreshes while away
     if (!this.loaded) {
       this.loaded = true;
       this.refresh();
       if (!this.refreshTimer) {
-        this.refreshTimer = setInterval(() => this.refresh(), REFRESH_INTERVAL_MS);
+        // only while Home is actually on screen: refreshing in the background re-downloaded every
+        // thumbnail each minute (they carry a per-minute cache-buster) while you watched something else
+        this.refreshTimer = setInterval(() => {
+          if (this._isShowing()) this.refresh(); else this._stale = true;
+        }, REFRESH_INTERVAL_MS);
+        // brought back from the tray while Home is the page on screen
+        document.addEventListener("visibilitychange", () => {
+          if (this._stale && this._isShowing()) { this._stale = false; this.refresh(); }
+        });
       }
     }
+  }
+
+  _isShowing() {
+    return this.containerEl.style.display !== "none" && !document.hidden;
   }
 
   hide() {
@@ -784,7 +798,7 @@ export class HomeFeed {
 
     const avatar = document.createElement("img");
     avatar.className = "home-carousel-avatar";
-    avatar.src = this.avatars.get(s.user_id) || blankAvatarDataUri();
+    avatar.src = smallAvatar(this.avatars.get(s.user_id)) || blankAvatarDataUri();
     avatar.alt = "";
     info.appendChild(avatar);
 
@@ -905,7 +919,7 @@ export class HomeFeed {
 
     const avatar = document.createElement("img");
     avatar.className = "home-grid-avatar";
-    avatar.src = this.avatars.get(s.user_id) || blankAvatarDataUri();
+    avatar.src = smallAvatar(this.avatars.get(s.user_id)) || blankAvatarDataUri();
     avatar.alt = "";
     meta.appendChild(avatar);
 

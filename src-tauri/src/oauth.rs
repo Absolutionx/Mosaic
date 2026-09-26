@@ -367,7 +367,7 @@ pub async fn restore_session(app: AppHandle) -> Result<serde_json::Value, String
 }
 
 async fn reqwest_lite_get(url: &str, headers: &[(&str, &str)]) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let mut request = client.get(url);
     for (key, value) in headers {
         request = request.header(*key, *value);

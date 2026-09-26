@@ -44,7 +44,7 @@ impl PubSubService {
     }
 
     async fn validate_user_id(token: &str) -> Option<String> {
-        let client = reqwest::Client::new();
+        let client = crate::http::client();
         let resp = client
             .get("https://id.twitch.tv/oauth2/validate")
             .header("Authorization", format!("OAuth {token}"))

@@ -10,7 +10,11 @@ import { getSetting } from "../settings.js";
 
 import { invoke } from "@tauri-apps/api/core";
 
-const POLL_MS = 5000;
+// adaptive polling: fast only while something is running (countdowns, betting), slow otherwise. a fixed
+// 5s cadence meant two requests every 5 seconds for channels that almost never run a prediction or poll
+const POLL_ACTIVE_MS = 5000;
+const POLL_IDLE_MS = 30000;
+const POLL_HIDDEN_MS = 60000;
 const MAX_BET = 250000; // Twitch's per-prediction cap
 const fmt = (n) => {
   n = Number(n) || 0;
@@ -60,18 +64,33 @@ export const chatLiveEventsMixin = {
     if (!login) return;
     const s = this._leState();
     s.login = login;
+    // one check at a time per loop: a visibility re-check landing mid-fetch must not start a second loop.
+    // the flag is this loop's own (a closure), so a previous channel's in-flight fetch can't block this one
+    let inFlight = false;
     const tick = async () => {
+      if (s.login !== login || inFlight) return;
+      inFlight = true;
+      clearTimeout(s.pollTimer);
+      try {
+        await Promise.all([this._leFetchPred(login), this._leFetchPoll(login)]);
+      } finally {
+        inFlight = false;
+      }
       if (s.login !== login) return;
-      await Promise.all([this._leFetchPred(login), this._leFetchPoll(login)]);
+      const running = (s.pred && !predEnded(s.pred)) || (s.poll && !pollEnded(s.poll));
+      s.pollTimer = setTimeout(tick, document.hidden ? POLL_HIDDEN_MS : running ? POLL_ACTIVE_MS : POLL_IDLE_MS);
     };
     tick();
-    s.pollTimer = setInterval(tick, POLL_MS);
+    // back from the tray / another window: check right away instead of waiting out a slow interval
+    s.onVisible = () => { if (!document.hidden && s.login === login) tick(); };
+    document.addEventListener("visibilitychange", s.onVisible);
     s.tickTimer = setInterval(() => this._leTick(), 1000);
   },
 
   _stopPredictionPoll() {
     const s = this._leState();
-    clearInterval(s.pollTimer); clearInterval(s.tickTimer);
+    clearTimeout(s.pollTimer); clearInterval(s.tickTimer);
+    if (s.onVisible) { document.removeEventListener("visibilitychange", s.onVisible); s.onVisible = null; }
     s.pollTimer = s.tickTimer = null;
     s.login = null; s.pred = null; s.poll = null; s.balance = null; s.sel = null; s.amount = ""; s.error = "";
     s.ended = null; s.pollEnded = null;
@@ -405,21 +424,32 @@ export const chatLiveEventsMixin = {
     if (canBet) {
       const betBox = el("div", "le-bet");
       const amounts = el("div", "le-amounts");
-      const presets = [[10, "10"], [100, "100"], [1000, "1K"], [10000, "10K"], ["max", "Max"]];
+      // +chips ADD to the amount (click +100 twice = 200); Max jumps to the most you can bet. both stop at
+      // your balance / Twitch's per-prediction cap
+      const presets = [[10, "+10"], [100, "+100"], [1000, "+1K"], [10000, "+10K"], ["max", "Max"]];
+      const setAmount = (n) => {
+        s.amount = n > 0 ? String(n) : "";
+        s.error = "";
+        const input = betBox.querySelector(".le-amount-input");
+        if (input) input.value = s.amount;
+        this._leRender("pred");
+      };
       for (const [v, label] of presets) {
         const b = el("button", "le-chip", label);
         b.type = "button";
         b.dataset.v = String(v);
         b.addEventListener("click", () => {
-          const bal = this._leBalance();
-          s.amount = String(v === "max" ? Math.min(MAX_BET, bal || 0) : v);
-          s.error = "";
-          const input = betBox.querySelector(".le-amount-input");
-          if (input) input.value = s.amount;
-          this._leRender("pred");
+          const cap = this._leBetCap();
+          const cur = Math.floor(Number(s.amount) || 0);
+          setAmount(v === "max" ? cap : Math.min(cap, cur + v));
         });
         amounts.appendChild(b);
       }
+      const clear = el("button", "le-chip le-chip-clear", "Clear");
+      clear.type = "button";
+      clear.title = "Clear the amount";
+      clear.addEventListener("click", () => setAmount(0));
+      amounts.appendChild(clear);
       const input = el("input", "le-amount-input");
       input.type = "number"; input.min = "1"; input.placeholder = "Amount"; input.inputMode = "numeric";
       input.value = s.amount;
@@ -540,15 +570,24 @@ export const chatLiveEventsMixin = {
         : amt <= 0 ? `Enter an amount`
         : tooMuch ? "Not enough points"
         : `${bet ? "Add" : "Predict"} ${fmt(amt)} on ${o.title}`;
-      betBox.querySelectorAll(".le-chip").forEach((c) => {
-        const v = c.dataset.v === "max" ? Math.min(MAX_BET, bal || 0) : Number(c.dataset.v);
-        c.classList.toggle("on", amt > 0 && v === amt);
-        c.disabled = bal != null && v > bal;
+      const cap = this._leBetCap();
+      betBox.querySelectorAll(".le-chip[data-v]").forEach((c) => {
+        // + chips grey out once you're at the cap; Max lights up while you're on it
+        c.disabled = amt >= cap;
+        if (c.dataset.v === "max") c.classList.toggle("on", amt > 0 && amt === cap);
       });
+      const clearBtn = betBox.querySelector(".le-chip-clear");
+      if (clearBtn) clearBtn.style.display = amt > 0 ? "" : "none";
       const errEl = betBox.querySelector(".le-error");
       errEl.textContent = s.error || "";
       errEl.style.display = s.error ? "" : "none";
     }
+  },
+
+  // the most you can put on this prediction: your balance (when known), never above Twitch's per-prediction cap
+  _leBetCap() {
+    const bal = this._leBalance();
+    return Math.max(0, Math.min(MAX_BET, bal == null ? MAX_BET : bal));
   },
 
   async _lePlaceBet(d) {

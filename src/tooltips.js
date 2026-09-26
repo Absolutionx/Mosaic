@@ -10,6 +10,9 @@ const CURSOR_GAP = 14;
 
 let tipEl = null;
 let target = null;           // element currently hovered whose title we took
+// watches for the hovered element being removed. it observes the whole page, so it's connected ONLY while
+// something is hovered: a permanently-attached page-wide observer ran on every chat message
+let goneObserver = null;
 let stashedTitle = "";
 let showTimer = null;
 let lastHiddenAt = 0;
@@ -69,6 +72,7 @@ function hideTip() {
 function release() {
   hideTip();
   titleObserver?.disconnect();
+  goneObserver?.disconnect();
   if (target && stashedTitle && !target.hasAttribute("title")) target.setAttribute("title", stashedTitle);
   target = null;
   stashedTitle = "";
@@ -76,6 +80,7 @@ function release() {
 
 function take(el) {
   target = el;
+  goneObserver?.observe(document.body, { childList: true, subtree: true });
   stashedTitle = el.getAttribute("title");
   el.removeAttribute("title"); // no attribute while hovered = no native tooltip
   // app code sometimes updates a title while it's hovered (e.g. the "Catching up to live" readout): take the
@@ -122,7 +127,7 @@ export function initTooltips() {
   for (const ev of ["mousedown", "wheel", "keydown", "dragstart"]) document.addEventListener(ev, hideTip, true);
   window.addEventListener("blur", release);
   // the hovered element can vanish (a menu closes, a list re-renders): don't leave a tooltip floating
-  new MutationObserver(() => {
-    if (target && !target.isConnected) { target = null; stashedTitle = ""; hideTip(); titleObserver?.disconnect(); }
-  }).observe(document.body, { childList: true, subtree: true });
+  goneObserver = new MutationObserver(() => {
+    if (target && !target.isConnected) { target = null; stashedTitle = ""; hideTip(); titleObserver?.disconnect(); goneObserver.disconnect(); }
+  });
 }

@@ -1,3 +1,4 @@
+import { smallAvatar } from "./format.js";
 // browse/directory page (twitch.tv/directory-style): pills, a Categories/Live switcher,
 // search, sort, grid. routed through Rust like home.js/sidebar.js
 
@@ -705,7 +706,7 @@ export class BrowsePage {
 
     const avatar = document.createElement("img");
     avatar.className = "home-grid-avatar";
-    avatar.src = this.avatars.get(s.user_id) || blankAvatarDataUri();
+    avatar.src = smallAvatar(this.avatars.get(s.user_id)) || blankAvatarDataUri();
     avatar.alt = "";
     meta.appendChild(avatar);
 

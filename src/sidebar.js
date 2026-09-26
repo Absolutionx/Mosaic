@@ -1,3 +1,4 @@
+import { smallAvatar } from "./format.js";
 import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
 // channels sidebar: followed channels (live + offline) and a Live Channels list. data via
 // Rust-proxied Helix (followed, streams-for-users, users-info, top-live), since api.twitch.tv
@@ -532,7 +533,7 @@ export class ChannelsSidebar {
 
     const avatar = document.createElement("img");
     avatar.className = `sidebar-channel-avatar${ch.live ? "" : " offline"}`;
-    avatar.src = ch.avatar || blankAvatarDataUri();
+    avatar.src = smallAvatar(ch.avatar) || blankAvatarDataUri();
     avatar.alt = "";
     avatarWrap.appendChild(avatar);
 

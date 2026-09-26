@@ -18,7 +18,7 @@ pub async fn send_whisper(
     if to_user_id == from_user_id {
         return Err("You can't whisper yourself.".into());
     }
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post(format!(
             "https://api.twitch.tv/helix/whispers?from_user_id={from_user_id}&to_user_id={to_user_id}"

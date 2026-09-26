@@ -9190,3 +9190,7 @@ body.reduce-motion *::after { animation: none !important; transition: none !impo
   transform-origin: left center; transform: scaleX(1); transition: transform linear;
 }
 .raid-banner.arrived { padding: 9px 14px; }
+
+/* prediction bet: Clear next to the +chips */
+.le-chip.le-chip-clear { color: var(--m-muted, #9aa5b4); }
+.le-chip.le-chip-clear:hover:not(:disabled) { color: var(--m-text, #e7ebf2); }

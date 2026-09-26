@@ -54,7 +54,7 @@ impl SevenTvCosmetics {
     }
 
     async fn run(app: AppHandle, channel_twitch_id: String) {
-        let http = reqwest::Client::new();
+        let http = crate::http::client();
         let seventv_user_id = Self::resolve_7tv_user_id(&http, &channel_twitch_id).await;
         loop {
             if let Err(e) =
@@ -183,7 +183,7 @@ pub async fn seventv_cosmetics_clear(
 #[tauri::command]
 pub async fn get_all_seventv_badges() -> Result<serde_json::Value, String> {
     const Q: &str = "query AllBadges { badges { badges { id name images { url scale width height } } } }";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://7tv.io/v4/gql")
         .json(&json!({ "query": Q }))
@@ -205,7 +205,7 @@ pub async fn get_all_seventv_badges() -> Result<serde_json::Value, String> {
 #[tauri::command]
 pub async fn get_all_seventv_paints() -> Result<serde_json::Value, String> {
     const Q: &str = "query AllPaints { paints { paints { id data { layers { opacity ty { __typename ... on PaintLayerTypeLinearGradient { angle repeating stops { at color { r g b a } } } ... on PaintLayerTypeRadialGradient { repeating stops { at color { r g b a } } } ... on PaintLayerTypeSingleColor { color { r g b a } } } } shadows { color { r g b a } offsetX offsetY blur } } } } }";
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post("https://7tv.io/v4/gql")
         .json(&json!({ "query": Q }))
