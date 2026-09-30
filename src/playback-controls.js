@@ -1524,6 +1524,22 @@ export class PlaybackControls {
     return active;
   }
 
+  // how far behind the live broadcast playback is, in seconds (null for VODs). rewound live (DVR) plays the
+  // in-progress recording, where position counts from the stream's start. used by the clip panel: Twitch
+  // clips the LIVE broadcast, not what's on screen
+  secondsBehindLive() {
+    if (this.isVod) return null;
+    const v = this.videoEl;
+    if (this._liveDvr) {
+      const s = this._liveDvr.streamStartedAt;
+      const started = typeof s === "number" ? s : Date.parse(s || "");
+      if (!Number.isFinite(started)) return null;
+      return Math.max(0, (Date.now() - started) / 1000 - v.currentTime);
+    }
+    const r = this._getActualBufferedRange?.();
+    return r ? Math.max(0, r.end - v.currentTime) : 0;
+  }
+
   // ---- VOD playback speed ----
   // VODs play at the remembered speed (Settings > Player); live is always 1x (catch-up-to-live manages its
   // own rate). defaultPlaybackRate is set too: loading a new source resets playbackRate to it

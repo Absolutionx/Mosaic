@@ -52,6 +52,7 @@ export const DEFAULTS = {
   mutedSegments: true,       // muted-audio markers on the VOD seek bar
   seekThumbnails: true,      // preview thumbnails when hovering the VOD seek bar
   vodSpeed: 1,               // VOD playback speed (remembered across VODs)
+  clipLength: 30,            // last length picked in the clip panel (Alt+X uses it)
   followRaids: "auto",       // "auto" (5s countdown, then go) | "ask" | "off"
   // notifications
   notifyGoLive: true,

@@ -307,6 +307,7 @@ fn main() {
             helix::set_chat_badge,
             helix::follow_channel,
             helix::search_twitch_channels,
+            helix::get_channel_clips,
             app_extras::launched_at_startup,
             app_extras::save_backup_file,
             helix::create_clip,
@@ -364,6 +365,9 @@ fn main() {
                         // live/category notifications keep arriving. Cancel the real close, hide the
                         // window, and tell the frontend to stop playback so it's lightweight/quiet.
                         api.prevent_close();
+                        // where the window is, so restoring puts it back on this monitor even if Windows
+                        // moves it while hidden (monitors powering off), see tray::restore_window
+                        tray::remember_placement(window);
                         let _ = window.hide();
                         let _ = window.emit("hidden-to-tray", ());
                         return;

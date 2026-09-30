@@ -4,6 +4,11 @@
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getSetting, setSetting, onSettingChange, resetSettings } from "./settings.js";
+import { pushEscape } from "./escape-stack.js";
+import { closeCommandPalette } from "./command-palette.js";
+
+let popEscape = null;       // this panel's entry on the shared Escape stack
+let popSelectEscape = null; // the open dropdown's entry (Escape closes the dropdown before the panel)
 
 let actions = {}; // { openChatFilter, openHiddenChannels, openTwitchConnection }
 export function configureSettingsPanel(a) { actions = { ...actions, ...a }; }
@@ -199,6 +204,9 @@ export function getSettingsIndex() {
 
 // section: which section to show. focusTitle: scroll to that setting and briefly highlight it
 export function openSettingsPanel(section, focusTitle) {
+  // the palette is drawn above this panel: opening Settings from under it (Ctrl+,) closes it first, so the
+  // panel on top is always the one Escape closes
+  closeCommandPalette();
   if (panelEl) {
     if (section) { current = section; query = ""; render(); }
     if (focusTitle) focusRow(focusTitle);
@@ -221,7 +229,7 @@ export function openSettingsPanel(section, focusTitle) {
   panelEl.querySelector(".settings-close").addEventListener("click", closeSettingsPanel);
   const search = panelEl.querySelector(".settings-search input");
   search.addEventListener("input", () => { query = search.value.trim().toLowerCase(); render(); });
-  document.addEventListener("keydown", onKey, true);
+  popEscape = pushEscape(() => closeSettingsPanel());
   // keep controls in sync with changes made elsewhere (e.g. the player's quality-menu toggles)
   unsubscribe = onSettingChange(() => refreshValues());
   render();
@@ -242,17 +250,11 @@ export function closeSettingsPanel() {
   if (!panelEl) return;
   panelEl.remove();
   panelEl = null;
-  document.removeEventListener("keydown", onKey, true);
+  popEscape?.();
+  popEscape = null;
   unsubscribe?.();
   unsubscribe = null;
   closeSelectMenu();
-}
-
-function onKey(e) {
-  if (e.key !== "Escape") return;
-  e.stopPropagation();
-  if (document.querySelector(".settings-select-menu")) closeSelectMenu();
-  else closeSettingsPanel();
 }
 
 function matches(row) {
@@ -472,6 +474,7 @@ function toggleSelectMenu(btn, r) {
   menu.style.left = `${Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8)}px`;
   menu.style.top = `${rect.bottom + 4 + h > window.innerHeight - 8 ? rect.top - h - 4 : rect.bottom + 4}px`;
   setTimeout(() => document.addEventListener("mousedown", onSelectOutside, true), 0);
+  popSelectEscape = pushEscape(() => closeSelectMenu());
 }
 function onSelectOutside(e) {
   const m = document.querySelector(".settings-select-menu");
@@ -480,4 +483,6 @@ function onSelectOutside(e) {
 function closeSelectMenu() {
   document.querySelector(".settings-select-menu")?.remove();
   document.removeEventListener("mousedown", onSelectOutside, true);
+  popSelectEscape?.();
+  popSelectEscape = null;
 }

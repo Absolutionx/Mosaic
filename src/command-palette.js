@@ -7,12 +7,14 @@ import { smallAvatar } from "./format.js";
 // main.js supplies everything app-specific through initCommandPalette(deps)
 
 import { invoke } from "@tauri-apps/api/core";
+import { pushEscape } from "./escape-stack.js";
 
 let deps = {};
 let rootEl = null, inputEl = null, listEl = null, scopeEl = null;
 let items = [], sel = 0, selKey = null;
 let remote = { q: "", channels: [], categories: [] };
 let searchTimer = null, searchSeq = 0;
+let popEscape = null; // this palette's entry on the shared Escape stack
 
 const ICONS = {
   act: '<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
@@ -63,9 +65,11 @@ export function openCommandPalette(prefix = "") {
     '<div class="cp" role="dialog" aria-label="Command palette">' +
       `<div class="cp-input">${svg(ICONS.search)}<span class="cp-scope"></span>` +
       '<input type="text" placeholder="Search channels, actions, settings…" autocomplete="off" spellcheck="false" aria-label="Search">' +
-      '<span class="cp-kbd">Esc</span></div>' +
+      '<button type="button" class="cp-close" title="Close (Esc)" aria-label="Close">' +
+      svg('<path d="M18 6 6 18M6 6l12 12"/>') + '</button></div>' +
       '<div class="cp-list" role="listbox"></div>' +
       '<div class="cp-foot"><span><span class="cp-kbd">↑</span><span class="cp-kbd">↓</span> move</span><span><span class="cp-kbd">Enter</span> open</span>' +
+      '<span><span class="cp-kbd">Esc</span> close</span>' +
       '<span><span class="cp-kbd">&gt;</span> actions</span><span><span class="cp-kbd">@</span> channels</span><span><span class="cp-kbd">#</span> categories</span>' +
       '<span class="cp-foot-right"><span class="cp-kbd">Ctrl</span><span class="cp-kbd">K</span></span></div>' +
     "</div>";
@@ -77,6 +81,8 @@ export function openCommandPalette(prefix = "") {
   inputEl.addEventListener("input", () => { selKey = null; render(); scheduleRemoteSearch(); });
   inputEl.addEventListener("keydown", onKey);
   rootEl.addEventListener("mousedown", (e) => { if (e.target === rootEl) closeCommandPalette(); });
+  rootEl.querySelector(".cp-close").addEventListener("click", () => closeCommandPalette());
+  popEscape = pushEscape(() => closeCommandPalette());
   remote = { q: "", channels: [], categories: [] };
   render();
   inputEl.focus();
@@ -88,10 +94,11 @@ export function closeCommandPalette() {
   searchSeq++;
   rootEl.remove();
   rootEl = null;
+  popEscape?.();
+  popEscape = null;
 }
 
 function onKey(e) {
-  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeCommandPalette(); return; }
   if (e.key === "ArrowDown") { e.preventDefault(); move(1); }
   else if (e.key === "ArrowUp") { e.preventDefault(); move(-1); }
   else if (e.key === "Enter") { e.preventDefault(); runItem(sel); }

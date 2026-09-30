@@ -29,6 +29,10 @@ const CHAT_INPUT_MAX_HEIGHT_PX = 120;
 // ASCII-art detection helpers (see _isAsciiArt)
 const ASCII_ART_MIN_GRAPHEMES = 40;
 const ART_SYMBOL_RE = /[\p{So}\p{Sk}]/u;
+// NOT art on their own: the blank Braille cell (U+2800) that spammers use as padding to force line breaks
+// (it counts as a symbol, so a padded emote spam crossed the threshold, rendered as text rows with no
+// emotes), and emoji (40 emoji in a row is spam, not a picture)
+const ART_IGNORE_RE = /^(?:\u2800|\p{Extended_Pictographic}.*)$/u;
 let _graphemeSegmenter = null;
 function graphemeSegmenter() {
   if (!_graphemeSegmenter) _graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -2184,7 +2188,7 @@ export class TwitchChat {
     if (!message || message.length < ASCII_ART_MIN_GRAPHEMES) return false;
     let n = 0;
     for (const { segment } of graphemeSegmenter().segment(message)) {
-      if (ART_SYMBOL_RE.test(segment) && ++n >= ASCII_ART_MIN_GRAPHEMES) return true;
+      if (ART_SYMBOL_RE.test(segment) && !ART_IGNORE_RE.test(segment) && ++n >= ASCII_ART_MIN_GRAPHEMES) return true;
     }
     return false;
   }

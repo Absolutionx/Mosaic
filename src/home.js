@@ -436,7 +436,9 @@ export class HomeFeed {
     section.appendChild(head);
     const card = document.createElement("button");
     card.className = "mvl-single";
-    card.addEventListener("click", () => this.onChannelSelect(f.login, null));
+    // no stream argument on purpose: undefined makes watchChannel look up the live stream on Twitch. null
+    // means "Twitch says offline" there, which skipped the lookup and failed over to Kick for simulcasters
+    card.addEventListener("click", () => this.onChannelSelect(f.login));
     const media = document.createElement("div");
     media.className = "mvl-single-media";
     if (f.thumbnail) {

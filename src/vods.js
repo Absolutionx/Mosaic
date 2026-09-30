@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fetchVodChapters } from "./chapters.js";
 import { relativeDate } from "./format.js";
+import { openClipPlayer } from "./chat/chat-clips.js";
 
 function resolveThumbnailUrl(url, width = 440, height = 248) {
   return url
@@ -40,18 +41,60 @@ export class VodsPage {
 
   // kick=true fetches via kick_channel_videos and skips the chapter pass (Twitch GQL only);
   // everything else renders the same
-  async show(channel, { kick = false } = {}) {
+  // tab: "videos" (past broadcasts) or "clips" (Twitch only). the header's tabs switch between them without
+  // reloading the page
+  async show(channel, { kick = false, tab } = {}) {
+    // no tab asked for: coming back to the same channel (e.g. after watching one of its VODs) keeps the
+    // tab you were on; a different channel starts on Past broadcasts
+    const sameChannel = channel === this.currentChannel;
     this.currentChannel = channel;
     this.isKick = kick;
+    // openNextOn: a one-shot request (the command palette's "Clips of …") for the next show()
+    const requested = tab || this.openNextOn;
+    this.openNextOn = null;
+    this.tab = kick ? "videos" : (requested || (sameChannel && this.tab) || "videos");
     this.containerEl.style.display = "block";
     if (this.videoFrameEl) this.videoFrameEl.style.display = "none";
 
-    this.containerEl.innerHTML = `
-      <div class="vods-header">
-        <span class="vods-channel-name">${this._esc(channel)}</span>
-        <span class="vods-header-label">Past Broadcasts</span>
-      </div>
-      <div class="home-section-title vods-loading">Loading videos…</div>`;
+    this.containerEl.innerHTML = "";
+    const header = document.createElement("div");
+    header.className = "vods-header";
+    const name = document.createElement("span");
+    name.className = "vods-channel-name";
+    name.textContent = channel;
+    const tabs = document.createElement("div");
+    tabs.className = "vods-tabs";
+    const tabDefs = kick ? [["videos", "Past broadcasts"]] : [["videos", "Past broadcasts"], ["clips", "Clips"]];
+    for (const [id, label] of tabDefs) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "vods-tab" + (id === this.tab ? " active" : "");
+      b.dataset.tab = id;
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        if (this.tab === id) return;
+        this.tab = id;
+        tabs.querySelectorAll(".vods-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === id));
+        this._renderTab(channel);
+      });
+      tabs.appendChild(b);
+    }
+    header.append(name, tabs);
+    this.bodyEl = document.createElement("div");
+    this.bodyEl.className = "vods-body";
+    this.containerEl.append(header, this.bodyEl);
+    this._renderTab(channel);
+  }
+
+  _renderTab(channel) {
+    if (this.tab === "clips") this._renderClips(channel);
+    else this._renderVideos(channel, this.isKick);
+  }
+
+  // ---- Past broadcasts ----
+  async _renderVideos(channel, kick) {
+    const body = this.bodyEl;
+    body.innerHTML = `<div class="home-section-title vods-loading">Loading videos…</div>`;
 
     let vods;
     let progressByVodId = {};
@@ -70,32 +113,24 @@ export class VodsPage {
         console.warn("Failed to load VOD resume progress:", progressResult.reason);
       }
     } catch (err) {
-      this.containerEl.innerHTML = `
-        <div class="vods-header">
-          <span class="vods-channel-name">${this._esc(channel)}</span>
-          <span class="vods-header-label">Past Broadcasts</span>
-        </div>
-        <div class="home-section-title">Failed to load videos: ${this._esc(String(err))}</div>`;
+      if (this.bodyEl !== body || this.tab !== "videos") return;
+      body.innerHTML = "";
+      const msg = document.createElement("div");
+      msg.className = "home-section-title";
+      msg.textContent = `Failed to load videos: ${String(err)}`;
+      body.appendChild(msg);
       return;
     }
 
-    // user navigated away while the fetch was in flight
-    if (this.currentChannel !== channel) return;
-
-    this.containerEl.innerHTML = "";
-
-    const header = document.createElement("div");
-    header.className = "vods-header";
-    header.innerHTML = `
-      <span class="vods-channel-name">${this._esc(channel)}</span>
-      <span class="vods-header-label">Past Broadcasts</span>`;
-    this.containerEl.appendChild(header);
+    // user navigated away / switched tab while the fetch was in flight
+    if (this.currentChannel !== channel || this.bodyEl !== body || this.tab !== "videos") return;
+    body.innerHTML = "";
 
     if (vods.length === 0) {
       const empty = document.createElement("div");
       empty.className = "home-section-title";
       empty.textContent = "No past broadcasts found.";
-      this.containerEl.appendChild(empty);
+      body.appendChild(empty);
       return;
     }
 
@@ -108,13 +143,128 @@ export class VodsPage {
       const totalSeconds = vod.duration ? parseDurationToSeconds(vod.duration) : 0;
       cardRefs.push({ vodId: vod.id, totalSeconds, card, meta: this._vodMeta(vod) });
     }
-    this.containerEl.appendChild(grid);
+    body.appendChild(grid);
 
     // fire chapter fetches for every VOD in parallel, badges land as they resolve so the grid
     // is usable immediately. Twitch-only
     if (!kick) {
       this._injectChapterBadges(cardRefs, channel);
     }
+  }
+
+  // ---- Clips (Twitch) ----
+  // most-viewed clips in a time range (Twitch's own default is the last 7 days), 24 at a time with Load more.
+  // clicking one plays it in the in-app clip player (the same one chat clip cards use)
+  _renderClips(channel) {
+    const body = this.bodyEl;
+    body.innerHTML = "";
+    if (!this.clipPeriod) this.clipPeriod = "week";
+    const bar = document.createElement("div");
+    bar.className = "vods-clip-periods";
+    const grid = document.createElement("div");
+    grid.className = "home-grid vods-grid";
+    const status = document.createElement("div");
+    status.className = "home-section-title vods-loading";
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "vods-load-more";
+    more.textContent = "Load more";
+    more.style.display = "none";
+    for (const [id, label] of [["day", "Last 24 hours"], ["week", "Last 7 days"], ["month", "Last 30 days"], ["all", "All time"]]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "vods-clip-period" + (id === this.clipPeriod ? " active" : "");
+      b.textContent = label;
+      b.addEventListener("click", () => {
+        if (this.clipPeriod === id) return;
+        this.clipPeriod = id;
+        this._renderClips(channel);
+      });
+      bar.appendChild(b);
+    }
+    body.append(bar, status, grid, more);
+
+    // a request only lands if it's still the current channel, tab, period and list
+    const req = (this._clipsReq = (this._clipsReq || 0) + 1);
+    const period = this.clipPeriod;
+    let cursor = "";
+    const load = async () => {
+      more.disabled = true;
+      more.textContent = "Loading…";
+      if (!grid.children.length) status.textContent = "Loading clips…";
+      let res;
+      try {
+        res = await invoke("get_channel_clips", { login: channel, period, cursor });
+      } catch (err) {
+        if (req !== this._clipsReq) return;
+        status.textContent = `Failed to load clips: ${String(err)}`;
+        more.disabled = false;
+        more.textContent = "Load more";
+        return;
+      }
+      if (req !== this._clipsReq || this.currentChannel !== channel || this.tab !== "clips") return;
+      for (const clip of res.clips || []) grid.appendChild(this._buildClipCard(clip));
+      cursor = res.cursor || "";
+      status.textContent = grid.children.length ? "" : "No clips in this time range.";
+      status.style.display = grid.children.length ? "none" : "";
+      more.style.display = cursor ? "" : "none";
+      more.disabled = false;
+      more.textContent = "Load more";
+    };
+    more.addEventListener("click", load);
+    load();
+  }
+
+  _buildClipCard(clip) {
+    const card = document.createElement("button");
+    card.className = "home-grid-card clip-grid-card";
+    card.addEventListener("click", () => openClipPlayer(clip));
+
+    const thumbWrap = document.createElement("div");
+    thumbWrap.className = "home-grid-thumb-wrap";
+    const thumb = document.createElement("img");
+    thumb.className = "home-grid-thumb";
+    thumb.alt = "";
+    thumb.loading = "lazy";
+    const markNoThumb = () => {
+      thumb.onerror = null;
+      thumb.removeAttribute("src");
+      thumb.classList.add("no-thumb");
+      thumbWrap.classList.add("vod-thumb-missing");
+    };
+    if (clip.thumbnail) { thumb.src = clip.thumbnail; thumb.onerror = markNoThumb; } else markNoThumb();
+    thumbWrap.appendChild(thumb);
+
+    const secs = Math.round(Number(clip.duration) || 0);
+    if (secs > 0) {
+      const dur = document.createElement("span");
+      dur.className = "home-grid-viewers vod-duration";
+      dur.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+      thumbWrap.appendChild(dur);
+    }
+    if (typeof clip.views === "number") {
+      const views = document.createElement("span");
+      views.className = "vod-views-badge";
+      views.textContent = `${clip.views.toLocaleString()} views`;
+      thumbWrap.appendChild(views);
+    }
+    card.appendChild(thumbWrap);
+
+    const meta = document.createElement("div");
+    meta.className = "home-grid-meta vods-meta";
+    const text = document.createElement("div");
+    text.className = "home-grid-text";
+    const title = document.createElement("div");
+    title.className = "home-grid-title";
+    title.textContent = clip.title || "(untitled)";
+    title.title = clip.title || "";
+    const sub = document.createElement("div");
+    sub.className = "home-grid-game";
+    sub.textContent = [clip.creator ? `Clipped by ${clip.creator}` : "", clip.created_at ? relativeDate(clip.created_at) : ""].filter(Boolean).join(" · ");
+    text.append(title, sub);
+    meta.appendChild(text);
+    card.appendChild(meta);
+    return card;
   }
 
   hide() {

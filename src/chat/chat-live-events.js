@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 // adaptive polling: fast only while something is running (countdowns, betting), slow otherwise. a fixed
 // 5s cadence meant two requests every 5 seconds for channels that almost never run a prediction or poll
+const RESULT_SHOWN_MS = 20000; // how long a prediction's result stays on screen before the card clears
 const POLL_ACTIVE_MS = 5000;
 const POLL_IDLE_MS = 30000;
 const POLL_HIDDEN_MS = 60000;
@@ -52,6 +53,7 @@ export const chatLiveEventsMixin = {
         ended: null,      // a prediction that just left the running/locked lists: kept on screen with its result
         pollEnded: null,  // a poll that just ended: final results kept on screen for a while
         myBets: new Map(), myVotes: new Map(), collapsed: new Set(), dismissed: new Set(),
+        finishedIds: new Set(), // predictions whose result was shown (kept across channel switches)
         sel: null, amount: "", busy: false, error: "", keys: {},
       };
     }
@@ -103,10 +105,22 @@ export const chatLiveEventsMixin = {
       const p = await invoke("get_channel_prediction", { channelLogin: login });
       if (s.login !== login) return;
       const prev = s.pred;
-      const next = p && p.id ? p : null;
-      // Twitch drops a prediction from its running/locked lists once it's resolved or canceled. keep the card
-      // and work out the result, instead of it silently vanishing
-      if (prev && (!next || next.id !== prev.id) && !predEnded(prev)) this._leBeginEnded(prev, login);
+      let next = p && p.id ? p : null;
+      // a prediction whose result was already shown never comes back, even if Twitch keeps listing it
+      if (next && s.finishedIds.has(next.id)) next = null;
+      // Twitch can keep listing a finished prediction for a while (resolved / canceled / pending). it goes
+      // through the same path as one that vanished, so it gets the result banner, one chat line, and clears
+      // itself; shown straight from Twitch's data it had no timer and stayed until closed by hand
+      if (next && predEnded(next)) {
+        const e = s.ended && s.ended.event.id === next.id ? s.ended
+          : this._leBeginEnded(prev && prev.id === next.id ? prev : next, login);
+        if (next.status === "RESOLVED" || next.status === "CANCELED") this._leApplyResult(e, next, false);
+        next = null;
+      } else if (prev && (!next || next.id !== prev.id) && !predEnded(prev)) {
+        // Twitch dropped it from its running/locked lists: it was resolved or canceled. keep the card and work
+        // out the result, instead of it silently vanishing
+        this._leBeginEnded(prev, login);
+      }
       s.pred = next;
       if (next && next.id !== (prev && prev.id)) {
         s.sel = null; s.amount = ""; s.error = "";
@@ -152,6 +166,7 @@ export const chatLiveEventsMixin = {
     };
     this._leRender("pred");
     this._leResolveLoop(s.ended);
+    return s.ended;
   },
 
   async _leResolveLoop(e) {
@@ -199,6 +214,10 @@ export const chatLiveEventsMixin = {
   // final state -> result for you (won / lost / refunded / just ended), shown on the card and once in chat
   _leApplyResult(e, r, inferred) {
     const s = this._leState();
+    // Twitch's list and the result lookup can both deliver the result: only the first one counts
+    if (e.result) return;
+    s.finishedIds.add(e.event.id);
+    if (s.finishedIds.size > 50) s.finishedIds.delete(s.finishedIds.values().next().value);
     const outcomes = r.outcomes && r.outcomes.length ? r.outcomes : e.event.outcomes;
     e.event = { ...e.event, ...r, outcomes };
     const winner = outcomes.find((o) => o.id === r.winning_outcome_id) || null;
@@ -212,7 +231,7 @@ export const chatLiveEventsMixin = {
       } else { kind = "LOST"; points = e.bet.points; }
     } else if (e.bet && !winner && inferred) { kind = "UNKNOWN"; }
     e.result = { kind, points, winner, inferred };
-    e.expires = Date.now() + 120000; // the finished card clears itself after 2 minutes
+    e.expires = Date.now() + RESULT_SHOWN_MS; // the finished card clears itself (the result stays in chat)
     this._leRender("pred");
     const title = e.event.title ? `"${e.event.title}"` : "Prediction";
     const msg = kind === "WON" ? `You won ${points.toLocaleString()} channel points!`

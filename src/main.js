@@ -14,6 +14,7 @@ import { initModMenu } from "./mod-menu.js";
 import { initWhispers, openWhispers } from "./whispers.js";
 import { initCommandPalette } from "./command-palette.js";
 import { showRaidBanner, showRaidArrived, hideRaidBanner } from "./raid-banner.js";
+import { initClips, toggleClipPanel } from "./clips.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
@@ -463,39 +464,36 @@ if (getSetting("autoClaimDrops")) startDropsAutoClaim(); // Settings > App
   chat.onModStatusChange(syncModMenu);
 }
 
-// Clip button: create a Twitch clip of the live stream and toast the editor link
-const clipToast = document.getElementById("clip-toast");
-let clipToastTimer = null;
-function showClipToast(message, editUrl) {
-  if (!clipToast) return;
-  clipToast.replaceChildren();
-  const msg = document.createElement("span");
-  msg.textContent = message;
-  clipToast.appendChild(msg);
-  if (editUrl) {
-    const btn = document.createElement("button");
-    btn.className = "clip-toast-action";
-    btn.textContent = "Open editor";
-    btn.addEventListener("click", () => openUrl(editUrl).catch(() => {}));
-    clipToast.appendChild(btn);
-  }
-  clipToast.style.display = "flex";
-  clearTimeout(clipToastTimer);
-  clipToastTimer = setTimeout(() => { clipToast.style.display = "none"; }, editUrl ? 12000 : 6000);
-}
-document.getElementById("clip-btn")?.addEventListener("click", async () => {
-  if (!chat.roomId || chat._isKickChat) {
-    showClipToast("Clips only work on live Twitch streams.");
-    return;
-  }
-  showClipToast("Creating clip\u2026 (a few seconds)");
-  try {
-    const res = await invoke("create_clip", { broadcasterId: chat.roomId });
-    const msg = res && res.ready ? "Clip created" : "Clip created — still rendering, give it a moment";
-    showClipToast(msg, res && res.edit_url);
-  } catch (err) {
-    showClipToast(typeof err === "string" ? err : "Couldn't create clip.");
-  }
+// clipping: the clip button opens the clip panel (clips.js), Alt+X clips instantly
+initClips({
+  getContext: () => {
+    const live = !!session.playing && !playbackControls.isVod;
+    const twitch = !!chat.roomId && !chat._isKickChat && !playbackControls._isKickSession;
+    const canClip = live && twitch && !!currentLogin;
+    return {
+      canClip,
+      reason: !live ? "Clips can only be made from live streams."
+        : !twitch ? "Clips work on live Twitch streams."
+        : !currentLogin ? "Log in to Twitch to create clips." : "",
+      roomId: chat.roomId,
+      channel: chat.channel,
+      streamTitle: document.getElementById("channel-info-title")?.textContent?.trim() || "",
+      behindLive: playbackControls.secondsBehindLive(),
+      rewound: !!playbackControls._liveDvr,
+    };
+  },
+  insertInChat: (text) => {
+    const input = chat.inputEl;
+    if (!input) return;
+    input.value = input.value ? `${input.value.replace(/\s+$/, "")} ${text}` : text;
+    input.focus();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  },
+  openUrl: (url) => openUrl(url).catch(() => {}),
+});
+document.getElementById("clip-btn")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleClipPanel(e.currentTarget);
 });
 // logging in WHILE a stream plays enables the input, but the IRC connection is still the anonymous
 // one (Twitch IRC can't re-auth an existing connection, PASS only works at handshake), so sending
@@ -747,6 +745,9 @@ function paletteActions() {
         add(sp === 1 ? "Playback speed: Normal" : `Playback speed: ${sp}×`, "VOD", () => playbackControls.setVodSpeed(sp), { keys: sp === 1 ? [] : undefined });
       }
     }
+    if (!playbackControls.isVod && !kick) {
+      add("Create a clip", "Current stream", () => toggleClipPanel(document.getElementById("clip-btn")), { keys: ["Alt", "X"], suggested: true });
+    }
     add("Identify song (Track ID)", "Current stream", () => trackId.identify());
     const f = currentChannelFollowState();
     if (f) add(`${f.followed ? "Unfollow" : "Follow"} ${f.channel}`, "Current channel", () => toggleCurrentFollow(), { suggested: !f.followed });
@@ -758,6 +759,12 @@ function paletteActions() {
         navigator.clipboard.writeText(`https://twitch.tv/${channel}`).then(() => setStatus("Stream link copied")).catch(() => {});
       });
       add(`Past broadcasts of ${channel}`, "Navigation", () => document.getElementById("channel-info-videos-btn")?.click(), { nav: true });
+      add(`Clips of ${channel}`, "Navigation", () => {
+        session.vodsChannel = channel;
+        session.vodsChannelIsKick = false;
+        vodsPage.openNextOn = "clips"; // opens on the Clips tab
+        document.getElementById("channel-info-videos-btn")?.click();
+      }, { nav: true });
     }
     if (session.pageVisible) add("Back to stream", "Navigation", () => backToStreamBtn.click(), { nav: true, suggested: true });
     add("Stop watching", "Current stream", () => stopPlayback({ returnToPage: true, goHome: true }));
@@ -869,10 +876,6 @@ configureSettingsPanel({
   openTwitchConnection: () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); }),
 });
 document.getElementById("settings-open-btn")?.addEventListener("click", () => openSettingsPanel());
-document.getElementById("user-menu-settings")?.addEventListener("click", () => {
-  document.getElementById("user-menu")?.classList.remove("open");
-  openSettingsPanel();
-});
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === ",") { e.preventDefault(); openSettingsPanel(); }
 });

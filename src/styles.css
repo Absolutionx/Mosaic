@@ -6575,36 +6575,6 @@ button:active { transform: translateY(1px); }
 }
 
 /* Clip toast (bottom-center, over the player) */
-.clip-toast {
-  position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 3000;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: var(--m-surface, #161b22);
-  border: 1px solid var(--m-border, #29313d);
-  border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-  color: var(--m-text, #e7ebf2);
-  font-size: 13px;
-  font-weight: 600;
-}
-.clip-toast-action {
-  background: var(--m-accent, #9147ff);
-  border: none;
-  color: var(--m-accent-fg, #fff);
-  border-radius: 5px;
-  padding: 5px 12px;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.clip-toast-action:hover { background: var(--m-accent-hover, #772ce8); }
 
 /* Track ID: multiple per-service links row */
 .track-id-links {
@@ -7212,9 +7182,11 @@ button:active { transform: translateY(1px); }
 }
 .thread-panel-input:focus { outline: none; border-color: var(--m-accent, #9147ff); }
 .thread-panel-send {
-  flex: 0 0 auto; font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
-  background: var(--m-accent, #9147ff); color: #fff; border: none; border-radius: 8px; padding: 7px 14px;
+  flex: 0 0 auto; font-family: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2);
+  border: 1px solid var(--m-border, #29313d); border-radius: 8px; padding: 7px 14px;
 }
+.thread-panel-send:hover:not(:disabled) { background: var(--m-raised, #232b36); border-color: var(--m-muted, #9aa5b4); }
 .thread-panel-send:disabled { opacity: 0.6; cursor: default; }
 
 /* 7TV paints (animated username colors) */
@@ -9194,3 +9166,145 @@ body.reduce-motion *::after { animation: none !important; transition: none !impo
 /* prediction bet: Clear next to the +chips */
 .le-chip.le-chip-clear { color: var(--m-muted, #9aa5b4); }
 .le-chip.le-chip-clear:hover:not(:disabled) { color: var(--m-text, #e7ebf2); }
+
+/* ==== VOD page: tabs + Clips (vods.js) ==== */
+.vods-header { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; }
+.vods-tabs { display: flex; gap: 4px; }
+.vods-tab {
+  padding: 6px 10px 8px; border: none; background: none; cursor: pointer;
+  font-family: inherit; font-size: 13.5px; font-weight: 700; color: var(--m-muted, #9aa5b4);
+  border-bottom: 2px solid transparent;
+}
+.vods-tab:hover { color: var(--m-text, #e7ebf2); }
+.vods-tab.active { color: var(--m-text, #e7ebf2); border-bottom-color: var(--m-accent, #9147ff); }
+.vods-clip-periods { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+.vods-clip-period {
+  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; font-weight: 700; color: var(--m-muted, #9aa5b4);
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d);
+}
+.vods-clip-period:hover { color: var(--m-text, #e7ebf2); border-color: var(--m-faint, #697386); }
+.vods-clip-period.active { color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); border-color: var(--m-muted, #9aa5b4); }
+.vods-load-more {
+  display: block; width: 100%; margin: 16px 0 8px; padding: 10px; border-radius: 10px; cursor: pointer;
+  font-family: inherit; font-size: 13px; font-weight: 700; color: var(--m-text, #e7ebf2);
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d);
+}
+.vods-load-more:hover:not(:disabled) { background: var(--m-surface-2, #1c222c); border-color: var(--m-faint, #697386); }
+.vods-load-more:disabled { opacity: .7; cursor: default; }
+
+/* command palette: a real close button (was an "Esc" label that did nothing when clicked) */
+.cp-close {
+  flex: 0 0 auto; width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px; background: none; color: var(--m-muted, #9aa5b4); cursor: pointer;
+}
+.cp-close:hover { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); }
+
+/* ==== Clipping (clips.js): panel from the clip button + progress card over the video ==== */
+.clip-panel {
+  position: fixed; z-index: 1200; width: 300px; padding: 12px 14px;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55); color: var(--m-text, #e7ebf2);
+}
+.clip-panel-title { font-size: 14px; font-weight: 800; }
+.clip-panel-sub { font-size: 11.5px; color: var(--m-muted, #9aa5b4); margin-top: 1px; }
+.clip-panel-head { margin-bottom: 10px; }
+.clip-panel-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.clip-panel-label { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--m-muted, #9aa5b4); }
+.clip-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d); }
+.clip-seg-btn {
+  min-width: 42px; padding: 5px 8px; border: none; border-radius: 6px; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 700; color: var(--m-muted, #9aa5b4); font-variant-numeric: tabular-nums;
+}
+.clip-seg-btn:hover { color: var(--m-text, #e7ebf2); }
+.clip-seg-btn.on { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); box-shadow: inset 0 0 0 1px var(--m-border, #29313d); }
+.clip-title-input {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 9px;
+  background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d);
+  font-family: inherit; font-size: 12.5px; color: var(--m-text, #e7ebf2);
+}
+.clip-title-input:focus { outline: none; border-color: var(--m-muted, #9aa5b4); }
+.clip-title-input::placeholder { color: var(--m-faint, #697386); }
+.clip-panel-warn {
+  margin-top: 10px; padding: 8px 10px; border-radius: 9px; font-size: 12px; line-height: 1.4;
+  background: rgba(255, 184, 76, 0.1); border: 1px solid rgba(255, 184, 76, 0.35); color: #ffd28f;
+}
+.clip-panel-note { font-size: 12.5px; color: var(--m-muted, #9aa5b4); }
+.clip-panel-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.clip-panel-hint { font-size: 11px; color: var(--m-faint, #697386); }
+.clip-go {
+  padding: 8px 16px; border-radius: 9px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 800;
+  color: var(--m-text, #e7ebf2); background: var(--m-raised, #232b36); border: 1px solid var(--m-muted, #9aa5b4);
+}
+.clip-go:hover { background: var(--m-border, #29313d); }
+.clip-recent-label { margin: 14px 0 6px; }
+.clip-recent { display: flex; flex-direction: column; gap: 2px; max-height: 210px; overflow-y: auto; }
+.clip-recent-row {
+  display: flex; align-items: center; gap: 9px; padding: 5px; border: none; border-radius: 8px; background: none;
+  cursor: pointer; text-align: left; font-family: inherit; color: var(--m-text, #e7ebf2);
+}
+.clip-recent-row:hover { background: var(--m-surface-2, #1c222c); }
+.clip-recent-thumb { flex: 0 0 auto; width: 56px; height: 32px; object-fit: cover; border-radius: 5px; background: var(--m-bg, #0e1116); }
+.clip-recent-text { display: flex; flex-direction: column; min-width: 0; }
+.clip-recent-title { font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clip-recent-sub { font-size: 11px; color: var(--m-muted, #9aa5b4); }
+
+.clip-card {
+  position: absolute; right: 16px; bottom: 76px; z-index: 6; display: flex; align-items: flex-start; gap: 12px;
+  width: min(420px, calc(100% - 32px)); padding: 12px; box-sizing: border-box;
+  background: rgba(22, 27, 34, 0.96); border: 1px solid var(--m-border, #29313d); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); backdrop-filter: blur(6px); color: var(--m-text, #e7ebf2);
+  animation: clip-card-in .2s cubic-bezier(.2, .8, .2, 1);
+}
+@keyframes clip-card-in { from { opacity: 0; transform: translateY(8px); } }
+.clip-card-body { flex: 1; min-width: 0; }
+.clip-card-title { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clip-card-sub { font-size: 11.5px; color: var(--m-muted, #9aa5b4); margin-top: 2px; line-height: 1.4; }
+.clip-card-bar { height: 4px; margin-top: 10px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.clip-card-bar span { display: block; height: 100%; background: var(--m-accent, #9147ff); transition: width 1.8s linear; }
+.clip-card-thumb {
+  position: relative; flex: 0 0 auto; width: 112px; aspect-ratio: 16 / 9; padding: 0; border: none; border-radius: 8px;
+  overflow: hidden; background: var(--m-bg, #0e1116); cursor: pointer;
+}
+.clip-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.clip-card-thumb:disabled { cursor: default; }
+.clip-card-play {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff;
+  background: rgba(0, 0, 0, 0.25); opacity: .9;
+}
+.clip-card-thumb:hover .clip-card-play { background: rgba(0, 0, 0, 0.4); }
+.clip-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.clip-card-btn {
+  padding: 5px 10px; border-radius: 7px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 700;
+  color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.clip-card-btn:hover { background: var(--m-raised, #232b36); border-color: var(--m-muted, #9aa5b4); }
+.clip-card-close {
+  flex: 0 0 auto; width: 24px; height: 24px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 6px; background: none; color: var(--m-muted, #9aa5b4); cursor: pointer;
+}
+.clip-card-close:hover { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); }
+.clip-card.error .clip-card-title { color: #ff9c9c; }
+.clip-card-note { margin-top: 6px; font-size: 11.5px; line-height: 1.4; color: #ffd28f; }
+
+/* ==== Link preview on hover (chat-link-preview.js): app theme, not the old greys ==== */
+.link-preview-popup {
+  width: 300px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 45%), var(--m-surface, #161b22);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
+}
+.link-preview-image {
+  aspect-ratio: 16 / 9; max-height: 169px; height: auto;
+  background: var(--m-bg, #0e1116);
+  border-bottom: 1px solid var(--m-border-soft, #212832);
+}
+.link-preview-body { padding: 10px 12px 11px; gap: 4px; }
+.link-preview-site {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .06em;
+  color: var(--m-muted, #9aa5b4);
+}
+.link-preview-title { font-size: 13.5px; font-weight: 750; line-height: 1.3; color: var(--m-text, #e7ebf2); }
+.link-preview-description { font-size: 12px; line-height: 1.45; color: var(--m-muted, #9aa5b4); }

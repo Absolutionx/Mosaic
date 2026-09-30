@@ -1281,6 +1281,54 @@ fn normalize_prediction(pred: &serde_json::Value) -> serde_json::Value {
     })
 }
 
+// ---- VOD page: a channel's clips ----
+// most-viewed clips for a channel in a time range ("day" | "week" | "month" | "all"), one page at a time
+// (cursor = Helix's pagination cursor, "" for the first page). Helix sorts by views within the range.
+// ended_at is always set with started_at: Helix otherwise silently ends the range one week after the start
+#[tauri::command]
+pub async fn get_channel_clips(
+    state: State<'_, ChatState>,
+    login: String,
+    period: String,
+    cursor: String,
+) -> Result<serde_json::Value, String> {
+    use chrono::{Duration, SecondsFormat, Utc};
+    let login = login.to_lowercase();
+    if login.is_empty() || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("invalid channel".to_string());
+    }
+    if !cursor.chars().all(|c| c.is_ascii_alphanumeric() || c == '=' || c == '-' || c == '_') {
+        return Err("invalid cursor".to_string());
+    }
+    let (token, _) = require_auth(&state)?;
+    let users: serde_json::Value = serde_json::from_str(
+        &helix_get(&format!("https://api.twitch.tv/helix/users?login={login}"), Some(token.clone())).await?,
+    ).map_err(|e| e.to_string())?;
+    let user_id = users.pointer("/data/0/id").and_then(|v| v.as_str()).ok_or("channel not found")?.to_string();
+
+    let mut url = format!("https://api.twitch.tv/helix/clips?broadcaster_id={user_id}&first=24");
+    let days = match period.as_str() { "day" => Some(1), "week" => Some(7), "month" => Some(30), _ => None };
+    if let Some(d) = days {
+        let now = Utc::now();
+        url.push_str(&format!(
+            "&started_at={}&ended_at={}",
+            (now - Duration::days(d)).to_rfc3339_opts(SecondsFormat::Secs, true),
+            now.to_rfc3339_opts(SecondsFormat::Secs, true)
+        ));
+    }
+    if !cursor.is_empty() {
+        url.push_str(&format!("&after={cursor}"));
+    }
+    let page: serde_json::Value = serde_json::from_str(&helix_get(&url, Some(token)).await?).map_err(|e| e.to_string())?;
+    let clips: Vec<serde_json::Value> = page["data"].as_array().cloned().unwrap_or_default().into_iter().map(|c| serde_json::json!({
+        "slug": c["id"], "title": c["title"], "channel": c["broadcaster_name"], "creator": c["creator_name"],
+        "views": c["view_count"], "duration": c["duration"], "thumbnail": c["thumbnail_url"],
+        "created_at": c["created_at"], "url": c["url"],
+    })).collect();
+    let next = page.pointer("/pagination/cursor").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Ok(serde_json::json!({ "clips": clips, "cursor": next }))
+}
+
 // ---- command palette: Twitch channel search ----
 // channels matching what you typed (official Helix search), live ones first, for the command palette's
 // "On Twitch" group. only the fields the palette shows are returned
@@ -1504,17 +1552,26 @@ pub async fn vote_on_poll(
 pub struct ClipResult {
     id: String,
     edit_url: String,
-    ready: bool,
+    // which of the requested options Twitch accepted: "all" (length + title), "length" (title refused),
+    // "none" (a plain default-length clip; Twitch refused the options for this account)
+    options: String,
 }
 
-// creates a clip of the live stream via Helix (captures ~last 30s server-side). needs the web login
-// token with the clips:edit scope (added to oauth.rs; requires a re-login to take effect). returns the
-// clip id + edit_url (Twitch's trim/publish page). errors are made human-readable for a toast.
+// creates a clip of the LIVE broadcast via Helix (needs the web login's clips:edit scope). returns as soon
+// as Twitch accepts it: the frontend polls get_clip_info to show rendering progress and the finished clip
+// (this used to block for up to ~24s with no feedback). duration (seconds, 5-60) and title are passed on;
+// if Twitch refuses them it steps down (see below) and `options` says what was kept. the finished clip's
+// real length is read back by the frontend, so it never claims a length Twitch didn't make
 #[tauri::command]
 pub async fn create_clip(
     broadcaster_id: String,
+    duration: Option<f64>,
+    title: Option<String>,
     state: State<'_, ChatState>,
 ) -> Result<ClipResult, String> {
+    if broadcaster_id.is_empty() || !broadcaster_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("Not a Twitch channel.".into());
+    }
     let token = {
         let guard = state.auth.lock().map_err(|e| e.to_string())?;
         match guard.as_ref() {
@@ -1522,67 +1579,78 @@ pub async fn create_clip(
             None => return Err("Log in to Twitch to create clips.".into()),
         }
     };
+    let duration = duration.filter(|d| d.is_finite()).map(|d| d.clamp(5.0, 60.0));
+    let title: Option<String> = title
+        .map(|t| t.trim().chars().take(100).collect::<String>())
+        .filter(|t| !t.is_empty());
 
     let client = crate::http::client();
-    let resp = client
-        .post("https://api.twitch.tv/helix/clips")
-        .query(&[("broadcaster_id", broadcaster_id.as_str())])
-        .header("Client-Id", oauth::CLIENT_ID)
-        .header("Authorization", format!("Bearer {token}"))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let send = |with_duration: bool, with_title: bool| {
+        let mut q: Vec<(&str, String)> = vec![("broadcaster_id", broadcaster_id.clone())];
+        if with_duration { if let Some(d) = duration { q.push(("duration", format!("{d:.1}"))); } }
+        if with_title { if let Some(t) = &title { q.push(("title", t.clone())); } }
+        client
+            .post("https://api.twitch.tv/helix/clips")
+            .query(&q)
+            .header("Client-Id", oauth::CLIENT_ID)
+            .header("Authorization", format!("Bearer {token}"))
+            .send()
+    };
+
+    // Twitch may refuse the length / title options for an account (it answers 401/403 "not allowed", or
+    // 400/422), so step down until it accepts: length + title, then length only, then a plain clip. only a
+    // refused PLAIN clip is a real permission / availability problem
+    let mut attempts: Vec<(bool, bool, &str)> = Vec::new();
+    if duration.is_some() && title.is_some() { attempts.push((true, true, "all")); }
+    if duration.is_some() { attempts.push((true, false, if title.is_some() { "length" } else { "all" })); }
+    else if title.is_some() { attempts.push((false, true, "all")); }
+    attempts.push((false, false, "none"));
+    let mut resp = None;
+    let mut options = "none";
+    for (i, (d, t, label)) in attempts.iter().enumerate() {
+        let r = send(*d, *t).await.map_err(|e| e.to_string())?;
+        let st = r.status();
+        let last = i + 1 == attempts.len();
+        let refused_options = matches!(st.as_u16(), 400 | 401 | 403 | 422);
+        if st.is_success() || last || !refused_options {
+            options = label;
+            resp = Some(r);
+            break;
+        }
+    }
+    let resp = resp.ok_or_else(|| "Couldn't create a clip.".to_string())?;
 
     let status = resp.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err("Clip permission missing — log out and back in to Twitch to grant it.".into());
-    }
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err("Couldn't create a clip — the stream may be offline or have clips disabled.".into());
+        // Twitch's own reason, when it gives one ({"error": ..., "message": ...})
+        let twitch_says = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|j| j.get("message").and_then(|m| m.as_str()).map(|m| m.trim().to_string()))
+            .filter(|m| !m.is_empty());
+        let lead = match status.as_u16() {
+            // 401: the login token itself isn't accepted
+            401 => "Twitch didn't accept your login for clipping. Log out and back in to Twitch.",
+            // 403: Twitch's answer when the CHANNEL doesn't let you clip right now (clips limited to
+            // followers or subscribers, or turned off). it was previously shown as "permission missing"
+            403 => "This channel isn't allowing you to clip right now. Clips may be limited to followers or subscribers, or turned off.",
+            404 => "Twitch couldn't find a live stream to clip. The stream may have just ended.",
+            503 => "Twitch's clip service is busy. Try again in a moment.",
+            _ => "Couldn't create a clip.",
+        };
+        return Err(match twitch_says {
+            Some(m) => format!("{lead} (Twitch: {m})"),
+            None => format!("{lead} (Twitch error {})", status.as_u16()),
+        });
     }
-
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let d = json
-        .pointer("/data/0")
-        .ok_or_else(|| "Twitch returned no clip.".to_string())?;
+    let d = json.pointer("/data/0").ok_or_else(|| "Twitch returned no clip.".to_string())?;
     let id = d.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let edit_url = d.get("edit_url").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if id.is_empty() {
         return Err("Twitch returned no clip.".into());
     }
-
-    // Create Clip is ASYNC: the edit_url is valid immediately but the clip's video isn't rendered yet,
-    // so opening it right away shows a black/empty frame. poll Get Clips until the thumbnail is a real
-    // one (Twitch serves a "...processing..." placeholder until the render finishes), up to ~24s.
-    let mut ready = false;
-    for _ in 0..12 {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        let g = client
-            .get("https://api.twitch.tv/helix/clips")
-            .query(&[("id", id.as_str())])
-            .header("Client-Id", oauth::CLIENT_ID)
-            .header("Authorization", format!("Bearer {token}"))
-            .send()
-            .await;
-        if let Ok(r) = g {
-            if let Ok(t) = r.text().await {
-                if let Ok(j) = serde_json::from_str::<serde_json::Value>(&t) {
-                    if let Some(thumb) = j
-                        .pointer("/data/0/thumbnail_url")
-                        .and_then(|v| v.as_str())
-                    {
-                        if !thumb.is_empty() && !thumb.contains("processing") {
-                            ready = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(ClipResult { id, edit_url, ready })
+    Ok(ClipResult { id, edit_url, options: options.to_string() })
 }
 
 // --- Channel points + drops (device-login token; return empty/None when not connected) ---
