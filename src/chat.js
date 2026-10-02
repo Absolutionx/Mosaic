@@ -322,6 +322,10 @@ export class TwitchChat {
     if (!el) return;
     // not laid out yet (hidden panel, pre-first-paint): scrollHeight reads 0 and writing height:0px would collapse the box. a later call from a visible state settles it
     if (el.scrollHeight === 0) return;
+    // squeezed (the chat column collapsed to 0 for the theater-mode chat overlay, or mid-animation): text
+    // wraps a character per line there, and measuring would size the box hugely tall and leave it that way.
+    // a call once the column is back (the overlay re-measures on exit) settles it
+    if (el.clientWidth < 80) return;
     // captured BEFORE the resize: growing the input shrinks .chat-body (flex siblings), which the scroll handler can't distinguish from scrolling up, so typing a long message used to pause chat. if pinned to newest before the grow, stay pinned
     const wasPinned = !this.userScrolledUp;
     el.style.height = "auto";
@@ -1816,14 +1820,31 @@ export class TwitchChat {
       if (el) el.textContent = txt || "";
       if (btn) btn.classList.toggle("has-balance", !!txt);
     };
+    // one request reads the balance and, with Settings > Twitch account > Auto-claim channel points bonus on,
+    // claims the bonus chest when Twitch offers it (~every 15 minutes of watching)
     const poll = async () => {
       try {
-        const p = await invoke("get_channel_points", { channelLogin: login });
-        setBal(p == null ? "" : fmtCount(p));
+        const r = await invoke("channel_points_tick", { channelLogin: login, claim: !!getSetting("autoClaimBonus") });
+        setBal(r && r.balance != null ? fmtCount(r.balance) : "");
+        if (r && r.claimed) this._flashBonusClaimed();
       } catch { setBal(""); }
     };
     poll();
     this._pointsPollTimer = setInterval(poll, 60000);
+  }
+
+  // the balance pill briefly reads "+Bonus" after an automatic bonus claim
+  _flashBonusClaimed() {
+    const btn = document.getElementById("rewards-btn");
+    const el = document.getElementById("rewards-balance");
+    if (!btn || !el) return;
+    const balance = el.textContent;
+    el.textContent = "+Bonus";
+    btn.classList.add("bonus-claimed");
+    setTimeout(() => {
+      if (el.textContent === "+Bonus") el.textContent = balance;
+      btn.classList.remove("bonus-claimed");
+    }, 2500);
   }
 
   _stopPointsPoll() {
@@ -2183,6 +2204,18 @@ export class TwitchChat {
     if (last && last.nodeType === 3) last.nodeValue = ` Chat paused due to ${reason}`;
   }
 
+  // what the emote hover card (emote-card.js) shows, carried on the image so hovering needs no lookups. with
+  // the card turned off (Settings > Chat), emotes get their plain name tooltip back instead
+  _tagEmote(img, name, info) {
+    img.dataset.emote = name;
+    if (info.provider) img.dataset.provider = info.provider;
+    if (info.creator) img.dataset.creator = info.creator;
+    if (info.original) img.dataset.original = info.original;
+    if (info.big) img.dataset.big = info.big;
+    if (info.zeroWidth) img.dataset.zeroWidth = "1";
+    if (!getSetting("emoteHoverCard")) img.title = name;
+  }
+
   _isAsciiArt(message) {
     if (!getSetting("asciiArt")) return false; // Settings > Chat > ASCII art
     if (!message || message.length < ASCII_ART_MIN_GRAPHEMES) return false;
@@ -2294,7 +2327,7 @@ export class TwitchChat {
         img.className = "chat-emote";
         img.src = emoteUrl;
         img.alt = kickEmote.name;
-        img.title = kickEmote.name;
+        this._tagEmote(img, kickEmote.name, { provider: "kick", big: emoteUrl });
         img.loading = "lazy";
         img.onerror = () => {
           this._loggedEmoteUrlFailures ??= new Set();
@@ -2316,7 +2349,7 @@ export class TwitchChat {
         img.className = "chat-emote";
         img.src = `https://static-cdn.jtvnw.net/emoticons/v2/${twitch.id}/default/dark/2.0`;
         img.alt = word;
-        img.title = word;
+        this._tagEmote(img, word, { provider: "twitch", big: `https://static-cdn.jtvnw.net/emoticons/v2/${twitch.id}/default/dark/3.0` });
         img.loading = "lazy";
         fragment.appendChild(img);
       } else {
@@ -2340,7 +2373,9 @@ export class TwitchChat {
           img.className = "chat-emote";
           img.src = emoteUrl;
           img.alt = word;
-          img.title = word;
+          this._tagEmote(img, word, emote
+            ? emote
+            : { provider: "twitch", big: `https://static-cdn.jtvnw.net/emoticons/v2/${twitchByName.id}/default/dark/3.0` });
           img.loading = "lazy";
           // a failed emote image collapses to its alt text, identical to it never loading, which made "emote shows as its name" undiagnosable. log each failing URL once so a dead CDN link is distinguishable from a missing emote
           img.onerror = () => {

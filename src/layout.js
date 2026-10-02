@@ -131,10 +131,22 @@ export function toggleChatCollapse() {
 
 // tracked with a local boolean since isFullscreen() is unreliable right after a
 // transition. #video-element resizes via CSS, so nothing to resync
+// fullscreen straight from a MAXIMIZED window can leave the web content at the maximized height (WebView2
+// misses the resize), so the bottom taskbar-height strip of the screen shows the bare window behind it. the
+// window is un-maximized first, re-maximized on exit, and the content's size is checked once fullscreen
+let _maximizedBeforeFullscreen = false;
 export async function toggleFullscreen() {
   isFullscreen = !isFullscreen;
   try {
-    await appWindow.setFullscreen(isFullscreen);
+    if (isFullscreen) {
+      _maximizedBeforeFullscreen = await appWindow.isMaximized().catch(() => false);
+      if (_maximizedBeforeFullscreen) await appWindow.unmaximize();
+      await appWindow.setFullscreen(true);
+    } else {
+      await appWindow.setFullscreen(false);
+      if (_maximizedBeforeFullscreen) await appWindow.maximize();
+      _maximizedBeforeFullscreen = false;
+    }
   } catch (err) {
     console.error("Failed to toggle fullscreen:", err);
     isFullscreen = !isFullscreen; // revert the flag, the call didn't take
@@ -143,6 +155,27 @@ export async function toggleFullscreen() {
   appEl.classList.toggle("app-fullscreen", isFullscreen);
   fullscreenBtn.classList.toggle("is-fullscreen", isFullscreen);
   fullscreenBtn.title = isFullscreen ? "Exit Fullscreen" : "Fullscreen";
+  if (isFullscreen) setTimeout(() => { fixFullscreenSurface(); }, 350);
+}
+
+// the web content must cover the whole fullscreen window. if WebView2 missed the resize (content shorter or
+// narrower than the window), toggling fullscreen off and on forces it to recompute. a no-op when they match
+export async function fixFullscreenSurface() {
+  if (!isFullscreen) return false;
+  try {
+    const dpr = window.devicePixelRatio || 1;
+    const inner = await appWindow.innerSize();
+    const offW = Math.abs(inner.width - Math.round(window.innerWidth * dpr));
+    const offH = Math.abs(inner.height - Math.round(window.innerHeight * dpr));
+    if (offW <= 4 && offH <= 4) return false;
+    console.log(`[fullscreen] content ${Math.round(window.innerWidth * dpr)}x${Math.round(window.innerHeight * dpr)} vs window ${inner.width}x${inner.height}; re-applying fullscreen`);
+    await appWindow.setFullscreen(false);
+    await appWindow.setFullscreen(true);
+    return true;
+  } catch (err) {
+    console.warn("[fullscreen] surface check failed:", err);
+    return false;
+  }
 }
 
 // keeps isFullscreen and the button icon honest when fullscreen changes bypass

@@ -53,6 +53,13 @@ export const DEFAULTS = {
   seekThumbnails: true,      // preview thumbnails when hovering the VOD seek bar
   vodSpeed: 1,               // VOD playback speed (remembered across VODs)
   clipLength: 30,            // last length picked in the clip panel (Alt+X uses it)
+  videoContextMenu: false,   // the browser's own right-click menu, app-wide (video, text boxes, ...)
+  chatOverlay: false,        // chat over the video in theater mode / fullscreen
+  chatOverlayRect: null,     // overlay position + size as fractions of the video picture (null = default)
+  chatOverlayInput: true,    // a message box in the overlay
+  emoteHoverCard: true,      // hovering an emote shows its card (preview, source, creator)
+  audioNormalize: false,     // even out loud and quiet moments (compressor + make-up gain + limiter)
+  audioNormalizeStrength: "balanced", // "light" | "balanced" | "strong"
   followRaids: "auto",       // "auto" (5s countdown, then go) | "ask" | "off"
   // notifications
   notifyGoLive: true,
@@ -78,6 +85,7 @@ export const DEFAULTS = {
   // app
   closeToTray: true,
   autoClaimDrops: true,
+  autoClaimBonus: true,      // claim the channel points bonus chest automatically while watching
   autostart: false,          // start Mosaic with your computer
   startMinimized: false,     // ...and go straight to the tray when it does
   uiZoom: 1,

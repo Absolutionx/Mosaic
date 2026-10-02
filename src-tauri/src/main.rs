@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 
 mod app_extras;
+mod downloads;
 mod http;
 mod chat;
 mod chat_commands;
@@ -197,6 +198,7 @@ fn main() {
 
             Ok(())
         })
+        .manage(downloads::DownloadsState::default())
         .manage(LaunchState::default())
         .manage(ChatState::default())
         .manage(EventSubState::default())
@@ -308,6 +310,11 @@ fn main() {
             helix::follow_channel,
             helix::search_twitch_channels,
             helix::get_channel_clips,
+            helix::get_drop_campaigns,
+            helix::channel_points_tick,
+            downloads::start_vod_download,
+            downloads::cancel_vod_download,
+            downloads::reveal_download,
             app_extras::launched_at_startup,
             app_extras::save_backup_file,
             helix::create_clip,
@@ -389,6 +396,8 @@ fn main() {
                         }
                     }
                 }
+                // keep track of the window's normal (not maximized) size + position, see tray::restore_window
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => tray::track_normal_bounds(window),
                 _ => {}
             }
         })

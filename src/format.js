@@ -36,3 +36,15 @@ export function smallAvatar(url, size = 70) {
   if (typeof url !== "string") return url;
   return url.replace(/^(https:\/\/static-cdn\.jtvnw\.net\/.+-profile_image-)300x300(\.[a-z]+)$/i, `$1${size}x${size}$2`);
 }
+
+// dates shown in the app as MM-DD-YY. takes a "YYYY-MM-DD" day key (kept as that calendar day) or a timestamp
+// / ISO string / Date (shown as YOUR local date: a stream that started Tuesday evening shows Tuesday, even
+// though Twitch's UTC timestamp may already say Wednesday)
+export function fmtDateMDY(value) {
+  if (!value) return "";
+  const day = typeof value === "string" && /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (day) return `${day[2]}-${day[3]}-${day[1].slice(2)}`;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${String(d.getFullYear()).slice(2)}`;
+}

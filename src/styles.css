@@ -183,8 +183,16 @@ html, body {
   overflow: hidden;
   border: none;
 }
-#app.app-fullscreen #app.app-fullscreen #channel-info-bar {
+/* the channel info bar has no place in fullscreen. (this selector was doubled, "#app.app-fullscreen
+   #app.app-fullscreen #channel-info-bar", which can never match, so going fullscreen from the normal
+   layout showed the bar and pushed the layout past the bottom of the screen. from theater mode it was
+   hidden anyway by the theater rule) */
+#app.app-fullscreen #channel-info-bar {
   display: none !important;
+}
+/* and nothing in the video column may spill below the screen in fullscreen */
+#app.app-fullscreen #video-column {
+  overflow: hidden;
 }
 /* In fullscreen, #video-frame expands to fill the screen height (the
    sidebar/chat/header collapsing to 0 width via the CSS variable
@@ -345,12 +353,12 @@ header #login-btn.logged-in:hover {
   position: fixed;
   display: none;
   flex-direction: column;
-  background: #18181b;
-  border: 1px solid #3a3a3d;
-  border-radius: 6px;
-  padding: 4px;
-  min-width: 130px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  background: var(--m-surface, #161b22);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 10px;
+  padding: 5px;
+  min-width: 170px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
   z-index: 1000;
 }
 .user-menu.open {
@@ -359,17 +367,22 @@ header #login-btn.logged-in:hover {
 .user-menu-item {
   background: none;
   border: none;
-  color: #efeff1;
+  color: var(--m-text, #e7ebf2);
+  font-family: inherit;
   font-size: 13px;
+  font-weight: 600;
   text-align: left;
   padding: 8px 10px;
-  border-radius: 4px;
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
   width: 100%;
 }
 .user-menu-item:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--m-surface-2, #1c222c);
+}
+.user-menu-item.destructive:hover {
+  color: #ff9c9c;
 }
 /* VOD chapters panel */
 /* Top clips list (clips-btn in the player controls) */
@@ -9308,3 +9321,328 @@ body.reduce-motion *::after { animation: none !important; transition: none !impo
 }
 .link-preview-title { font-size: 13.5px; font-weight: 750; line-height: 1.3; color: var(--m-text, #e7ebf2); }
 .link-preview-description { font-size: 12px; line-height: 1.45; color: var(--m-muted, #9aa5b4); }
+
+/* ==== Chat overlay (chat-overlay.js): chat over the video in theater / fullscreen ==== */
+/* theater mode with the overlay: the chat column collapses (fullscreen already hides it) */
+body.chat-overlay-active #app.theater-mode { --chat-width: 0px; }
+body.chat-overlay-active #app.theater-mode #chat-pane { visibility: hidden; }
+/* placed on the video picture by chat-overlay.js (left/top/width/height); clicks pass through except on the
+   handle and the resize grip */
+#chat-overlay {
+  position: absolute; z-index: 5; display: none; flex-direction: column;
+  pointer-events: none; font-size: 13px; line-height: 1.45;
+}
+body.chat-overlay-active #chat-overlay { display: flex; }
+.chat-overlay-lines {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; overflow: hidden;
+}
+#chat-overlay .chat-overlay-line {
+  padding: 4px 9px; border-radius: 8px;
+  background: rgba(10, 12, 16, 0.62); color: #f1f3f6;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  overflow-wrap: anywhere;
+  transition: opacity .9s ease;
+}
+#chat-overlay .chat-overlay-line.fading { opacity: 0; }
+#chat-overlay .chat-overlay-line .chat-ts { display: none; }
+.chat-overlay-handle {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px;
+  padding: 4px 9px 4px 6px; border-radius: 8px; cursor: grab; pointer-events: auto; user-select: none;
+  font-size: 11.5px; font-weight: 800; color: #e7ebf2;
+  background: rgba(10, 12, 16, 0.78); border: 1px solid rgba(255, 255, 255, 0.14);
+  opacity: 0; transition: opacity .15s ease;
+}
+.chat-overlay-grip {
+  position: absolute; right: -4px; bottom: -4px; width: 16px; height: 16px; cursor: nwse-resize; pointer-events: auto;
+  border-right: 2px solid rgba(255, 255, 255, 0.7); border-bottom: 2px solid rgba(255, 255, 255, 0.7); border-radius: 0 0 4px 0;
+  opacity: 0; transition: opacity .15s ease;
+}
+/* handle + grip: only while the mouse is over the overlay AND the player controls are showing (they hide
+   together after the mouse goes idle); always while dragging */
+#video-frame.controls-visible #chat-overlay.hover .chat-overlay-handle,
+#video-frame.controls-visible #chat-overlay.hover .chat-overlay-grip,
+#chat-overlay.dragging .chat-overlay-handle, #chat-overlay.dragging .chat-overlay-grip { opacity: 1; }
+#chat-overlay.dragging { outline: 1px dashed rgba(255, 255, 255, 0.35); outline-offset: 4px; }
+#chat-overlay.dragging .chat-overlay-handle { cursor: grabbing; }
+
+/* ==== VOD downloads (vod-downloads.js) ==== */
+.dl-backdrop { position: fixed; inset: 0; z-index: 11900; display: flex; align-items: center; justify-content: center; background: rgba(5, 7, 10, 0.55); }
+.dl-dialog {
+  width: min(440px, calc(100vw - 32px)); padding: 18px 18px 16px;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); color: var(--m-text, #e7ebf2);
+}
+.dl-title { font-size: 16px; font-weight: 850; }
+.dl-vod { margin-top: 3px; font-size: 12.5px; color: var(--m-muted, #9aa5b4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.dl-label { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--m-muted, #9aa5b4); }
+.dl-seg { display: inline-flex; flex-wrap: wrap; padding: 3px; gap: 2px; border-radius: 9px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d); }
+.dl-seg-btn {
+  padding: 5px 10px; border: none; border-radius: 6px; background: none; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 700; color: var(--m-muted, #9aa5b4);
+}
+.dl-seg-btn:hover { color: var(--m-text, #e7ebf2); }
+.dl-seg-btn.on { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); box-shadow: inset 0 0 0 1px var(--m-border, #29313d); }
+.dl-part { display: flex; gap: 10px; margin-top: 10px; }
+.dl-time { flex: 1; display: flex; align-items: center; gap: 6px; }
+.dl-time-label { font-size: 12px; color: var(--m-muted, #9aa5b4); }
+.dl-time-input {
+  width: 100%; min-width: 0; padding: 6px 8px; border-radius: 8px; font-family: inherit; font-size: 12.5px;
+  font-variant-numeric: tabular-nums; color: var(--m-text, #e7ebf2);
+  background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d);
+}
+.dl-time-input:focus { outline: none; border-color: var(--m-muted, #9aa5b4); }
+.dl-now {
+  padding: 5px 8px; border-radius: 7px; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 700;
+  color: var(--m-muted, #9aa5b4); background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.dl-now:hover { color: var(--m-text, #e7ebf2); }
+.dl-name { margin-top: 14px; font-size: 12px; line-height: 1.45; color: var(--m-muted, #9aa5b4); overflow-wrap: anywhere; }
+.dl-error { margin-top: 6px; min-height: 16px; font-size: 12px; color: #ff9c9c; }
+.dl-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.dl-btn {
+  padding: 8px 14px; border-radius: 9px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700;
+  color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.dl-btn:hover:not(:disabled) { background: var(--m-raised, #232b36); }
+.dl-btn.primary { background: var(--m-raised, #232b36); border-color: var(--m-muted, #9aa5b4); }
+.dl-btn:disabled { opacity: .55; cursor: default; }
+
+.dl-panel {
+  position: fixed; left: 16px; bottom: 16px; z-index: 11000; width: 320px; max-height: 50vh; overflow-y: auto;
+  padding: 10px; background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5); color: var(--m-text, #e7ebf2);
+}
+.dl-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; font-size: 12px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--m-muted, #9aa5b4); }
+.dl-panel-clear { border: none; background: none; cursor: pointer; font-family: inherit; font-size: 11.5px; color: var(--m-muted, #9aa5b4); text-transform: none; letter-spacing: 0; }
+.dl-panel-clear:hover { color: var(--m-text, #e7ebf2); }
+.dl-item { padding: 8px; border-radius: 9px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.dl-item + .dl-item { margin-top: 6px; }
+.dl-item-name { font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-item-sub { margin-top: 2px; font-size: 11.5px; color: var(--m-muted, #9aa5b4); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.dl-item.failed .dl-item-sub { color: #ff9c9c; }
+.dl-item.done .dl-item-sub { color: #5fe3a8; }
+.dl-item-bar { height: 4px; margin-top: 7px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.dl-item-bar span { display: block; height: 100%; background: var(--m-accent, #9147ff); transition: width .5s linear; }
+.dl-item-actions { display: flex; gap: 6px; margin-top: 7px; }
+.dl-item-btn {
+  padding: 4px 9px; border-radius: 7px; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 700;
+  color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.dl-item-btn:hover { background: var(--m-raised, #232b36); }
+
+.vod-card-download {
+  position: absolute; top: 6px; right: 6px; z-index: 2; width: 28px; height: 28px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  color: #fff; background: rgba(10, 12, 16, 0.7); opacity: 0; transition: opacity .12s ease, background .12s ease;
+}
+.home-grid-card:hover .vod-card-download, .vod-card-download:focus-visible { opacity: 1; }
+.vod-card-download:hover { background: rgba(10, 12, 16, 0.92); }
+
+/* ==== Emote hover card (emote-card.js) ==== */
+.emote-card {
+  position: fixed; z-index: 12500; display: flex; align-items: center; gap: 12px;
+  max-width: 300px; padding: 10px 14px 10px 10px; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 50%), var(--m-surface, #161b22);
+  border: 1px solid var(--m-border, #29313d); border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); color: var(--m-text, #e7ebf2);
+  animation: emote-card-in .12s ease-out;
+}
+@keyframes emote-card-in { from { opacity: 0; transform: translateY(3px); } }
+.emote-card-preview {
+  flex: 0 0 auto; width: 84px; height: 84px; display: flex; align-items: center; justify-content: center;
+  border-radius: 9px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832);
+}
+.emote-card-preview img { max-width: 72px; max-height: 72px; object-fit: contain; }
+.emote-card-info { min-width: 0; }
+.emote-card-name { font-size: 14px; font-weight: 800; overflow-wrap: anywhere; }
+.emote-card-source { margin-top: 2px; font-size: 11.5px; font-weight: 700; color: var(--m-muted, #9aa5b4); }
+.emote-card-meta { margin-top: 2px; font-size: 11.5px; color: var(--m-muted, #9aa5b4); overflow-wrap: anywhere; }
+
+/* chat overlay: the real chat box, docked (Settings > Chat > Type in the overlay). translucent over the video.
+   shown only while the mouse is over the overlay and the player controls are showing (it hides with them
+   when the mouse goes idle), or while you're typing in it. otherwise hidden and click-through */
+#chat-overlay .chat-input-wrapper {
+  margin-top: 6px; pointer-events: auto;
+  background: rgba(10, 12, 16, 0.82); border-color: rgba(255, 255, 255, 0.16);
+  opacity: 0; visibility: hidden; transition: opacity .15s ease;
+}
+#video-frame.controls-visible #chat-overlay.hover .chat-input-wrapper,
+#chat-overlay.composer-open .chat-input-wrapper,
+#chat-overlay .chat-input-wrapper:focus-within { opacity: 1; visibility: visible; }
+
+/* ==== Hub panels: watch stats (watch-stats.js) + drops (drops-hub.js) ==== */
+.hub-backdrop { position: fixed; inset: 0; z-index: 11800; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(5, 7, 10, 0.66); backdrop-filter: blur(3px); }
+.hub-panel {
+  display: flex; flex-direction: column; width: min(820px, 100%); height: min(680px, 100%);
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 16px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6); color: var(--m-text, #e7ebf2); overflow: hidden;
+}
+.hub-head { display: flex; align-items: center; gap: 16px; padding: 14px 14px 12px 22px; border-bottom: 1px solid var(--m-border-soft, #212832); }
+.hub-title { font-size: 18px; font-weight: 850; }
+.hub-spacer { flex: 1; }
+.hub-tabs { flex: 1; display: flex; gap: 4px; }
+.hub-tab { padding: 6px 10px 8px; border: none; background: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--m-muted, #9aa5b4); border-bottom: 2px solid transparent; }
+.hub-tab:hover { color: var(--m-text, #e7ebf2); }
+.hub-tab.active { color: var(--m-text, #e7ebf2); border-bottom-color: var(--m-accent, #9147ff); }
+.hub-close { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 9px; background: none; color: var(--m-muted, #9aa5b4); cursor: pointer; }
+.hub-close:hover { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); }
+.hub-refresh, .hub-btn {
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 700;
+  color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+}
+.hub-refresh:hover, .hub-btn:hover:not(:disabled) { background: var(--m-raised, #232b36); border-color: var(--m-muted, #9aa5b4); }
+.hub-btn:disabled { opacity: .6; cursor: default; }
+.hub-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 22px 24px; }
+.hub-section { margin: 18px 0 8px; font-size: 11px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--m-muted, #9aa5b4); }
+.hub-empty { padding: 60px 0; text-align: center; font-size: 13px; color: var(--m-muted, #9aa5b4); }
+.hub-note { font-size: 12.5px; color: var(--m-muted, #9aa5b4); }
+.hub-note.error { color: #ff9c9c; }
+
+/* watch stats */
+.stats-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+.stats-card { padding: 14px 16px; border-radius: 12px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.stats-card-big { font-size: 24px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.stats-card-label { margin-top: 2px; font-size: 12px; color: var(--m-muted, #9aa5b4); }
+.stats-chart { display: flex; align-items: flex-end; gap: 8px; height: 150px; margin-top: 18px; padding: 10px 12px 0; border-radius: 12px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.stats-chart.dense { gap: 3px; }
+.stats-col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 6px; padding-bottom: 6px; }
+.stats-bar { width: 100%; max-width: 44px; border-radius: 5px 5px 2px 2px; background: linear-gradient(180deg, var(--m-accent, #9147ff), rgba(145, 71, 255, 0.55)); }
+.stats-col-label { font-size: 10.5px; color: var(--m-faint, #697386); font-variant-numeric: tabular-nums; }
+.stats-top { display: flex; flex-direction: column; gap: 4px; }
+.stats-row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border: none; border-radius: 9px; background: none; cursor: pointer; text-align: left; font-family: inherit; color: var(--m-text, #e7ebf2); }
+.stats-row:hover { background: var(--m-surface-2, #1c222c); }
+.stats-av { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--m-raised, #232b36); font-size: 12px; font-weight: 800; }
+.stats-av img { width: 100%; height: 100%; object-fit: cover; }
+.stats-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.stats-row-name { font-size: 13px; font-weight: 700; }
+.stats-row-bar { height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.stats-row-bar span { display: block; height: 100%; background: var(--m-accent, #9147ff); opacity: .8; }
+.stats-row-time { flex: 0 0 auto; font-size: 12.5px; font-weight: 700; color: var(--m-muted, #9aa5b4); font-variant-numeric: tabular-nums; }
+
+/* drops */
+.drops-campaign, .drops-tile { display: flex; gap: 14px; padding: 12px; border-radius: 12px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.drops-campaign + .drops-campaign { margin-top: 10px; }
+.drops-art { flex: 0 0 auto; width: 72px; height: 96px; object-fit: cover; border-radius: 7px; background: var(--m-raised, #232b36); }
+.drops-art.small { width: 54px; height: 72px; }
+.drops-main { flex: 1; min-width: 0; }
+.drops-game { font-size: 14px; font-weight: 800; }
+.drops-campaign-name { margin-top: 1px; font-size: 12px; color: var(--m-muted, #9aa5b4); }
+.drops-reward { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.drops-reward-img { flex: 0 0 auto; width: 36px; height: 36px; object-fit: contain; border-radius: 6px; background: var(--m-surface-2, #1c222c); }
+.drops-reward-info { flex: 1; min-width: 0; }
+.drops-reward-name { font-size: 12.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drops-bar { height: 5px; margin-top: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.07); overflow: hidden; }
+.drops-bar span { display: block; height: 100%; background: var(--m-accent, #9147ff); }
+.drops-reward.claimed .drops-bar span { background: #3ecf8e; }
+.drops-reward-status { margin-top: 3px; font-size: 11.5px; color: var(--m-muted, #9aa5b4); font-variant-numeric: tabular-nums; }
+.drops-reward.claimed .drops-reward-status { color: #5fe3a8; }
+.drops-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
+.drops-tile-meta { margin-top: 4px; font-size: 11.5px; color: var(--m-faint, #697386); }
+.drops-unlinked { color: #ffd28f; }
+.drops-tile-actions { display: flex; gap: 6px; margin-top: 8px; }
+/* Points & Drops popup: link into the hub */
+.rewards-drops-title { display: flex; align-items: center; justify-content: space-between; }
+.rewards-drops-hub {
+  padding: 3px 9px; border-radius: 7px; cursor: pointer; font-family: inherit; font-size: 11.5px; font-weight: 700;
+  color: var(--m-text, #e7ebf2); background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d);
+  text-transform: none; letter-spacing: 0;
+}
+.rewards-drops-hub:hover { background: var(--m-raised, #232b36); }
+
+/* ==== Player right-click menu + Stats for nerds (player-stats.js) ==== */
+.player-menu {
+  position: fixed; z-index: 12000; min-width: 210px; padding: 5px;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+.player-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%;
+  padding: 7px 10px; border: none; border-radius: 7px; background: none; cursor: pointer; text-align: left;
+  font-family: inherit; font-size: 13px; color: var(--m-text, #e7ebf2);
+}
+.player-menu-item:hover { background: var(--m-surface-2, #1c222c); }
+.player-menu-hint { font-size: 11.5px; color: var(--m-faint, #697386); font-variant-numeric: tabular-nums; }
+.nerd-stats {
+  position: absolute; left: 14px; top: 14px; z-index: 7; width: 330px; max-width: calc(100% - 28px);
+  padding: 8px 10px 9px; border-radius: 10px;
+  background: rgba(8, 10, 14, 0.82); border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e9edf2; font: 11.5px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
+  backdrop-filter: blur(4px);
+}
+.nerd-stats-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-weight: 700; font-family: inherit; }
+.nerd-stats-head span { flex: 1; }
+.nerd-stats-btn {
+  padding: 1px 7px; border-radius: 5px; cursor: pointer; font: 11px/1.5 inherit;
+  color: #e9edf2; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.nerd-stats-btn:hover { background: rgba(255, 255, 255, 0.16); }
+.nerd-row { display: flex; gap: 10px; }
+.nerd-key { flex: 0 0 112px; color: rgba(233, 237, 242, 0.6); }
+.nerd-val { flex: 1; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+
+/* theater mode with the chat overlay: the chat column (which normally sits behind the window buttons) is
+   gone, so the buttons would hang over the video. they fade out like a video player's controls and come
+   back when the mouse reaches the top-right corner, over a soft gradient for legibility. still clickable
+   while faded */
+body.chat-overlay-active #app.theater-mode .win-controls {
+  opacity: 0;
+  transition: opacity .18s ease;
+  background: radial-gradient(ellipse at 100% 0%, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0) 75%);
+  border-bottom-left-radius: 12px;
+}
+body.chat-overlay-active #app.theater-mode .win-controls:hover,
+body.chat-overlay-active #app.theater-mode .win-controls:focus-within { opacity: 1; }
+body.chat-overlay-active #app.theater-mode .win-btn { color: #fff; }
+
+/* header Drops tab: drops are Twitch-only */
+body.kick-mode #drops-tab { display: none; }
+
+/* balance pill: "+Bonus" after an automatic bonus claim */
+#rewards-btn.bonus-claimed { color: #5fe3a8; border-color: rgba(62, 207, 142, 0.5); }
+#rewards-btn.bonus-claimed .rewards-balance { color: #5fe3a8; font-weight: 800; }
+
+/* ==== VOD bookmarks (vod-bookmarks.js) ==== */
+.seek-bar-bookmarks { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.seek-bookmark-marker {
+  position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; border-radius: 2px;
+  background: #7cc4ff; box-shadow: 0 0 6px rgba(124, 196, 255, 0.7);
+}
+.bm-menu {
+  position: fixed; z-index: 12000; width: 300px; max-height: 360px; overflow-y: auto; padding: 5px;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); color: var(--m-text, #e7ebf2);
+}
+.bm-note { padding: 10px 12px; }
+.bm-title { font-size: 12.5px; font-weight: 800; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.bm-input {
+  width: 100%; box-sizing: border-box; padding: 7px 9px; border-radius: 8px; font-family: inherit; font-size: 13px;
+  color: var(--m-text, #e7ebf2); background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d);
+}
+.bm-input:focus { outline: none; border-color: var(--m-muted, #9aa5b4); }
+.bm-hint { margin-top: 6px; font-size: 11px; color: var(--m-faint, #697386); }
+.bm-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border: none; border-radius: 7px;
+  background: none; cursor: pointer; text-align: left; font-family: inherit; font-size: 13px; color: var(--m-text, #e7ebf2);
+}
+.bm-item:hover { background: var(--m-surface-2, #1c222c); }
+.bm-add { justify-content: space-between; font-weight: 700; }
+.bm-all { color: var(--m-muted, #9aa5b4); }
+.bm-time { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: #7cc4ff; font-variant-numeric: tabular-nums; }
+.bm-add .bm-time { color: var(--m-faint, #697386); font-weight: 600; }
+.bm-note-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-row { display: flex; align-items: center; gap: 2px; }
+.bm-row .bm-jump { flex: 1; min-width: 0; }
+.bm-icon {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0; border: none; border-radius: 6px; background: none; cursor: pointer;
+  font-size: 12px; color: var(--m-muted, #9aa5b4);
+}
+.bm-icon:hover { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); }
+.bm-sep { height: 1px; margin: 4px 6px; background: var(--m-border-soft, #212832); }
+.bm-vod { padding: 10px 12px; border-radius: 12px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.bm-vod + .bm-vod { margin-top: 10px; }
+.bm-vod-head { margin-bottom: 4px; }
+.bm-vod-title { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-vod-sub { font-size: 11.5px; color: var(--m-muted, #9aa5b4); }
+.bm-panel .hub-body { padding-top: 14px; }

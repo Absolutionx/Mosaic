@@ -11,6 +11,19 @@ import {
   isChannelProvider,
 } from "./emote-parsing.js";
 
+// emote hover card details from a 7TV emote object: the creator, the original name when the channel renamed
+// it, and the largest image (the card shows it bigger than chat does)
+function sevenTvInfo(emote, url) {
+  const data = emote?.data || {};
+  const original = data.name && data.name !== emote.name ? data.name : "";
+  return {
+    creator: data.owner?.display_name || data.owner?.username || "",
+    original,
+    big: typeof url === "string" ? url.replace(/\/[123]x\.(\w+)$/, "/4x.$1") : url,
+  };
+}
+
+
 // 7TV's zero-width (overlay) flag is bit 8 (256) on the ActiveEmote, NOT bit 1, a known
 // gotcha (night/betterttv#5925). it can appear on the wrapper's `flags` and/or nested
 // `data.flags`, so OR both. checking `& 1` renders Fog0/CiGrip side-by-side instead of overlaid
@@ -186,7 +199,7 @@ export const chatEmotesMixin = {
         // BTTV CDN: https://cdn.betterttv.net/emote/<id>/2x.<ext>
         const ext = emote.imageType || "png";
         const url = `https://cdn.betterttv.net/emote/${emote.id}/2x.${ext}`;
-        this._setEmote(emote.code, { url, zeroWidth: BTTV_ZERO_WIDTH_EMOTES.has(emote.code) }, "bttv-global");
+        this._setEmote(emote.code, { url, zeroWidth: BTTV_ZERO_WIDTH_EMOTES.has(emote.code), big: url.replace(/\/2x\./, "/3x.") }, "bttv-global");
         count++;
       }
       console.log(`Loaded ${count} BTTV global emotes.`);
@@ -215,7 +228,10 @@ export const chatEmotesMixin = {
         if (!emote?.id || !emote?.code) continue;
         const ext = emote.imageType || "png";
         const url = `https://cdn.betterttv.net/emote/${emote.id}/2x.${ext}`;
-        this._setEmote(emote.code, { url, zeroWidth: BTTV_ZERO_WIDTH_EMOTES.has(emote.code) }, "bttv-channel");
+        this._setEmote(emote.code, {
+          url, zeroWidth: BTTV_ZERO_WIDTH_EMOTES.has(emote.code), big: url.replace(/\/2x\./, "/3x."),
+          creator: emote.user?.displayName || emote.user?.name || "", // set for shared emotes
+        }, "bttv-channel");
         count++;
       }
       if (count > 0) this.systemLine(`Loaded ${count} BTTV emotes for this channel.`);
@@ -233,7 +249,10 @@ export const chatEmotesMixin = {
       const images = emote?.images || {};
       const url = images["2x"] || images["4x"] || images["1x"];
       if (!url || !emote.code) continue;
-      this._setEmote(emote.code, { url, zeroWidth: false }, provider);
+      this._setEmote(emote.code, {
+        url, zeroWidth: false, big: images["4x"] || images["2x"] || url,
+        creator: emote.user?.displayName || emote.user?.name || "",
+      }, provider);
       count++;
     }
     return count;
@@ -508,6 +527,7 @@ export const chatEmotesMixin = {
       this._setEmote(emote.name, {
         url,
         zeroWidth: isSevenTvZeroWidth(emote),
+        ...sevenTvInfo(emote, url),
       }, provider);
     }
   },
@@ -528,6 +548,7 @@ export const chatEmotesMixin = {
       this._setEmote(emote.name, {
         url,
         zeroWidth: isSevenTvZeroWidth(emote),
+        ...sevenTvInfo(emote, url),
       }, "seventv-channel");
     }
     for (const emote of removed) {

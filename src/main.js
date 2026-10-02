@@ -15,6 +15,14 @@ import { initWhispers, openWhispers } from "./whispers.js";
 import { initCommandPalette } from "./command-palette.js";
 import { showRaidBanner, showRaidArrived, hideRaidBanner } from "./raid-banner.js";
 import { initClips, toggleClipPanel } from "./clips.js";
+import { initChatOverlay } from "./chat-overlay.js";
+import { openDownloadDialog } from "./vod-downloads.js";
+import { initEmoteCards } from "./emote-card.js";
+import { startWatchTracking, openWatchStats } from "./watch-stats.js";
+import { openDropsHub, configureDropsHub } from "./drops-hub.js";
+import { initPlayerMenu } from "./player-stats.js";
+import { initAudioNormalizer, normalizerReduction } from "./audio-normalizer.js";
+import { initVodBookmarks, addBookmarkNow, openBookmarksList } from "./vod-bookmarks.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
@@ -50,7 +58,7 @@ import { initMiniPlayer, activateMiniPlayer, deactivateMiniPlayer, resetMiniPlay
 import {
   initLayout, switchPage, updateBackToStreamBtn, setTheaterMode,
   toggleTheaterModeAndResync, toggleChatCollapse, toggleFullscreen,
-  isAppFullscreen,
+  isAppFullscreen, fixFullscreenSurface,
 } from "./layout.js";
 import {
   initChannelInfoBar, channelInfoKickAliasBtn,
@@ -740,6 +748,8 @@ function paletteActions() {
       }
       add("Set quality: Auto", "Quality", () => playbackControls.selectQuality("auto"));
     }
+    if (currentVodForDownload()) add("Download this VOD", "VOD", () => openDownloadDialog(currentVodForDownload()));
+    if (currentTwitchVod()) add("Bookmark this moment", "VOD", () => addBookmarkNow(), { keys: ["B"] });
     if (playbackControls.isVod) {
       for (const sp of [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]) {
         add(sp === 1 ? "Playback speed: Normal" : `Playback speed: ${sp}×`, "VOD", () => playbackControls.setVodSpeed(sp), { keys: sp === 1 ? [] : undefined });
@@ -774,6 +784,9 @@ function paletteActions() {
   add("Open MultiView", "Navigation", () => document.getElementById("multiview-tab")?.click(), { nav: true });
   add("Open whispers", "Navigation", () => openWhispers(), { nav: true });
   add("Open settings", "Navigation", () => openSettingsPanel(), { nav: true, keys: ["Ctrl", ","], suggested: !playing });
+  add("Watch stats", "Navigation", () => showWatchStats(), { nav: true });
+  add("Drops", "Navigation", () => openDropsHub(), { nav: true });
+  add("VOD bookmarks", "Navigation", () => openBookmarksList(), { nav: true });
   add("Check for updates", "App", () => checkForUpdatesNow().then((m) => setStatus(m)).catch(() => {}));
   return out;
 }
@@ -792,6 +805,126 @@ initCommandPalette({
   getSettingsIndex: () => getSettingsIndex(),
   openSetting: (section, title) => openSettingsPanel(section, title),
 });
+
+// Settings > App > Browser right-click menu (off by default): the embedded browser's own context menu,
+// everywhere (video: loop / save frame / picture in picture; text boxes: cut / copy / paste / inspect).
+// Mosaic's own right-click menus (chat messages, channel cards, ...) are unaffected: they still run and show
+// themselves. keyboard shortcuts (Ctrl+C / V / X / A, Win+. for emoji) keep working in text boxes
+document.addEventListener("contextmenu", (e) => {
+  if (!getSetting("videoContextMenu")) e.preventDefault();
+}, true);
+
+// VOD downloads (vod-downloads.js / downloads.rs): the player bar button and the palette action
+function currentVodForDownload() {
+  const cur = String(playbackControls.currentChannel || "");
+  if (!cur.startsWith("vod:") || playbackControls._isKickSession) return null;
+  const videoId = cur.slice(4);
+  const meta = session.vodMeta && session.vodMeta.videoId === videoId ? session.vodMeta : {};
+  return {
+    videoId, title: meta.title || "", channel: meta.channelName || meta.channelLogin || "", createdAt: meta.createdAt || "",
+    durationSecs: playbackControls.vodTotalSeconds || 0, currentSecs: playbackControls.videoEl.currentTime || 0,
+  };
+}
+document.getElementById("vod-download-btn")?.addEventListener("click", () => {
+  const vod = currentVodForDownload();
+  if (vod) openDownloadDialog(vod);
+});
+
+// watch stats (watch-stats.js): the main player credits whatever is actually playing (not paused)
+startWatchTracking(() => {
+  if (!session.playing || playbackControls.videoEl.paused) return null;
+  const cur = String(playbackControls.currentChannel || "");
+  if (!cur) return null;
+  if (cur.startsWith("vod:")) {
+    const m = session.vodMeta;
+    return m && m.channelLogin ? { login: m.channelLogin, name: m.channelName || m.channelLogin, kind: "vod" } : null;
+  }
+  const f = (sidebar.followed || []).find((c) => String(c.login || "").toLowerCase() === cur.toLowerCase());
+  return { login: cur, name: (f && f.name) || chat.channelDisplayName || cur, kind: "live" };
+});
+function showWatchStats() {
+  openWatchStats({
+    avatarFor: (login) => (sidebar.followed || []).find((c) => String(c.login || "").toLowerCase() === login)?.avatar || "",
+    watch: (login) => paletteWatch(login),
+  });
+}
+// drops hub (drops-hub.js): the header's Drops tab, the command palette and the Points & Drops popup
+document.getElementById("drops-tab")?.addEventListener("click", () => openDropsHub());
+configureDropsHub({
+  openCategory: (game) => { document.getElementById("browse-tab")?.click(); browsePage.openGame(game); },
+  openUrl: (url) => openUrl(url).catch(() => {}),
+});
+
+// VOD bookmarks (vod-bookmarks.js): the current Twitch VOD, and opening one at a bookmark
+function currentTwitchVod() {
+  const cur = String(playbackControls.currentChannel || "");
+  if (!cur.startsWith("vod:") || playbackControls._isKickSession) return null;
+  const videoId = cur.slice(4);
+  const m = session.vodMeta && session.vodMeta.videoId === videoId ? session.vodMeta : {};
+  return {
+    videoId, title: m.title || "", channelLogin: m.channelLogin || "", channelName: m.channelName || m.channelLogin || "",
+    createdAt: m.createdAt || "", thumbnail: m.thumbnailUrl || "", totalSeconds: playbackControls.vodTotalSeconds || 0,
+  };
+}
+initVodBookmarks({
+  pc: playbackControls,
+  getVod: currentTwitchVod,
+  openVod: (meta, seconds) => {
+    const cur = currentTwitchVod();
+    if (cur && cur.videoId === meta.videoId) { playbackControls.videoEl.currentTime = seconds; return; }
+    openVod(meta.videoId, meta.totalSeconds || 0, meta.channelLogin, seconds, {
+      title: meta.title, channelName: meta.channelName, channelLogin: meta.channelLogin, thumbnailUrl: meta.thumbnail, createdAt: meta.createdAt,
+    });
+  },
+});
+
+// Settings > Player > Normalize volume (audio-normalizer.js): main player only
+initAudioNormalizer(playbackControls.videoEl);
+
+// right-click menu on the player: Stats for nerds, Copy link, Pop out (player-stats.js)
+function playerLink() {
+  const cur = String(playbackControls.currentChannel || "");
+  if (!cur) return null;
+  if (cur.startsWith("vod:")) {
+    if (playbackControls._isKickSession) return null;
+    const t = Math.floor(playbackControls.videoEl.currentTime || 0);
+    const stamp = `${Math.floor(t / 3600)}h${Math.floor((t % 3600) / 60)}m${t % 60}s`;
+    return `https://www.twitch.tv/videos/${cur.slice(4)}?t=${stamp}`;
+  }
+  return playbackControls._isKickSession ? `https://kick.com/${cur}` : `https://www.twitch.tv/${cur}`;
+}
+initPlayerMenu(document.getElementById("video-region"), {
+  host: document.getElementById("video-region"),
+  isPlaying: () => !!session.playing,
+  stats: () => ({ ...playbackControls.nerdStats(), normReduction: normalizerReduction() }),
+  copyLink: playerLink,
+  linkHint: () => {
+    const cur = String(playbackControls.currentChannel || "");
+    if (!cur.startsWith("vod:")) return "";
+    const t = Math.floor(playbackControls.videoEl.currentTime || 0);
+    return `at ${Math.floor(t / 3600) ? `${Math.floor(t / 3600)}:${String(Math.floor((t % 3600) / 60)).padStart(2, "0")}` : Math.floor((t % 3600) / 60)}:${String(t % 60).padStart(2, "0")}`;
+  },
+  popOut: () => playbackControls.togglePip(),
+});
+
+// emote cards on hover (emote-card.js), for every emote in the app
+initEmoteCards();
+
+// Settings > Chat > Chat overlay: chat over the video in theater mode / fullscreen (chat-overlay.js)
+initChatOverlay({
+  app: document.getElementById("app"), chatBody: chat.container, host: document.getElementById("video-region"),
+  video: playbackControls.videoEl,
+  // Settings > Chat > Type in the overlay: the real chat box moves into the overlay while it's active
+  composer: document.getElementById("chat-input-wrapper"),
+  // the chat column comes back (0.2s animation) when the overlay turns off, and the chat box moves home:
+  // re-measure it now and once the animation is done, so it's sized for the real width
+  onChange: (on) => {
+    if (on) return;
+    requestAnimationFrame(() => chat._autosizeChatInput?.());
+    setTimeout(() => chat._autosizeChatInput?.(), 320);
+  },
+});
+
 
 // ---- Settings (settings.js / settings-panel.js) ----
 applyAppearance(); // chat font size, emote size, timestamps
@@ -871,6 +1004,7 @@ applyZoom();
 // the panel links to the editors that already exist rather than duplicating them
 configureSettingsPanel({
   exportBackup, importBackup, checkForUpdatesNow,
+  openWatchStats: () => showWatchStats(),
   openChatFilter: () => openChatFilterModal(() => chat.reloadChatFilter()),
   openHiddenChannels: () => openHiddenChannelsModal(),
   openTwitchConnection: () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); }),
@@ -992,6 +1126,15 @@ window.addEventListener("keydown", (e) => {
     return;
   }
 
+  // "B" bookmarks this moment of the VOD (vod-bookmarks.js), same text-field guard as the others, so typing "b"
+  // in chat doesn't add one
+  if (e.key.toLowerCase() === "b" && !e.ctrlKey && !e.altKey && !e.metaKey && currentTwitchVod()) {
+    const tag = document.activeElement?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+    e.preventDefault();
+    addBookmarkNow();
+    return;
+  }
   // "T" toggles theater mode (the official shortcut), only when focus isn't in a text field so typing "t" doesn't trigger it
   if (e.key.toLowerCase() === "t") {
     const tag = document.activeElement?.tagName;
@@ -2124,9 +2267,13 @@ watchBtn.addEventListener("click", async () => {
     try {
       const factor = window.devicePixelRatio || 1;
       const webviewPhysW = Math.round(window.innerWidth * factor);
+      const webviewPhysH = Math.round(window.innerHeight * factor);
       const inner = await appWindow.innerSize(); // physical px from Tauri
-      // allow a couple px of rounding slack; a real desync is tens-to-hundreds of px off (the whole black-margin gap)
-      if (Math.abs(inner.width - webviewPhysW) > 4) {
+      // fullscreen can't be nudged by size or maximize: re-apply it instead (layout.js)
+      if (isAppFullscreen()) { await fixFullscreenSurface(); return; }
+      // allow a couple px of rounding slack; a real desync is tens-to-hundreds of px off (the whole black-margin
+      // gap). both axes: a missed HEIGHT change leaves a strip at the bottom with the bare window showing
+      if (Math.abs(inner.width - webviewPhysW) > 4 || Math.abs(inner.height - webviewPhysH) > 4) {
         console.log(
           `[resize-recovery] desync detected (webview ${webviewPhysW}px vs window ${inner.width}px); nudging`,
         );

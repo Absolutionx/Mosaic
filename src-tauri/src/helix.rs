@@ -1759,13 +1759,74 @@ pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Va
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("{game}|{campaign}"));
+                let end = c.get("endAt").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 out.push(serde_json::json!({
-                    "id": cid, "game": game, "campaign": campaign, "box_art": box_art, "drops": drops
+                    "id": cid, "game": game, "campaign": campaign, "box_art": box_art, "drops": drops, "end": end
                 }));
             }
         }
     }
     Ok(serde_json::json!(out))
+}
+
+// every drop campaign currently on Twitch (the drops hub's "Available" list), not just the ones you're
+// earning. unofficial GQL on the device login (like the inventory). Err with Twitch's message when the query
+// is rejected, so the hub can say so and still show your in-progress drops
+#[tauri::command]
+pub async fn get_drop_campaigns(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    const QUERY: &str = "query DropCampaigns { currentUser { id dropCampaigns { id name status startAt endAt detailsURL accountLinkURL game { id displayName boxArtURL } self { isAccountConnected } } } }";
+    let Some(json) = device_gql(&app, "DropCampaigns", QUERY, serde_json::json!({})).await? else {
+        return Ok(serde_json::json!([]));
+    };
+    let list = json.pointer("/data/currentUser/dropCampaigns").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let out: Vec<serde_json::Value> = list.iter().map(|c| serde_json::json!({
+        "id": c.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+        "name": c.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+        "status": c.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+        "start": c.get("startAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "end": c.get("endAt").and_then(|v| v.as_str()).unwrap_or(""),
+        "details_url": c.get("detailsURL").and_then(|v| v.as_str()).unwrap_or(""),
+        "link_url": c.get("accountLinkURL").and_then(|v| v.as_str()).unwrap_or(""),
+        "connected": c.pointer("/self/isAccountConnected").and_then(|v| v.as_bool()).unwrap_or(false),
+        "game": c.pointer("/game/displayName").and_then(|v| v.as_str()).unwrap_or(""),
+        "game_id": c.pointer("/game/id").and_then(|v| v.as_str()).unwrap_or(""),
+        "box_art": c.pointer("/game/boxArtURL").and_then(|v| v.as_str()).unwrap_or(""),
+    })).collect();
+    Ok(serde_json::Value::Array(out))
+}
+
+// The balance pill's 60s check, which also claims the channel points bonus (the chest Twitch offers every
+// ~15 minutes of watching) when claim is true (Settings > Twitch account > Auto-claim channel points bonus).
+// Same unofficial GQL as the balance (device login): communityPoints.availableClaim is the ready bonus, and
+// claimCommunityPoints claims it. Returns { balance, claimed }; null balance when not connected
+#[tauri::command]
+pub async fn channel_points_tick(
+    channel_login: String,
+    claim: bool,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    const QUERY: &str = "query ChannelPointsBonus($login: String!) { user(login: $login) { id channel { id self { communityPoints { balance availableClaim { id } } } } } }";
+    let vars = serde_json::json!({ "login": channel_login.to_lowercase() });
+    let Some(json) = device_gql(&app, "ChannelPointsBonus", QUERY, vars.clone()).await? else {
+        return Ok(serde_json::json!({ "balance": null, "claimed": false }));
+    };
+    let balance = json.pointer("/data/user/channel/self/communityPoints/balance").and_then(|v| v.as_i64());
+    let claim_id = json.pointer("/data/user/channel/self/communityPoints/availableClaim/id").and_then(|v| v.as_str());
+    let channel_id = json.pointer("/data/user/channel/id").and_then(|v| v.as_str())
+        .or_else(|| json.pointer("/data/user/id").and_then(|v| v.as_str()));
+    let (Some(claim_id), Some(channel_id), true) = (claim_id, channel_id, claim) else {
+        return Ok(serde_json::json!({ "balance": balance, "claimed": false }));
+    };
+    const MUTATION: &str = "mutation ClaimCommunityPoints($input: ClaimCommunityPointsInput!) { claimCommunityPoints(input: $input) { __typename } }";
+    let input = serde_json::json!({ "input": { "channelID": channel_id, "claimID": claim_id } });
+    if device_gql(&app, "ClaimCommunityPoints", MUTATION, input).await.is_err() {
+        return Ok(serde_json::json!({ "balance": balance, "claimed": false }));
+    }
+    // the new balance (the bonus amount varies with multipliers, so read it rather than add 50)
+    let after = device_gql(&app, "ChannelPointsBonus", QUERY, vars).await.ok().flatten()
+        .and_then(|j| j.pointer("/data/user/channel/self/communityPoints/balance").and_then(|v| v.as_i64()))
+        .or(balance);
+    Ok(serde_json::json!({ "balance": after, "claimed": true }))
 }
 
 // claim an earned drop by its instance id (DropsPage_ClaimDropRewards)

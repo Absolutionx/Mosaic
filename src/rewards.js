@@ -2,6 +2,7 @@
 // user hasn't done the device login this offers to start it (reusing the pin-auth flow).
 
 import { invoke } from "@tauri-apps/api/core";
+import { openDropsHub } from "./drops-hub.js";
 
 let overlay = null;
 let onRedeemedCb = null;
@@ -173,7 +174,7 @@ async function render(body, channelLogin, channelId, flash) {
       <div class="rewards-streak"><span class="rewards-streak-flame">🔥</span> <b>${Number(streak.count).toLocaleString()}</b> <span class="muted">stream${streak.count === 1 ? "" : "s"} in a row</span> ${shareBtn}</div>`;
   }
 
-  html += `<div class="rewards-section-title">Drops</div>`;
+  html += `<div class="rewards-section-title rewards-drops-title">Drops <button type="button" class="rewards-drops-hub">Open drops hub</button></div>`;
   const visibleDrops = drops.filter((c) => !hiddenSet.has(c.id));
   const hiddenDrops = drops.filter((c) => hiddenSet.has(c.id));
   if (!visibleDrops.length && !hiddenDrops.length) {
@@ -208,6 +209,7 @@ async function render(body, channelLogin, channelId, flash) {
     }
   }
   body.innerHTML = html;
+  body.querySelector(".rewards-drops-hub")?.addEventListener("click", () => { close(); openDropsHub(); });
 
   if (flash) {
     const banner = document.createElement("div");

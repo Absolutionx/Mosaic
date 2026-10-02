@@ -1540,6 +1540,33 @@ export class PlaybackControls {
     return r ? Math.max(0, r.end - v.currentTime) : 0;
   }
 
+  // raw numbers for Stats for nerds (player-stats.js turns them into rates and text)
+  nerdStats() {
+    const v = this.videoEl;
+    const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+    let bufferAhead = 0;
+    for (let i = 0; i < v.buffered.length; i++) {
+      if (v.buffered.start(i) <= v.currentTime + 0.25 && v.buffered.end(i) > v.currentTime) bufferAhead = v.buffered.end(i) - v.currentTime;
+    }
+    const hls = this._hlsVod;
+    const level = hls && hls.levels && hls.currentLevel >= 0 ? hls.levels[hls.currentLevel] : null;
+    const relay = this.mseController && this.mseController.stats ? this.mseController.stats() : null;
+    return {
+      channel: this.currentChannel || "",
+      path: relay ? "relay" : hls ? (this.isVod ? "vod" : this._isKickSession ? "kick" : "dvr") : "none",
+      quality: this.currentQuality || "",
+      width: v.videoWidth, height: v.videoHeight,
+      viewW: v.clientWidth, viewH: v.clientHeight, dpr: window.devicePixelRatio || 1,
+      frames: q ? q.totalVideoFrames : 0, dropped: q ? q.droppedVideoFrames : 0,
+      bufferAhead, behindLive: this.secondsBehindLive(),
+      rate: v.playbackRate, volume: v.volume, muted: v.muted, paused: v.paused,
+      bytesIn: relay ? relay.bytesIn : null, mimeType: relay ? relay.mimeType : "",
+      bandwidthEstimate: hls && Number.isFinite(hls.bandwidthEstimate) ? hls.bandwidthEstimate : null,
+      levelBitrate: level ? level.bitrate : null,
+      codecs: level ? [level.videoCodec, level.audioCodec].filter(Boolean).join(", ") : "",
+    };
+  }
+
   // ---- VOD playback speed ----
   // VODs play at the remembered speed (Settings > Player); live is always 1x (catch-up-to-live manages its
   // own rate). defaultPlaybackRate is set too: loading a new source resets playbackRate to it
@@ -1549,6 +1576,9 @@ export class PlaybackControls {
     v.defaultPlaybackRate = rate;
     v.playbackRate = rate;
     v.preservesPitch = true; // natural voices at any speed
+    // VOD download (Twitch VODs; Kick recordings aren't supported by the downloader)
+    const dl = document.getElementById("vod-download-btn");
+    if (dl) dl.style.display = this.isVod && !this._isKickSession ? "" : "none";
     if (this.speedBtn) {
       this.speedBtn.style.display = this.isVod ? "" : "none";
       const label = this.speedBtn.querySelector(".speed-btn-label");
@@ -2104,9 +2134,11 @@ export class PlaybackControls {
       // over one of the top-clip markers: show that clip's title
       const clip = this._clipNear(absSeconds);
       const clipTitle = clip ? (clip.title || "Clip").slice(0, 60) : "";
+      // a bookmark here (vod-bookmarks.js) takes priority over the clip / spike label
+      const bookmark = this.bookmarkLabelAt ? this.bookmarkLabelAt(absSeconds, total) : "";
       this.seekBarTooltip.textContent =
         this.formatDuration(absSeconds) + (muted ? " (Muted)" : "") +
-        (clip ? ` · Clipped: ${clipTitle}` : nearSpike ? " · Chat spike" : "");
+        (bookmark ? ` · ${bookmark}` : clip ? ` · Clipped: ${clipTitle}` : nearSpike ? " · Chat spike" : "");
 
       this._updateSeekThumbnail(absSeconds);
     } else {

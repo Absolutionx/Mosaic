@@ -202,7 +202,7 @@ enum PipelineResult {
 
 // on macOS, ensures a child process (streamlink, ffmpeg) can find OTHER binaries it needs at runtime. a Finder-launched .app has a minimal PATH, and streamlink in particular shells out to ffmpeg for muxing, so even when we launch streamlink by absolute path, its own ffmpeg lookup fails unless we put the Homebrew/pip bin dirs on the PATH we hand it. prepends the known locations to the inherited PATH. no-op on Windows/Linux, where the inherited PATH is already correct
 #[allow(unused_variables)]
-fn augment_child_path(cmd: &mut Command) {
+pub(crate) fn augment_child_path(cmd: &mut Command) {
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var("HOME").unwrap_or_default();
@@ -1504,10 +1504,21 @@ pub async fn get_vod_m3u8_url(
     quality: String,
     state: tauri::State<'_, Arc<StreamRelayState>>,
 ) -> Result<String, String> {
+    let cdn_url = resolve_vod_cdn_url(&video_id, &quality).await?;
+    // wrap in the local proxy so HLS.js fetches through localhost, sidestepping the Twitch CDN's missing CORS headers
+    proxied_hls_url(&state, &cdn_url).await
+}
+
+// the VOD's authenticated CDN playlist URL for a quality (streamlink --stream-url, nothing downloaded).
+// shared by playback (above) and VOD downloads (downloads.rs), so both get exactly the same access
+pub(crate) async fn resolve_vod_cdn_url(video_id: &str, quality: &str) -> Result<String, String> {
+    if video_id.is_empty() || !video_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("invalid video id".to_string());
+    }
     let target = format!("https://www.twitch.tv/videos/{video_id}");
     let mut cmd = Command::new(resolve_streamlink_path());
     cmd.arg(&target)
-        .arg(&quality)
+        .arg(quality)
         .arg("--stream-url")
         .arg("--twitch-disable-ads")
         .stdout(Stdio::piped())
@@ -1520,7 +1531,7 @@ pub async fn get_vod_m3u8_url(
     augment_child_path(&mut cmd);
     let output = cmd.output().await.map_err(|e| e.to_string())?;
 
-    let cdn_url = String::from_utf8(output.stdout)
+    String::from_utf8(output.stdout)
         .map_err(|e| e.to_string())?
         .lines()
         .find(|l| l.starts_with("http"))
@@ -1528,10 +1539,7 @@ pub async fn get_vod_m3u8_url(
         .ok_or_else(|| {
             let stderr = String::from_utf8_lossy(&output.stderr);
             format!("streamlink produced no URL: {stderr}")
-        })?;
-
-    // wrap in the local proxy so HLS.js fetches through localhost, sidestepping the Twitch CDN's missing CORS headers
-    proxied_hls_url(&state, &cdn_url).await
+        })
 }
 
 // Resolves a Twitch clip for the in-app clip player (chat clip cards). Helix doesn't expose clip video files;

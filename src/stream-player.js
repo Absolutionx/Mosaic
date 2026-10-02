@@ -461,6 +461,9 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
   let _teardownExpected = false;
   // has onSilence fired for the CURRENT silent spell? reset when bytes arrive, so a later spell can probe again
   let _silenceSignaled = false;
+  // for Stats for nerds: bytes received from the relay, and the codec the SourceBuffer was created with
+  let _bytesIn = 0;
+  let _mimeType = "";
   // counters for the pre-playback mismatch watchdog in checkForStall
   let _bytesAppended = 0;
   let _firstAppendAt = 0;
@@ -513,8 +516,9 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
           signalDead("relay stream ended");
           break;
         }
-        // DEV silence: drop the chunk and DON'T touch _lastByteAt, so the starvation timers age as if the relay went quiet
+        // bytes arrived: the silence / starvation timers measure from here
         _lastByteAt = performance.now();
+        if (value) _bytesIn += value.byteLength;
         // bytes flowing again, re-arm the early-silence probe (it's once-per-spell)
         _silenceSignaled = false;
         if (stopped) break;
@@ -607,6 +611,7 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
   function createSourceBufferOrFail(mimeType) {
     try {
       sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+      _mimeType = mimeType;
     } catch (err) {
       console.error("addSourceBuffer rejected the stream's own resolved codec:", mimeType, err);
       onFatalError();
@@ -708,6 +713,10 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
   }, { once: true });
 
   return {
+    // Stats for nerds: totals only; the caller turns them into rates
+    stats() {
+      return { bytesIn: _bytesIn, mimeType: _mimeType };
+    },
     // announces this relay is about to be killed deliberately (a quality restart), so the EOF isn't
     // reported as a death. buffered bytes keep playing until the replacement calls stop()
     expectTeardown() {

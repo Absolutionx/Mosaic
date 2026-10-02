@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetchVodChapters } from "./chapters.js";
 import { relativeDate } from "./format.js";
 import { openClipPlayer } from "./chat/chat-clips.js";
+import { openDownloadDialog } from "./vod-downloads.js";
 
 function resolveThumbnailUrl(url, width = 440, height = 248) {
   return url
@@ -289,6 +290,25 @@ export class VodsPage {
     card.className = "home-grid-card";
     const totalSeconds = vod.duration ? parseDurationToSeconds(vod.duration) : 0;
     card.addEventListener("click", () => this.onVodSelect(vod.id, totalSeconds, this.currentChannel, undefined, this._vodMeta(vod)));
+    // download (Twitch VODs). a span, not a button: the card itself is a button, and nested buttons are invalid
+    let downloadBtn = null;
+    if (!this.isKick) {
+      const dl = document.createElement("span");
+      dl.className = "vod-card-download";
+      dl.setAttribute("role", "button");
+      dl.tabIndex = 0;
+      dl.title = "Download";
+      dl.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>';
+      const open = (e) => {
+        e.preventDefault();
+        e.stopPropagation(); // don't also open the VOD
+        const meta = this._vodMeta(vod);
+        openDownloadDialog({ videoId: vod.id, title: vod.title || "", channel: meta.channelName || this.currentChannel, createdAt: vod.created_at || "", durationSecs: totalSeconds });
+      };
+      dl.addEventListener("click", open);
+      dl.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") open(e); });
+      downloadBtn = dl;
+    }
 
     const thumbWrap = document.createElement("div");
     thumbWrap.className = "home-grid-thumb-wrap";
@@ -347,6 +367,7 @@ export class VodsPage {
       thumbWrap.appendChild(track);
     }
 
+    if (downloadBtn) thumbWrap.appendChild(downloadBtn);
     card.appendChild(thumbWrap);
 
     // no avatar, every VOD here is the same channel

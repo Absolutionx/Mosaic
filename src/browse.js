@@ -132,6 +132,11 @@ export class BrowsePage {
   async loadTopGames() {
     this._initialLoadInProgress = true;
     this.containerEl.innerHTML = '<div class="home-section-title">Loading categories…</div>';
+    // a category opened while this loads (Drops hub "Find streams", the command palette: they switch to
+    // Browse, which starts this load, and open the game right after) must not be replaced by the default
+    // grid when the load finishes. the data is still kept for Back
+    const openAtStart = this.activeGame;
+    const navigatedAway = () => this.activeGame !== openAtStart;
     try {
       const { games, cursor } = JSON.parse(await feedInvoke("get_top_games", { cursor: null }));
       this.games = dedupeGamesById(games);
@@ -140,13 +145,15 @@ export class BrowsePage {
       this._allDupGamePages = 0;
     } catch (err) {
       console.error("Failed to load top games:", err);
-      this.containerEl.innerHTML = '<div class="home-section-title">Failed to load categories.</div>';
+      if (!navigatedAway()) this.containerEl.innerHTML = '<div class="home-section-title">Failed to load categories.</div>';
       this._initialLoadInProgress = false;
       return;
     }
     this._initialLoadInProgress = false;
-    this.activeGame = null;
-    this.render();
+    if (!navigatedAway()) {
+      this.activeGame = null;
+      this.render();
+    }
     // viewer counts load in the background and re-render, rather than blocking the grid paint on the much heavier get_category_viewer_counts
     this.loadCategoryCounts();
   }
