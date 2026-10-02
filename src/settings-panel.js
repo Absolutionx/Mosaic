@@ -3,7 +3,7 @@
 // launchers for the editors that already exist (chat filter, hidden channels, Twitch connection).
 
 import { getVersion } from "@tauri-apps/api/app";
-import { getSetting, setSetting, onSettingChange, resetSettings } from "./settings.js";
+import { getSetting, setSetting, onSettingChange, resetSettings, playChime } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
 import { closeCommandPalette } from "./command-palette.js";
 
@@ -68,7 +68,9 @@ const SECTIONS = [
     { kind: "toggle", id: "clipCards", title: "Clip cards", desc: "Twitch clip links become cards you can play right in Mosaic." },
     { kind: "toggle", id: "linkPreviews", title: "Link previews", desc: "Show a preview when you hover a link." },
     { kind: "toggle", id: "predictionsPolls", title: "Predictions & polls", desc: "Show them above chat, with betting and voting." },
-    { kind: "toggle", id: "hypeGiftBanners", title: "Hype train & gift banners", desc: "Banners for hype trains and big gift-sub drops." },
+    { kind: "toggle", id: "hypeGiftBanners", title: "Hype train & gift banners", desc: "Banners for hype trains and big gift-sub drops. Click the hype train banner for details." },
+    { kind: "toggle", id: "hypeTrainCelebrate", title: "Hype train level-up celebration", desc: "A big \"LEVEL N!\" with confetti over the video when the train levels up. Toned down with Reduce motion." },
+    { kind: "toggle", id: "hypeTrainSound", title: "Hype train level-up sound", desc: "Play the chime when the train levels up." },
     { kind: "toggle", id: "pinnedBanner", title: "Pinned messages", desc: "Show a channel's pinned message above chat." },
     { kind: "group", title: "Filters" },
     { kind: "action", title: "Chat filter", desc: "Hide messages by word, user or emote.", button: "Edit filter…", run: () => { closeSettingsPanel(); actions.openChatFilter?.(); } },
@@ -87,6 +89,8 @@ const SECTIONS = [
     { kind: "toggle", id: "miniPlayer", title: "Mini player", desc: "Keep the stream in a small corner player when you go to Home or Browse." },
     { kind: "toggle", id: "autoPipOnBlur", title: "Pop out when switching apps", desc: "Move the stream to a floating window when Mosaic loses focus." },
     { kind: "toggle", id: "streamInfoOverlay", title: "Stream info on hover", desc: "The channel, title and viewers over the video when you hover it." },
+    { kind: "segmented", id: "ambientGlow", title: "Ambient glow", desc: "A soft glow in the space around the video that follows the stream's colors.",
+      options: [{ value: "off", label: "Off" }, { value: "subtle", label: "Subtle" }, { value: "normal", label: "Normal" }, { value: "strong", label: "Strong" }] },
     { kind: "segmented", id: "followRaids", title: "Follow raids", desc: "When the channel you're watching raids someone. Automatically shows a 5-second countdown you can cancel.",
       options: [{ value: "auto", label: "Automatically" }, { value: "ask", label: "Ask me" }, { value: "off", label: "Off" }] },
     { kind: "group", title: "VODs" },
@@ -103,7 +107,10 @@ const SECTIONS = [
     { kind: "toggle", id: "notifyGoLive", title: "Go-live notifications", desc: "When a channel you turned the bell on for goes live." },
     { kind: "toggle", id: "notifyCategory", title: "Category notifications", desc: "When a channel switches to a category you asked about." },
     { kind: "toggle", id: "notifyWhispers", title: "Whisper notifications", desc: "When a whisper arrives while Mosaic isn't the focused window." },
+    { kind: "toggle", id: "hypeTrainNotify", title: "Hype train notifications", desc: "When a channel you follow starts a hype train." },
     { kind: "toggle", id: "notifySound", title: "Notification sound", desc: "Play Mosaic's chime with notifications." },
+    { kind: "range", id: "notifyVolume", title: "Sound volume", desc: "How loud the chime is, for notifications and the chat highlight sound.",
+      min: 0, max: 200, step: 5, unit: "%", preview: () => playChime({ preview: true }) },
     { kind: "group", title: "Quiet hours" },
     { kind: "toggle", id: "quietHours", title: "Quiet hours", desc: "No notifications between the times below." },
     { kind: "select", id: "quietStart", title: "From", desc: "", options: HOUR_OPTIONS },
@@ -379,7 +386,12 @@ function buildRow(r) {
     input.type = "range"; input.min = String(r.min); input.max = String(r.max); input.step = String(r.step || 1);
     input.dataset.setting = r.id;
     const val = el("span", "settings-range-value");
-    input.addEventListener("input", () => { setSetting(r.id, Number(input.value)); });
+    // a row with preview (e.g. the chime volume) plays it while dragging, spaced out so it doesn't stutter
+    let previewTimer = null;
+    input.addEventListener("input", () => {
+      setSetting(r.id, Number(input.value));
+      if (r.preview) { clearTimeout(previewTimer); previewTimer = setTimeout(() => r.preview(), 220); }
+    });
     wrap.append(input, val);
     ctl.appendChild(wrap);
     wrap.dataset.unit = r.unit || "";

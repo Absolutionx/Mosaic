@@ -1,4 +1,5 @@
 import { getSetting, onSettingChange, playChime } from "./settings.js";
+import { HypeTrainView, parseHype } from "./hype-train.js";
 // Twitch chat: connection lifecycle and the message render pipeline. the IRC WebSocket lives in
 // Rust (chat.rs), WebView2's Tracking Prevention silently killed it in this webview. this file is
 // TwitchChat's core (start/stop, the chat-* listeners, send/render); emotes, badges, AutoMod, user
@@ -919,6 +920,7 @@ export class TwitchChat {
                            reply_parent_user, reply_parent_body, msg_id, user_id, is_action,
                            emotes_tag, is_first_msg, is_highlighted, reply_parent_msg_id,
                            reply_thread_parent_msg_id);
+        if (bits > 0) this._hypeContribution(username, `cheered ${Number(bits).toLocaleString()} bits`);
       })
     );
 
@@ -1711,12 +1713,28 @@ export class TwitchChat {
     };
   }
 
-  // Twitch hype train: poll GetHypeTrainExecution (via Rust get_hype_train) for the watched channel
-  // and show a Twitch-style bar atop the chat pane (level, progress, countdown, level-up flash).
-  // read-only web GQL, works for any channel (unlike the broadcaster-only EventSub path)
+  // Twitch hype train: poll GetHypeTrainExecution (via Rust get_hype_train) for the watched channel and
+  // hand it to the rich view (hype-train.js): chat banner + details, player bar, level-up celebration,
+  // approaching stage and end summary. read-only web GQL, works for any channel (unlike the
+  // broadcaster-only EventSub path)
+  _hypeViewEnsure() {
+    if (!this._hypeView) {
+      this._hypeView = new HypeTrainView({
+        banner: document.getElementById("hype-train-banner"),
+        player: document.getElementById("video-region"),
+        getSetting, playChime,
+      });
+      onSettingChange((id) => {
+        if (id === "hypeGiftBanners" && this._hypeView.mode !== "none") this._hypeView.render();
+      });
+    }
+    return this._hypeView;
+  }
+
   _startHypePoll(login) {
     this._stopHypePoll();
     if (!login) return;
+    const view = this._hypeViewEnsure();
     this._hypePollActive = true;
     // adaptive cadence (matches StreamNook): poll fast while a train runs so the bar tracks
     // contributions instead of jumping once every interval, faster still near a level-up, slow when idle
@@ -1726,17 +1744,22 @@ export class TwitchChat {
       let next = IDLE;
       try {
         const d = await invoke("get_hype_train", { channelLogin: login });
+        if (!this._hypePollActive) return;
+        const model = parseHype(d);
         if (d && d.active) {
-          // level-up detection for the celebration flash
-          const prev = this._hype ? this._hype.level : 0;
-          this._hype = d;
-          this._renderHype(prev > 0 && d.level > prev);
-          // 1s countdown ticker (only started once)
-          if (!this._hypeTick) this._hypeTick = setInterval(() => this._tickHype(), 1000);
-          const imminent = d.goal > 0 && d.progress / d.goal > 0.85;
-          next = imminent ? IMMINENT : ACTIVE;
+          const prev = view.mode === "active" && view.model ? view.model.level : 0;
+          view.update(model, { levelUp: prev > 0 && model.level > prev });
+          next = model.goal > 0 && model.progress / model.goal > 0.85 ? IMMINENT : ACTIVE;
+        } else if (d && d.ended) {
+          if (view.mode === "active") view.showEnded(model); // only for a train we saw running
+          next = IDLE;
+        } else if (model && model.approaching) {
+          if (view.mode !== "ended") view.showApproaching(model);
+          next = ACTIVE;
         } else {
-          this._clearHype();
+          // the train vanished without an "ended" record: summarise what we last saw
+          if (view.mode === "active") view.showEnded({ ...view.model, ended: true });
+          else if (view.mode !== "ended") view.clear();
           next = IDLE;
         }
       } catch (err) {
@@ -1750,61 +1773,13 @@ export class TwitchChat {
   _stopHypePoll() {
     this._hypePollActive = false;
     if (this._hypePollTimer) { clearTimeout(this._hypePollTimer); this._hypePollTimer = null; }
-    this._clearHype();
+    this._hypeView?.clear();
   }
 
-  _clearHype() {
-    this._hype = null;
-    if (this._hypeTick) { clearInterval(this._hypeTick); this._hypeTick = null; }
-    const el = document.getElementById("hype-train-banner");
-    if (el) { el.style.display = "none"; el.replaceChildren(); }
-  }
-
-  // ms remaining until the train expires
-  _hypeMsLeft() {
-    if (!this._hype || !this._hype.expires_at) return 0;
-    const t = Date.parse(this._hype.expires_at);
-    return isNaN(t) ? 0 : t - Date.now();
-  }
-
-  _tickHype() {
-    if (!this._hype) return;
-    if (this._hypeMsLeft() <= 0) { this._clearHype(); return; }
-    const c = document.getElementById("hype-countdown");
-    if (c) c.textContent = this._fmtHypeTime(this._hypeMsLeft());
-  }
-
-  _fmtHypeTime(ms) {
-    const s = Math.max(0, Math.floor(ms / 1000));
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  }
-
-  _renderHype(levelUp) {
-    const el = document.getElementById("hype-train-banner");
-    if (!el || !this._hype) return;
-    if (!getSetting("hypeGiftBanners")) { el.style.display = "none"; return; } // Settings > Chat
-    const h = this._hype;
-    const pct = h.goal > 0 ? Math.min(100, Math.round((h.progress / h.goal) * 100)) : 0;
-    el.className = "hype-train-banner" + (h.is_golden ? " golden" : "");
-    el.innerHTML =
-      '<div class="hype-fill"></div>' +
-      '<div class="hype-row">' +
-        '<span class="hype-left">' +
-          '<svg viewBox="0 0 15 13" width="15" height="13" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M4.1.55H2.4v4.25H.7v5.95h.85a1.7 1.7 0 0 0 3.4 0h.85a1.7 1.7 0 0 0 3.4 0h.85a1.7 1.7 0 0 0 3.4 0h.85V.55H6.65v1.7h.85v2.55H4.1V.55zM12.6 9.05V6.5H2.4v2.55h10.2zM9.2 4.8h3.4V2.25H9.2V4.8z"/></svg>' +
-          '<span class="hype-level"></span>' +
-        '</span>' +
-        '<span class="hype-pct"></span>' +
-        '<span class="hype-countdown" id="hype-countdown"></span>' +
-      '</div>';
-    el.querySelector(".hype-fill").style.width = pct + "%";
-    el.querySelector(".hype-level").textContent = (h.is_golden ? "✨ " : "") + "LVL " + h.level;
-    el.querySelector(".hype-pct").textContent = levelUp ? "LEVEL UP!" : pct + "%";
-    el.querySelector("#hype-countdown").textContent = this._fmtHypeTime(this._hypeMsLeft());
-    el.style.display = "block";
-    if (levelUp) {
-      el.classList.add("level-up");
-      setTimeout(() => el.classList.remove("level-up"), 2500);
-    }
+  // a sub / gift / cheer seen in chat while a train runs -> the train's "Recent" list + a pop on the player bar
+  _hypeContribution(who, what) {
+    if (this._isKickChat || !who || !what) return;
+    this._hypeView?.addContribution(who, what);
   }
 
   // predictions + polls (with betting / voting) live in chat/chat-live-events.js (chatLiveEventsMixin)

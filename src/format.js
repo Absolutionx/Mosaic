@@ -48,3 +48,17 @@ export function fmtDateMDY(value) {
   if (Number.isNaN(d.getTime())) return "";
   return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${String(d.getFullYear()).slice(2)}`;
 }
+
+// a Twitch image URL at a given display size, sharp on scaled (high-DPI) screens. handles both URL styles
+// Twitch uses: size templates ("{width}x{height}" / "%{width}x%{height}") and URLs with a fixed size already
+// baked in ("...-52x72.jpg", which category SEARCH returns: tiny art stretched over a big card). the request
+// is multiplied by the display scaling (capped) so a 188x250 card on a 150% screen asks for 282x375
+export function sizedImage(url, width, height, maxScale = 2.5) {
+  if (!url) return "";
+  const dpr = Math.min(maxScale, Math.max(1, (typeof window !== "undefined" && window.devicePixelRatio) || 1));
+  const w = Math.round(width * dpr), h = Math.round(height * dpr);
+  return String(url)
+    .replace("%{width}", String(w)).replace("%{height}", String(h))
+    .replace("{width}", String(w)).replace("{height}", String(h))
+    .replace(/-\d+x\d+\.(jpe?g|png|webp)(\?|$)/i, `-${w}x${h}.$1$2`);
+}

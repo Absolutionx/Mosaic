@@ -6,14 +6,31 @@
 // per-view wiring. The glow styling lives in styles.css.
 
 import { invoke } from "@tauri-apps/api/core";
-import { getSetting } from "./settings.js";
+import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";
+import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
 
 let timer = null;
+// followed channels (sidebar rows) that had a train at the last check. null until the first check, so
+// trains already running when Mosaic starts don't all notify at once
+let knownTrains = null;
+
+async function notifyTrain(name, a) {
+  try {
+    if (await isPermissionGranted() && notificationAllowed("hype")) {
+      sendNotification(notificationOptions({
+        title: `Hype train on ${name}`,
+        body: `${a.golden ? "Golden Kappa train" : "A hype train"} just started${a.level ? ` · Level ${a.level}` : ""}`,
+      }));
+    }
+  } catch { /* notifications unavailable */ }
+}
 
 async function tick() {
-  // nothing to show: the window is hidden (a visibilitychange re-tick catches up on return), or the glow is
-  // turned off in Settings > Sidebar
-  if (document.hidden || !getSetting("hypeGlow")) return;
+  // glow: Settings > Sidebar (only while the window is visible; a visibilitychange re-tick catches up).
+  // notify: Settings > Notifications > Hype trains, which also runs while hidden / in the tray
+  const glow = !!getSetting("hypeGlow"), notify = !!getSetting("hypeTrainNotify");
+  if (!glow && !notify) { knownTrains = null; return; }
+  if (document.hidden && !notify) return;
   const els = [...document.querySelectorAll("[data-hype-id]")];
   const ids = [...new Set(els.map((el) => el.dataset.hypeId).filter(Boolean))];
   if (!ids.length) return;
@@ -25,6 +42,23 @@ async function tick() {
     return; // network/GQL hiccup — leave glows as-is
   }
   const map = new Map((Array.isArray(active) ? active : []).map((a) => [String(a.channel_id), a]));
+
+  if (notify) {
+    // followed channels are the sidebar rows (Home / Browse cards include channels you don't follow)
+    const rows = new Map(els.filter((el) => el.closest("#channels-sidebar")).map((el) => [String(el.dataset.hypeId), el]));
+    const now = new Set([...map.keys()].filter((id) => rows.has(id)));
+    if (knownTrains) {
+      for (const id of now) {
+        if (knownTrains.has(id)) continue;
+        const row = rows.get(id);
+        notifyTrain(row.querySelector(".sidebar-channel-name")?.textContent?.trim() || "a followed channel", map.get(id));
+      }
+    }
+    knownTrains = now;
+  } else {
+    knownTrains = null;
+  }
+  if (!glow || document.hidden) return;
 
   for (const el of els) {
     const a = map.get(String(el.dataset.hypeId));

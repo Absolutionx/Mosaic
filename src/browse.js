@@ -1,4 +1,5 @@
-import { smallAvatar } from "./format.js";
+import { smallAvatar, sizedImage } from "./format.js";
+import { themedSelect } from "./themed-select.js";
 // browse/directory page (twitch.tv/directory-style): pills, a Categories/Live switcher,
 // search, sort, grid. routed through Rust like home.js/sidebar.js
 
@@ -496,20 +497,13 @@ export class BrowsePage {
     sortLabel.textContent = "Sort by";
     sortRow.appendChild(sortLabel);
 
-    const select = document.createElement("select");
-    select.className = "browse-sort-select";
-    const optRecommended = document.createElement("option");
-    optRecommended.value = "recommended";
-    optRecommended.textContent = "Recommended For You";
-    select.appendChild(optRecommended);
-    const optViewers = document.createElement("option");
-    optViewers.value = "viewers";
-    optViewers.textContent = "Viewer Count";
-    select.appendChild(optViewers);
-    select.value = this.sortMode;
-    select.addEventListener("change", () => {
-      this.sortMode = select.value;
-      this.render();
+    // a themed dropdown, not a native <select>: its open list is drawn by Windows and can't match the theme
+    const select = themedSelect({
+      className: "browse-sort-select",
+      label: "Sort by",
+      options: [{ value: "recommended", label: "Recommended For You" }, { value: "viewers", label: "Viewer Count" }],
+      value: this.sortMode,
+      onChange: (v) => { this.sortMode = v; this.render(); },
     });
     sortRow.appendChild(select);
     row.appendChild(sortRow);
@@ -765,14 +759,16 @@ function dedupeGamesById(list) {
   });
 }
 
+// sized for the display's scaling, and works for search results too (their art URLs come with a tiny fixed
+// size baked in instead of a {width}x{height} template; see format.js sizedImage)
 function boxArtUrl(template, width, height) {
   if (!template) return blankAvatarDataUri();
-  return template.replace("{width}", String(width)).replace("{height}", String(height));
+  return sizedImage(template, width, height);
 }
 
 function thumbnailUrl(template, width, height) {
   if (!template) return blankAvatarDataUri();
-  return template.replace("{width}", String(width)).replace("{height}", String(height));
+  return sizedImage(template, width, height);
 }
 
 function formatViewerCount(n) {

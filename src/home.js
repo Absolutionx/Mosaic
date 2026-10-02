@@ -1,4 +1,4 @@
-import { smallAvatar } from "./format.js";
+import { smallAvatar, sizedImage } from "./format.js";
 import { getSetting } from "./settings.js";
 // home feed (in #video-column when nothing plays): carousel, recommended grid, category
 // rows, all via Rust-proxied Helix. Helix has no recommendation/genre endpoint, so this
@@ -963,7 +963,7 @@ export class HomeFeed {
 
 function thumbnailUrl(template, width, height) {
   if (!template) return blankAvatarDataUri();
-  return template.replace("{width}", String(width)).replace("{height}", String(height));
+  return sizedImage(template, width, height); // sharp on scaled screens; fixed-size URLs too
 }
 
 function formatViewerCount(n) {

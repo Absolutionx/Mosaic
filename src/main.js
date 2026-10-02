@@ -22,6 +22,7 @@ import { startWatchTracking, openWatchStats } from "./watch-stats.js";
 import { openDropsHub, configureDropsHub } from "./drops-hub.js";
 import { initPlayerMenu } from "./player-stats.js";
 import { initAudioNormalizer, normalizerReduction } from "./audio-normalizer.js";
+import { initAmbientGlow } from "./ambient-glow.js";
 import { initVodBookmarks, addBookmarkNow, openBookmarksList } from "./vod-bookmarks.js";
 import { PlaybackControls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
@@ -879,6 +880,9 @@ initVodBookmarks({
     });
   },
 });
+
+// Settings > Player > Ambient glow (ambient-glow.js): a glow around the video from its colors
+initAmbientGlow({ video: playbackControls.videoEl, host: document.getElementById("video-column"), isPlaying: () => !!session.playing });
 
 // Settings > Player > Normalize volume (audio-normalizer.js): main player only
 initAudioNormalizer(playbackControls.videoEl);

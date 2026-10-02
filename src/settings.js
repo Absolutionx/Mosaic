@@ -20,6 +20,10 @@ export const DEFAULTS = {
   linkPreviews: true,        // hover previews on links
   predictionsPolls: true,
   hypeGiftBanners: true,
+  hypeTrainCelebrate: true,  // "LEVEL N!" burst with confetti over the video on level-up
+  hypeTrainSound: false,     // the chime on level-up
+  hypeTrainNotify: false,    // desktop notification when a followed channel starts a hype train
+  ambientGlow: "off",        // "off" | "subtle" | "normal" | "strong": glow around the video from its colors
   pinnedBanner: true,
   highlightMentions: true,   // messages that mention you (or a keyword) get highlighted
   highlightKeywords: "",     // comma-separated extra words to highlight
@@ -66,6 +70,7 @@ export const DEFAULTS = {
   notifyCategory: true,
   notifyWhispers: true,      // desktop notification for a whisper while Mosaic isn't focused
   notifySound: true,
+  notifyVolume: 100,         // Mosaic's chime volume, % of the original (0-200): notifications + chat highlight sound
   quietHours: false,
   quietStart: 23,            // hour (0-23)
   quietEnd: 8,
@@ -201,22 +206,46 @@ export function notificationAllowed(kind) {
   if (getSetting("quietHours") && inQuietHours()) return false;
   return true;
 }
-// Mosaic's own chime (desktop notifications ask the OS to stay silent; see notificationOptions)
-let audioCtx = null, lastChime = 0;
-export function playChime() {
-  if (Date.now() - lastChime < 1500) return; // never machine-gun it in a busy chat
+// Mosaic's own chime (desktop notifications ask the OS to stay silent; see notificationOptions). Windows
+// toasts are silent here (no sound name -> <audio silent="true"/>), so this is the only notification sound,
+// and Settings > Notifications > Sound volume scales it (0% plays nothing).
+// two bell-like notes (fundamental + an octave overtone, ~0.6s ring): a pure short sine sounded far quieter
+// than its level. 100% averages ~12 dB louder than the original chime and 200% ~18 dB; the limiter at the
+// end keeps 200% just under full scale where the two notes overlap, so it never distorts
+const CHIME_PEAK = 0.3, CHIME_OVERTONE = 0.4, CHIME_RING_S = 0.6;
+let audioCtx = null, chimeLimiter = null, lastChime = 0;
+export function playChime({ preview = false } = {}) {
+  const volume = Math.max(0, Math.min(200, Number(getSetting("notifyVolume") ?? 100))) / 100;
+  if (!(volume > 0)) return;
+  if (!preview && Date.now() - lastChime < 1500) return; // never machine-gun it in a busy chat
   lastChime = Date.now();
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+    if (!chimeLimiter) {
+      chimeLimiter = audioCtx.createDynamicsCompressor();
+      chimeLimiter.threshold.value = -4;
+      chimeLimiter.knee.value = 4;
+      chimeLimiter.ratio.value = 20;
+      chimeLimiter.attack.value = 0.001;
+      chimeLimiter.release.value = 0.1;
+      chimeLimiter.connect(audioCtx.destination);
+    }
     const t = audioCtx.currentTime;
-    for (const [freq, at] of [[880, 0], [1320, 0.09]]) {
-      const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
-      osc.type = "sine"; osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, t + at);
-      gain.gain.exponentialRampToValueAtTime(0.12, t + at + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.22);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(t + at); osc.stop(t + at + 0.25);
+    const peak = CHIME_PEAK * volume;
+    for (const [freq, at] of [[880, 0], [1320, 0.12]]) {
+      const env = audioCtx.createGain();
+      env.gain.setValueAtTime(0.0001, t + at);
+      env.gain.exponentialRampToValueAtTime(peak, t + at + 0.01);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + at + CHIME_RING_S);
+      env.connect(chimeLimiter);
+      for (const [mult, amp] of [[1, 1], [2, CHIME_OVERTONE]]) {
+        const osc = audioCtx.createOscillator(), level = audioCtx.createGain();
+        osc.type = "sine"; osc.frequency.value = freq * mult;
+        level.gain.value = amp;
+        osc.connect(level).connect(env);
+        osc.start(t + at); osc.stop(t + at + CHIME_RING_S + 0.05);
+      }
     }
   } catch { /* no audio available */ }
 }

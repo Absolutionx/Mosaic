@@ -1,4 +1,4 @@
-import { smallAvatar } from "./format.js";
+import { smallAvatar, sizedImage } from "./format.js";
 import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
 // channels sidebar: followed channels (live + offline) and a Live Channels list. data via
 // Rust-proxied Helix (followed, streams-for-users, users-info, top-live), since api.twitch.tv
@@ -817,7 +817,7 @@ export class ChannelsSidebar {
         item.type = "button";
         item.className = "sidebar-notify-suggest-item";
         const img = document.createElement("img");
-        img.src = (cat.box_art_url || "").replace("{width}", "36").replace("{height}", "48");
+        img.src = sizedImage(cat.box_art_url || "", 36, 48);
         img.alt = "";
         img.addEventListener("error", () => { img.style.visibility = "hidden"; });
         const nm = document.createElement("span");

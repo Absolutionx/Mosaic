@@ -1019,10 +1019,20 @@ pub async fn get_hype_train(channel_login: String) -> Result<serde_json::Value, 
     }
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
 
+    // the whole hypeTrain object goes to the frontend too (execution + approaching): it builds the rich
+    // view (conductors, contributions, level rewards, record, approaching, end summary) from whatever
+    // fields Twitch's response carries, and simply leaves out sections it doesn't
+    let approaching = json
+        .pointer("/data/user/channel/hypeTrain/approaching")
+        .filter(|a| !a.is_null())
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let exec = match json.pointer("/data/user/channel/hypeTrain/execution") {
         Some(e) if !e.is_null() => e.clone(),
-        _ => return Ok(serde_json::json!({ "active": false })),
+        _ => return Ok(serde_json::json!({ "active": false, "approaching": approaching })),
     };
+    // an execution that has ended (endedAt set) is the just-finished train: reported as ended, not active
+    let ended = exec.get("endedAt").and_then(|v| v.as_str()).map(|s| !s.is_empty()).unwrap_or(false);
     let prog = exec.pointer("/progress");
     let geti = |p: Option<&serde_json::Value>, key: &str| {
         p.and_then(|v| v.get(key)).and_then(|v| v.as_i64()).unwrap_or(0)
@@ -1041,13 +1051,16 @@ pub async fn get_hype_train(channel_login: String) -> Result<serde_json::Value, 
         .unwrap_or(false);
 
     Ok(serde_json::json!({
-        "active": true,
+        "active": !ended,
+        "ended": ended,
         "level": level,
         "progress": progress,
         "goal": goal,
         "total": total,
         "is_golden": is_golden,
         "expires_at": expires_at,
+        "execution": exec,
+        "approaching": approaching,
     }))
 }
 

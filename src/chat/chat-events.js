@@ -20,6 +20,7 @@ export const chatEventsMixin = {
   },
 
   renderUsernotice(p) {
+    this._hypeFromUsernotice(p);
     switch (p.msg_id) {
       case "sub":
       case "resub":
@@ -40,6 +41,26 @@ export const chatEventsMixin = {
       // anything else falls back to Twitch's system-msg
       default:
         if (p.system_msg) this._renderGenericEvent(p.system_msg);
+    }
+  },
+
+  // subs / gifts feed the hype train's "Recent" list (hype-train.js). a gift bomb is one submysterygift
+  // followed by one subgift per recipient: those individual ones are skipped for a few seconds after the
+  // same gifter's bomb, so a 20-sub bomb is one line, not 21
+  _hypeFromUsernotice(p) {
+    if (!this._hypeContribution) return;
+    const who = p.display_name || p.login || "";
+    const tier = this._planLabel(p.sub_plan);
+    const now = Date.now();
+    if (p.msg_id === "submysterygift") {
+      this._lastBomb = { who, until: now + 8000 };
+      const n = Number(p.gift_count) || 0;
+      this._hypeContribution(who, `gifted ${n > 1 ? `${n} subs` : "a sub"}${tier && tier !== "Prime" ? ` (${tier})` : ""}`);
+    } else if (p.msg_id === "subgift") {
+      if (this._lastBomb && this._lastBomb.who === who && now < this._lastBomb.until) return;
+      this._hypeContribution(who, `gifted a sub${p.recipient ? ` to ${p.recipient}` : ""}`);
+    } else if (p.msg_id === "sub" || p.msg_id === "resub") {
+      this._hypeContribution(who, `${p.msg_id === "resub" ? "resubscribed" : "subscribed"}${tier ? ` (${tier})` : ""}`);
     }
   },
 

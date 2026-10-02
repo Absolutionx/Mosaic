@@ -2725,23 +2725,28 @@ body.kick-mode .sidebar-channel-name {
      14px-padded box just looked like a barely-rounded rectangle. */
   border-radius: 999px;
   padding: 7px 16px;
-  color: #fff;
+  color: var(--m-muted, #9aa5b4);
+  font-family: inherit;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--accent);
-  transition: filter 0.1s, outline-color 0.1s;
+  background: var(--m-surface-2, #1c222c);
+  border: 1px solid var(--m-border, #29313d);
+  transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 .browse-pill:hover {
-  filter: brightness(1.12);
+  color: var(--m-text, #e7ebf2);
+  background: var(--m-raised, #232b36);
 }
+/* the selected category: a light border + the soft white glow used across the app (no accent fill) */
 .browse-pill.is-active {
-  background: var(--accent-dark);
-  outline: 2px solid #fff;
-  outline-offset: -2px;
+  color: #fff;
+  background: var(--m-raised, #232b36);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06);
 }
 .browse-pill svg {
   flex-shrink: 0;
@@ -2796,24 +2801,29 @@ body.kick-mode .sidebar-channel-name {
   left: 10px;
   top: 50%;
   transform: translateY(-50%);
-  color: #6d6d72;
+  color: var(--m-faint, #697386);
   pointer-events: none;
 }
 .browse-search-input {
   width: 100%;
-  background: #18181b;
-  border: 1px solid #3a3a3d;
-  border-radius: 4px;
-  color: #efeff1;
+  box-sizing: border-box;
+  background: var(--m-bg, #0e1116);
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 9px;
+  color: var(--m-text, #e7ebf2);
+  font-family: inherit;
   font-size: 13px;
-  padding: 8px 10px 8px 32px;
+  padding: 9px 12px 9px 34px;
   outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
+.browse-search-input:hover { border-color: var(--m-muted, #9aa5b4); }
 .browse-search-input:focus {
-  border-color: var(--accent);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06);
 }
 .browse-search-input::placeholder {
-  color: #6d6d72;
+  color: var(--m-faint, #697386);
 }
 .browse-sort-row {
   display: flex;
@@ -2823,20 +2833,32 @@ body.kick-mode .sidebar-channel-name {
   font-weight: 600;
   flex-shrink: 0;
 }
+/* themed dropdown: the browser's default control is replaced by a styled box with its own arrow */
 .browse-sort-select {
-  background: #18181b;
-  border: 1px solid #3a3a3d;
-  border-radius: 4px;
-  color: #efeff1;
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--m-surface-2, #1c222c);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239aa5b4' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  border: 1px solid var(--m-border, #29313d);
+  border-radius: 9px;
+  color: var(--m-text, #e7ebf2);
+  font-family: inherit;
   font-size: 13px;
-  font-weight: 600;
-  padding: 7px 10px;
+  font-weight: 700;
+  padding: 8px 32px 8px 12px;
   outline: none;
   cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s, background-color 0.12s;
 }
+.browse-sort-select:hover { background-color: var(--m-raised, #232b36); border-color: var(--m-muted, #9aa5b4); }
 .browse-sort-select:focus {
-  border-color: var(--accent);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06);
 }
+.browse-sort-select.open { border-color: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06); }
+.browse-sort-row { color: var(--m-muted, #9aa5b4); }
 
 /* Viewer count line under a category card's name - approximated
    from a live-stream sample, not Twitch's own exact number; see
@@ -4413,7 +4435,6 @@ header #kick-login-btn.logged-in:hover {
    light text and are deliberately absent here. */
 body.kick-mode .deps-banner-install-btn,
 body.kick-mode .channel-info-follow-btn,
-body.kick-mode .browse-pill,
 body.kick-mode .home-drops-badge {
   color: var(--accent-fg);
 }
@@ -9653,3 +9674,102 @@ body.kick-mode #drops-tab { display: none; }
 /* chat settings menu: Drops is Twitch-only, like the header tab */
 body.kick-mode .chat-settings-menu-item[data-action="drops"] { display: none; }
 
+
+/* ==== Hype train, full version (hype-train.js) ==== */
+/* the compact 34px strip stays at the top; the banner grows downward when expanded */
+.hype-train-banner { height: auto; min-height: 34px; cursor: pointer; }
+.hype-train-banner .hype-fill { bottom: auto; height: 34px; }
+.hype-train-banner .hype-row { position: relative; inset: auto; height: 34px; }
+.hype-train-banner .hype-right { display: inline-flex; align-items: center; gap: 8px; }
+.hype-train-banner .hype-clock-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.hype-train-banner .hype-clock { font-variant-numeric: tabular-nums; }
+.hype-ring { transform: rotate(-90deg); }
+.hype-ring circle { fill: none; stroke-width: 4; }
+.hype-ring-bg { stroke: rgba(255, 255, 255, 0.25); }
+.hype-ring-fill { stroke: #fff; stroke-dasharray: 100; stroke-dashoffset: 0; transition: stroke-dashoffset 1s linear; }
+.hype-chevron { font-size: 10px; opacity: .8; }
+.hype-record {
+  margin-left: 4px; padding: 1px 6px; border-radius: 999px; font-size: 9.5px; font-weight: 900; letter-spacing: .04em;
+  color: #1a1200; background: #ffd34d; text-shadow: none; animation: hype-record-pulse 1.4s ease-in-out infinite;
+}
+@keyframes hype-record-pulse { 50% { transform: scale(1.08); } }
+/* the streamer's own train color, when they set one (golden keeps its gold) */
+.hype-train-banner[style*="--hype-color"] .hype-fill {
+  background: linear-gradient(90deg, var(--hype-color), color-mix(in srgb, var(--hype-color) 55%, #fff), var(--hype-color));
+  background-size: 300% 100%;
+}
+/* details */
+.hype-details { padding: 10px 10px 12px; cursor: default; color: var(--m-text, #e7ebf2); background: var(--m-surface, #161b22); border-top: 1px solid var(--m-border-soft, #212832); }
+.hype-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
+.hype-stat { padding: 7px 8px; border-radius: 8px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.hype-stat-value { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hype-stat-label { font-size: 10.5px; color: var(--m-muted, #9aa5b4); }
+.hype-sub { margin: 10px 0 5px; font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; color: var(--m-muted, #9aa5b4); }
+.hype-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.hype-chip { padding: 3px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d); }
+.hype-chip.bits { color: #c9a5ff; } .hype-chip.subs { color: #7cc4ff; } .hype-chip.gifts { color: #5fe3a8; }
+.hype-conductor { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.hype-av { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  background: var(--m-raised, #232b36); font-size: 11px; font-weight: 800; box-shadow: 0 0 0 2px #ffd34d; }
+.hype-av img { width: 100%; height: 100%; object-fit: cover; }
+.hype-conductor-text { display: flex; flex-direction: column; min-width: 0; }
+.hype-conductor-name { font-size: 12.5px; font-weight: 800; }
+.hype-conductor-what { font-size: 11px; color: var(--m-muted, #9aa5b4); }
+.hype-rewards { display: flex; flex-wrap: wrap; gap: 6px; }
+.hype-reward { width: 32px; height: 32px; object-fit: contain; padding: 3px; border-radius: 7px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
+.hype-feed-row { display: flex; gap: 6px; padding: 2px 0; font-size: 12px; }
+.hype-feed-who { font-weight: 800; }
+.hype-feed-what { color: var(--m-muted, #9aa5b4); }
+/* approaching + ended */
+.hype-train-banner.hype-approaching { background: linear-gradient(90deg, rgba(145, 71, 255, 0.35), rgba(255, 77, 210, 0.25)); cursor: default; }
+.hype-train-banner.hype-approaching.golden { background: linear-gradient(90deg, rgba(255, 179, 0, 0.4), rgba(255, 224, 102, 0.25)); }
+.hype-dots { display: inline-flex; gap: 3px; }
+.hype-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.3); }
+.hype-dot.on { background: #fff; box-shadow: 0 0 6px rgba(255, 255, 255, 0.8); }
+.hype-train-banner.hype-ended { cursor: default; background: var(--m-surface-2, #1c222c); }
+.hype-ended-extra { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 10px 8px; font-size: 11.5px; color: var(--m-muted, #9aa5b4); }
+/* level-up celebration over the video */
+.hype-burst { position: absolute; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.hype-burst-text {
+  font-size: clamp(32px, 7vw, 84px); font-weight: 900; letter-spacing: .03em; color: #fff;
+  text-shadow: 0 0 24px var(--hype-color, #9147ff), 0 0 48px var(--hype-color, #ff4dd2), 0 4px 10px rgba(0, 0, 0, 0.6);
+  animation: hype-burst-in 2.2s cubic-bezier(.2, .9, .3, 1.2) forwards;
+}
+.hype-burst.golden .hype-burst-text { text-shadow: 0 0 24px #ffb300, 0 0 48px #ffe066, 0 4px 10px rgba(0, 0, 0, 0.6); }
+@keyframes hype-burst-in { 0% { opacity: 0; transform: scale(.4); } 18% { opacity: 1; transform: scale(1.12); } 30% { transform: scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: scale(1.05); } }
+.hype-confetti { position: absolute; left: var(--x); top: -12px; width: 8px; height: 13px; border-radius: 2px;
+  background: hsl(var(--hue), 90%, 60%); animation: hype-confetti-fall var(--d) var(--delay) ease-in forwards; }
+@keyframes hype-confetti-fall { to { transform: translate(var(--dx), 110vh) rotate(720deg); opacity: .2; } }
+
+/* ==== Ambient glow (ambient-glow.js) ==== */
+/* the tiny frame canvas sits under the picture in the video column (z-index -1 inside the isolated column),
+   scaled up + blurred so it spills into the dark space around the player and the letterbox bars. the
+   column clips it, so it never reaches the chat or sidebar; the picture itself is never shrunk */
+#ambient-glow {
+  position: absolute; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .8s ease;
+  transform: scale(var(--amb-scale, 1.12)); filter: blur(var(--amb-blur, 70px)) saturate(var(--amb-sat, 1.3)) brightness(var(--amb-br, 1));
+}
+body.ambient-glow #video-column { position: relative; isolation: isolate; overflow: hidden; }
+body.ambient-glow #video-region, body.ambient-glow #video-element { background: transparent; }
+body.ambient-glow #ambient-glow { opacity: var(--amb-o, .75); }
+body.ambient-glow #ambient-glow.idle { opacity: 0; }
+body[data-ambient="subtle"] { --amb-o: .45; --amb-blur: 80px; --amb-sat: 1.1; --amb-br: .85; --amb-scale: 1.08; }
+body[data-ambient="normal"] { --amb-o: .75; --amb-blur: 70px; --amb-sat: 1.3; --amb-br: 1; --amb-scale: 1.12; }
+body[data-ambient="strong"] { --amb-o: 1; --amb-blur: 60px; --amb-sat: 1.6; --amb-br: 1.2; --amb-scale: 1.16; }
+
+/* ==== Themed dropdown (themed-select.js): the open list, in place of the OS-drawn native one ==== */
+.tsel-btn { display: inline-flex; align-items: center; text-align: left; }
+.tsel-menu {
+  position: fixed; z-index: 12500; padding: 5px; max-height: 320px; overflow-y: auto;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); color: var(--m-text, #e7ebf2);
+  animation: tsel-in .12s ease-out;
+}
+@keyframes tsel-in { from { opacity: 0; transform: translateY(-4px); } }
+.tsel-item {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px 7px 8px; border-radius: 7px;
+  font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.tsel-item.hi { background: var(--m-surface-2, #1c222c); }
+.tsel-item.selected { color: #fff; font-weight: 800; }
+.tsel-check { width: 14px; height: 14px; flex: 0 0 auto; display: inline-flex; color: #fff; }
