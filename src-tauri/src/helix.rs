@@ -1853,7 +1853,32 @@ pub async fn claim_drop(drop_instance_id: String, app: tauri::AppHandle) -> Resu
         return Err(format!("claim failed: HTTP {}", resp.status()));
     }
     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(json.get("errors").is_none())
+    claim_result(&json)
+}
+
+// Twitch answers a claim with a status; only some mean the reward is yours. Ok(true) ONLY then, otherwise an
+// Err with the reason. (this used to return Ok whenever there was no GQL error, and every caller took any
+// Ok as success: refused claims showed "Drop claimed", stayed claimable, and auto-claim re-claimed and
+// re-notified every few minutes)
+fn claim_result(json: &serde_json::Value) -> Result<bool, String> {
+    if let Some(errs) = json.get("errors").and_then(|e| e.as_array()) {
+        let msg = errs.iter().filter_map(|e| e.get("message").and_then(|m| m.as_str())).collect::<Vec<_>>().join("; ");
+        return Err(if msg.is_empty() { "Twitch returned an error".to_string() } else { format!("Twitch: {msg}") });
+    }
+    let payload = json.pointer("/data/claimDropRewards").filter(|p| !p.is_null());
+    let Some(payload) = payload else {
+        return Err("Twitch didn't confirm the claim".to_string());
+    };
+    let status = payload.get("status").and_then(|s| s.as_str()).unwrap_or("");
+    match status {
+        // granted, or it already was: either way the reward is the account's
+        "ELIGIBLE_FOR_ALL" | "DROP_INSTANCE_ALREADY_CLAIMED" => Ok(true),
+        // an answer with a payload but no status (older response shape): Twitch accepted it
+        "" => Ok(true),
+        s if s.contains("EXPIRED") || s.contains("ENDED") => Err(format!("the campaign's claim window has closed ({s})")),
+        s if s.contains("ELIGIB") || s.contains("ACCOUNT") || s.contains("LINK") => Err(format!("not eligible: is the game account linked? ({s})")),
+        s => Err(format!("Twitch refused the claim ({s})")),
+    }
 }
 
 // --- Watch streaks (RewardList / ShareMilestone), mirrored from StreamNook. Web client id + the

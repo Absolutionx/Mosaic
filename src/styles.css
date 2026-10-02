@@ -3270,10 +3270,9 @@ body.kick-mode .sidebar-channel-name {
   border-color: #6d6d72;
 }
 .chat-input-wrapper:focus-within {
-  border-color: var(--accent);
-  /* Ring instead of a thicker border so focusing doesn't shift layout;
-     together with the 1px border this reads as Twitch's 2px purple. */
-  box-shadow: 0 0 0 1px var(--accent);
+  /* a soft white glow while typing (ring instead of a thicker border so focusing doesn't shift layout) */
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06);
 }
 .chat-input::placeholder {
   color: #868690;
@@ -3391,7 +3390,8 @@ body.kick-mode .sidebar-channel-name {
 }
 .chat-emote-btn.open,
 .chat-emote-btn:hover.open {
-  color: var(--accent-text);
+  color: #fff;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.55));
 }
 .chat-emote-btn:disabled {
   opacity: 0.35;
@@ -3412,7 +3412,10 @@ body.kick-mode .sidebar-channel-name {
   flex-shrink: 0;
 }
 .chat-settings-btn:hover { color: #efeff1; }
-.chat-settings-btn.open { color: var(--m-accent, #9147ff); }
+.chat-settings-btn.open {
+  color: #fff;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.55));
+}
 .chat-settings-btn svg { transition: transform .25s ease; }
 .chat-settings-btn:hover svg { transform: rotate(35deg); }
 
@@ -5258,8 +5261,8 @@ body.multiview-active .deps-banner {
 }
 .multiview-chat-input-wrapper:hover { border-color: var(--m-faint, #697386); }
 .multiview-chat-input-wrapper:focus-within {
-  border-color: var(--m-accent, #9147ff);
-  box-shadow: 0 0 0 2px var(--m-accent-soft, rgba(145, 71, 255, 0.18));
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06);
 }
 .multiview-chat-input {
   flex: 1;
@@ -6158,8 +6161,8 @@ header #kick-login-btn {
 }
 .chat-input-wrapper:hover { border-color: var(--m-faint); }
 .chat-input-wrapper:focus-within {
-  border-color: var(--m-accent);
-  box-shadow: 0 0 0 2px var(--m-accent-soft);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08), 0 0 12px rgba(255, 255, 255, 0.06);
 }
 .chat-input {
   color: var(--m-text);
@@ -9646,3 +9649,7 @@ body.kick-mode #drops-tab { display: none; }
 .bm-vod-title { font-size: 13.5px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bm-vod-sub { font-size: 11.5px; color: var(--m-muted, #9aa5b4); }
 .bm-panel .hub-body { padding-top: 14px; }
+
+/* chat settings menu: Drops is Twitch-only, like the header tab */
+body.kick-mode .chat-settings-menu-item[data-action="drops"] { display: none; }
+

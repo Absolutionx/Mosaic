@@ -358,6 +358,7 @@ async function render(body, channelLogin, channelId, flash) {
       } catch (err) {
         btn.disabled = false;
         btn.textContent = "Retry";
+        btn.title = `Couldn't claim: ${String(err)}`; // Twitch's reason (e.g. the claim window closed)
       }
     });
   });

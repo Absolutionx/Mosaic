@@ -448,6 +448,8 @@ const trackId = new TrackId(playbackControls.videoEl, {
         closeMenu();
         // chat filter + hidden channels live in Settings > Chat > Filters now
         if (action === "settings") openSettingsPanel();
+        else if (action === "drops") openDropsHub();
+        else if (action === "stats") showWatchStats();
       });
     });
   }

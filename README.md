@@ -11,20 +11,6 @@ memory, with no ads SDK and no browser chrome.
 > **Status:** independent hobby project, not affiliated with or endorsed by
 > Twitch Interactive, Inc. or Kick.
 
-## Why this exists
-
-Watching Twitch in a browser tab typically costs 1.5-2.5GB of RAM once you
-account for the browser's renderer process, the full web-app bundle, ads
-infrastructure, and chat rendering. Mosaic instead:
-
-1. Uses [streamlink](https://streamlink.github.io/) as a subprocess to pull the
-   raw stream (ad-stripped via `--twitch-disable-ads`),
-2. Plays it natively, see [How playback works](#how-playback-works) for the
-   per-platform details,
-3. Renders chat and UI natively, with no browser chrome or ads SDK.
-
-Typical memory usage lands around 30MB on Windows.
-
 ## Features
 
 ### Watching
@@ -35,13 +21,23 @@ Typical memory usage lands around 30MB on Windows.
   through a native pipeline rather than the web player.
 - **Quality selection with adaptive auto mode**, steps quality down on
   sustained buffering and back up when the network recovers.
-- **Low-latency mode** for Twitch live.
+- **Low-latency mode** and **catch-up to live** for Twitch live.
 - **Live-DVR seeking.** Seek backward on a live stream: within a rolling buffer
   instantly, and further back against the in-progress recording if the
   broadcaster has VODs enabled.
 - **VODs** with a full seek bar, chapter markers, hover seek-preview
-  thumbnails, copyright-muted-segment markers, and resume-where-you-left-off.
+  thumbnails, a chat-activity heatmap, top-clip markers,
+  copyright-muted-segment markers, and resume-where-you-left-off.
+- **VOD playback speed** from 0.5x to 2x, with pitch preserved.
+- **VOD bookmarks.** Mark a moment with an optional note (`B`); bookmarks show
+  on the seek bar and are listed per VOD and across all VODs.
+- **VOD downloads.** Save a whole VOD, or a time range of it, to MP4 (or M4A for
+  audio only). The stream is copied without re-encoding.
 - **VOD chat replay**, Twitch VOD comments replayed in sync with playback.
+- **Clips.** Create a clip from the live stream (choose a length and title, or
+  `Alt+X` for an instant clip), follow its progress, then play, copy, share or
+  edit it. Clip links in chat open in an in-app clip player, and channel pages
+  have a Clips tab.
 - **MultiView**, watch several streams at once in a grid, with drag-to-reorder,
   per-tile or single-focus audio, spotlight and split layouts, and per-tile
   pop-out to Picture-in-Picture.
@@ -51,8 +47,17 @@ Typical memory usage lands around 30MB on Windows.
 - **Twitch → Kick failover.** If a Twitch stream ends mid-watch and the streamer
   is simulcasting on Kick, playback hands over to the Kick stream automatically.
   Channel-name mismatches are handled with per-channel Kick aliases.
+- **Chat overlay** (optional) in theater mode and fullscreen: chat drawn over the
+  video picture, movable and resizable, with the regular chat box available for
+  typing.
+- **Audio normalization** (optional) that evens out loud and quiet moments, in
+  three strengths.
+- **Stats for nerds** from the player's right-click menu: resolution, frame rate,
+  codecs, bitrate, buffer, latency and dropped frames.
+- **Raid banner.** When the channel you're watching raids out, follow
+  automatically after a countdown, get asked, or ignore it.
 - **Theater mode, header/chat collapse, fullscreen, and keyboard shortcuts**
-  (theater, mute, play/pause, seek). The window opens maximized.
+  (see [Keyboard shortcuts](#keyboard-shortcuts)). The window opens maximized.
 - **Session restore**, an app reload/restart resumes what you were watching.
 
 ### Chat
@@ -77,6 +82,15 @@ Typical memory usage lands around 30MB on Windows.
   actions, opened by clicking a username.
 - **Link previews** on hover, **@mention autocomplete**, an **emote picker**,
   and first-time-chatter / mention highlighting.
+- **Emote cards on hover**, a larger preview with the emote's source (7TV, BTTV,
+  FFZ, Twitch, Kick), creator, and notes for renamed or zero-width emotes.
+- **Predictions and polls**, shown as live cards with odds and payouts; bet
+  channel points and vote from the app, with results posted to chat.
+- **Chat badge picker**, change your global or channel badge.
+- **Chat filter**, hide messages by word, user or emote; ASCII art is detected and
+  laid out to fit.
+- **Whispers**, with local history.
+- **Message right-click menu**: reply, copy, view profile, and mod actions.
 - **Kick chat**, read live Kick chat (with Kick's native emotes and badges);
   sending requires an optional Kick login (see [Kick support](#kick-support)).
 
@@ -91,9 +105,12 @@ in-app the first time you use them).
   of what you got), and an in-app emote picker for Choose / Modify an Emote.
 - **Real-time redemptions**, a PubSub connection surfaces redemptions in chat as
   they happen (yours and other viewers') and keeps your balance live.
-- **Twitch Drops**, progress accrues while you watch a drops-enabled stream, with
-  in-app claiming and the ability to hide campaigns you don't care about (and
-  restore them later).
+- **Channel points bonus auto-claim** (on by default), the bonus chest is claimed
+  within about a minute of appearing.
+- **Drops hub** (the **Drops** tab in the header), every campaign you're earning
+  with per-reward progress and claiming, plus all active campaigns on Twitch with
+  "Find streams" and account-linking shortcuts. Drops are claimed automatically
+  when ready (on by default), and campaigns you don't care about can be hidden.
 - **Watch streaks**, shown per channel, with one-click share for the bonus.
 - **Song ID**, identify the track currently playing through a built-in
   fingerprinter (no external service or API key).
@@ -107,8 +124,9 @@ in-app the first time you use them).
   rail that needs no login.
 - **Go-live notifications**, opt in per channel and get a system notification
   when they start streaming.
-- **Raid auto-follow**, when a channel you're watching raids out, playback
-  follows the raid.
+- **Command palette** (`Ctrl+K`), jump to any channel, category, setting, action
+  or in-progress VOD from the keyboard.
+- **Follow and unfollow** from the channel info bar.
 
 ### Quality of life
 
@@ -116,8 +134,32 @@ in-app the first time you use them).
   header when a new version is available, one click to download and install.
 - **Dependency bootstrap**, an in-app banner can install streamlink/ffmpeg for
   you on Windows.
-- **System tray**, a **watch heartbeat** that accrues Drops and channel points
-  while you watch, and a WebView2 sleep/wake surface-recovery fix.
+- **Settings panel** (`Ctrl+,`), every option in one searchable place, with
+  backup and restore of settings and local data.
+- **Watch stats**, time watched by day, week and month, top channels, live vs VOD
+  and your streak. Stored locally.
+- **Start with your computer**, optionally minimized to the tray.
+- **System tray**, close to tray, a **watch heartbeat** that accrues Drops and
+  channel points while you watch, and a WebView2 sleep/wake surface-recovery fix.
+  The window keeps its monitor and size when displays sleep.
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `Space` | Play / pause |
+| `←` / `→` | Seek back / forward (step set in Settings) |
+| `<` / `>` | VOD playback speed down / up |
+| `T` | Theater mode |
+| `F` | Fullscreen |
+| `M` | Mute |
+| `B` | Bookmark the current moment (VODs) |
+| `Alt+X` | Create a clip (live) |
+| `Ctrl+K` | Command palette |
+| `Ctrl+,` | Settings |
+| `Esc` | Close the top panel, or leave theater mode / fullscreen |
+
+Shortcuts are ignored while typing in a text field.
 
 ## Download and install
 
@@ -172,7 +214,8 @@ Playback takes a different path per platform, for good reasons:
 
 ## Known limitations
 
-- **Drops, channel points, and real-time redemptions rely on reverse-engineered
+- **Drops, channel points (including the bonus auto-claim and betting),
+  predictions, polls, badges, and real-time redemptions rely on reverse-engineered
   Twitch mechanisms**, not official APIs. Accrual is driven by a "minute watched"
   heartbeat, and live redemptions/balance use Twitch's (now deprecated) PubSub.
   Both work reliably in testing, but because they aren't officially supported they
@@ -224,8 +267,8 @@ npm run tauri build
 ```
 
 Add `-- --bundles nsis` to build only the Windows `.exe` installer. Output lands
-under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_1.2.26_x64-setup.exe`,
-`dmg/Mosaic_1.2.26_aarch64.dmg`).
+under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_<version>_x64-setup.exe`,
+`dmg/Mosaic_<version>_aarch64.dmg`).
 
 > **Note:** `createUpdaterArtifacts` is enabled, so `tauri build` requires the
 > updater signing key. For a plain local build without signing, use
@@ -235,7 +278,8 @@ under `src-tauri/target/release/bundle/` (e.g. `nsis/Mosaic_1.2.26_x64-setup.exe
 
 ### Releases and auto-updates (maintainers)
 
-Releases are built and published by GitHub Actions:
+Releases are built and published by GitHub Actions. Notable changes per version
+are listed in [CHANGELOG.md](./CHANGELOG.md).
 
 - Pushing a `v*` tag (or publishing a release with that tag) triggers the Windows
   workflow, which builds and signs the installer and attaches it, plus the
@@ -264,41 +308,69 @@ src/                    Frontend (vanilla JS, no framework)
   main.js               App entry point / state orchestration
   session.js            Shared "what's playing" state
   platform.js           Twitch/Kick mode + command routing
+  settings.js           Settings store (defaults, persistence, change events)
+  settings-panel.js     Settings panel UI
+  backup.js             Settings / local data export and import
+  command-palette.js    Ctrl+K palette
+  escape-stack.js       Escape closes the top-most panel
   stream-player.js      MSE feeder for the live relay (Windows path)
   vod-player.js         hls.js / native-HLS wrapper (VODs, Kick, macOS live)
-  playback-controls.js  Seek bar, quality menu, live-DVR handoff, PiP
-  pip.js                Native always-on-top PiP window controller
+  playback-controls.js  Seek bar, quality/speed menus, live-DVR handoff, PiP
+  player-stats.js       Player right-click menu + Stats for nerds
+  audio-normalizer.js   Optional compressor / make-up gain / limiter
+  pip.js, mini-player.js  Always-on-top PiP window, in-app mini player
   multiview.js          Multi-stream grid
-  channel-info-bar.js   Below-player info strip + in-video overlay
+  channel-info-bar.js   Below-player info strip, follow button, overlay
   layout.js             Page switching, theater/fullscreen, chrome
+  titlebar.js           Custom window controls
+  raid-banner.js        Raid countdown banner
+  clips.js              Clip creation panel + progress card
+  vod-downloads.js      VOD download dialog + downloads panel
+  vod-bookmarks.js      VOD bookmarks (seek-bar markers, lists)
+  vod-heatmap.js        VOD chat-activity heatmap
   chat.js               Chat connection lifecycle + message pipeline
+  chat-overlay.js       Chat over the video in theater mode / fullscreen
+  chat-filter.js        Word / user / emote filter
+  emote-card.js         Emote hover cards
+  whispers.js           Whispers panel + local history
   chat/                 Chat feature mixins (see file header comments):
                           chat-emotes.js, emote-parsing.js, chat-badges.js,
-                          kick-badges.js, chat-events.js, chat-automod.js,
-                          chat-usercard.js, chat-mod-actions.js,
-                          chat-link-preview.js, chat-autocomplete.js,
+                          chat-badge-picker.js, kick-badges.js,
+                          chat-events.js, chat-live-events.js (predictions,
+                          polls), chat-automod.js, chat-usercard.js,
+                          chat-mod-actions.js, chat-link-preview.js,
+                          chat-clips.js, chat-autocomplete.js,
                           chat-emote-picker.js, chat-vod-replay.js, shared.js
   home.js, browse.js, vods.js, sidebar.js   Discovery UI
+  hidden-channels.js    Channels hidden from the feeds
+  hype-badges.js        Hype-train indicators in channel lists
   auth.js               Twitch login (frontend)
   kick-aliases.js       Twitch->Kick failover aliases
   kick-follows.js       Local Kick follow list
   chapters.js           Twitch VOD chapter markers
   seek-thumbnails.js    VOD storyboard seek-preview thumbnails
   session-restore.js    Resume the last session across a reload
-  drops.js, drops-banner.js         Drops-enabled detection + banner
+  drops.js, drops-banner.js   Drops-enabled detection + banner
+  drops-hub.js          Drops hub (progress, claiming, all campaigns)
+  drops-autoclaim.js    Automatic drop claiming
   rewards.js            Channel points / drops / watch-streak panel + redeeming
+  watch-stats.js        Local watch-time tracking + stats view
   mod-log.js            Mod action log + Mod Chat tab
   mod-menu.js           Moderator room-control (shield) menu
   track-id.js           Song ID capture + result UI
   pin-auth.js           Twitch device-login modal (points/drops/pins)
   deps-banner.js        streamlink/ffmpeg bootstrap banner
   update-banner.js      In-app auto-updater button (Windows)
+  tooltips.js           Themed tooltips
   format.js             Small display-formatting helpers
+  emoji-data.js         Emoji list for the emote picker
 
 src-tauri/src/          Backend (Rust)
   main.rs               Tauri app setup and command registration
+  http.rs               Shared HTTP client (connection pooling)
   helix.rs              Twitch Helix (REST API) commands, plus GQL for channel
-                          points, drops, watch streaks, and reward redemptions
+                          points, drops, predictions, polls, badges, follows,
+                          clips, and reward redemptions
   twitch_device_auth.rs Twitch Android device-login token (points/drops/pins)
   pubsub.rs             Twitch PubSub (real-time redemptions + live balance)
   watch_heartbeat.rs    "minute watched" heartbeat (Drops + points accrual)
@@ -308,16 +380,20 @@ src-tauri/src/          Backend (Rust)
   stream_relay.rs       Spawns streamlink/ffmpeg, relays bytes over HTTP
                           (Windows), resolves ad-free m3u8 URLs (macOS),
                           and proxies HLS for CORS
+  downloads.rs          VOD downloads (ffmpeg, progress, cancel)
   chat.rs               Twitch IRC WebSocket connection
   chat_commands.rs      Chat-backed commands (send, mod actions, chatters)
+  whispers.rs           Whisper sending + local history
   oauth.rs              Native-browser OAuth flow (Twitch)
   eventsub.rs           Twitch EventSub (go-live notifications, raids, AutoMod)
   seventv_events.rs     7TV real-time emote updates
+  seventv_cosmetics.rs  7TV name paints and badges
   link_preview.rs       Chat link hover-preview metadata fetching
   vod_progress.rs       Persisted VOD watch progress (resume)
   notify_prefs.rs       Persisted per-channel notification preferences
   deps_check.rs         streamlink/ffmpeg detection and install
-  tray.rs               System tray icon/menu
+  tray.rs               System tray icon/menu, window placement
+  app_extras.rs         Launch-at-login state, backup file saving
   kick.rs               Kick API (streams, categories, VODs) as Helix shapes
   kick_chat.rs          Kick chat (Pusher) client
   kick_oauth.rs         Kick OAuth 2.1 + PKCE flow
