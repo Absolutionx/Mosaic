@@ -3,6 +3,7 @@
 // dodge a cycle with main.js
 
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { session } from "./session.js";
 import { resyncChannelInfoBarVisibility } from "./channel-info-bar.js";
 
@@ -131,37 +132,62 @@ export function toggleChatCollapse() {
 
 // tracked with a local boolean since isFullscreen() is unreliable right after a
 // transition. #video-element resizes via CSS, so nothing to resync
-// fullscreen straight from a MAXIMIZED window can leave the web content at the maximized height (WebView2
-// misses the resize), so the bottom taskbar-height strip of the screen shows the bare window behind it. the
-// window is un-maximized first, re-maximized on exit, and the content's size is checked once fullscreen
-let _maximizedBeforeFullscreen = false;
+//
+// the window side lives in one Rust command (set_app_fullscreen, app_extras.rs; the why is written up
+// there). in short: a maximized window goes fullscreen in place and is put back in place on exit, without
+// ever dropping to its restored size and without the OS maximize animation. entering resolves true only if
+// Rust had to fall back to un-maximizing the window first; that answer is handed back on exit so the window
+// is maximized again.
+//
+// the layout switches BEFORE the window does, and without the grid's collapse animation: otherwise the
+// screen-sized window first shows the old layout, then the video grows into place over ~200ms
+let _remaximizeOnExit = false;
+let _fsBusy = false;       // a toggle's window call is in flight
+let _fsGen = 0;            // bumped per toggle, so a state check that started earlier is discarded
+let _fsSnapTimer = null;
+
+function applyFullscreenUi(on) {
+  appEl.classList.add("fs-switching"); // styles.css: no grid transition while the window changes size
+  appEl.classList.toggle("app-fullscreen", on);
+  fullscreenBtn.classList.toggle("is-fullscreen", on);
+  fullscreenBtn.title = on ? "Exit Fullscreen" : "Fullscreen";
+  clearTimeout(_fsSnapTimer);
+  _fsSnapTimer = setTimeout(() => appEl.classList.remove("fs-switching"), 300);
+}
+
 export async function toggleFullscreen() {
-  isFullscreen = !isFullscreen;
+  if (_fsBusy) return;
+  _fsBusy = true;
+  _fsGen++;
+  const on = !isFullscreen;
+  isFullscreen = on;
+  applyFullscreenUi(on);
   try {
-    if (isFullscreen) {
-      _maximizedBeforeFullscreen = await appWindow.isMaximized().catch(() => false);
-      if (_maximizedBeforeFullscreen) await appWindow.unmaximize();
-      await appWindow.setFullscreen(true);
+    if (on) {
+      _remaximizeOnExit = (await invoke("set_app_fullscreen", { on: true, remaximize: false })) === true;
+      // worth knowing when a report says the switch still looks rough
+      if (_remaximizeOnExit) console.warn("[fullscreen] in-place switch not possible; used the un-maximize route");
     } else {
-      await appWindow.setFullscreen(false);
-      if (_maximizedBeforeFullscreen) await appWindow.maximize();
-      _maximizedBeforeFullscreen = false;
+      await invoke("set_app_fullscreen", { on: false, remaximize: _remaximizeOnExit });
+      _remaximizeOnExit = false;
     }
   } catch (err) {
     console.error("Failed to toggle fullscreen:", err);
-    isFullscreen = !isFullscreen; // revert the flag, the call didn't take
+    isFullscreen = !on; // the call didn't take: put the flag and the layout back
+    applyFullscreenUi(!on);
     return;
+  } finally {
+    _fsBusy = false;
   }
-  appEl.classList.toggle("app-fullscreen", isFullscreen);
-  fullscreenBtn.classList.toggle("is-fullscreen", isFullscreen);
-  fullscreenBtn.title = isFullscreen ? "Exit Fullscreen" : "Fullscreen";
   if (isFullscreen) setTimeout(() => { fixFullscreenSurface(); }, 350);
 }
 
 // the web content must cover the whole fullscreen window. if WebView2 missed the resize (content shorter or
-// narrower than the window), toggling fullscreen off and on forces it to recompute. a no-op when they match
+// narrower than the window), toggling fullscreen off and on forces it to recompute. a no-op when they match.
+// the off/on pair goes through the same Rust command as a normal toggle: "off" can land on a maximized
+// window, and going fullscreen from one needs that command's handling
 export async function fixFullscreenSurface() {
-  if (!isFullscreen) return false;
+  if (!isFullscreen || _fsBusy) return false;
   try {
     const dpr = window.devicePixelRatio || 1;
     const inner = await appWindow.innerSize();
@@ -169,8 +195,16 @@ export async function fixFullscreenSurface() {
     const offH = Math.abs(inner.height - Math.round(window.innerHeight * dpr));
     if (offW <= 4 && offH <= 4) return false;
     console.log(`[fullscreen] content ${Math.round(window.innerWidth * dpr)}x${Math.round(window.innerHeight * dpr)} vs window ${inner.width}x${inner.height}; re-applying fullscreen`);
-    await appWindow.setFullscreen(false);
-    await appWindow.setFullscreen(true);
+    // the off/on pair resizes the window: keep onResized from reading the "off" half as an exit
+    _fsBusy = true;
+    _fsGen++;
+    try {
+      await invoke("set_app_fullscreen", { on: false, remaximize: false });
+      const fellBack = (await invoke("set_app_fullscreen", { on: true, remaximize: false })) === true;
+      _remaximizeOnExit = _remaximizeOnExit || fellBack;
+    } finally {
+      _fsBusy = false;
+    }
     return true;
   } catch (err) {
     console.warn("[fullscreen] surface check failed:", err);
@@ -179,15 +213,19 @@ export async function fixFullscreenSurface() {
 }
 
 // keeps isFullscreen and the button icon honest when fullscreen changes bypass
-// toggleFullscreen() (an OS shortcut). onResized reliably fires on those transitions
+// toggleFullscreen() (an OS shortcut). onResized reliably fires on those transitions.
+// a toggle of our own also resizes the window: those are skipped, and so is a
+// check that was already waiting on the window state when a toggle started, since its answer is stale
 appWindow.onResized(async () => {
+  if (_fsBusy) return;
+  const gen = _fsGen;
   try {
     const actual = await appWindow.isFullscreen();
+    if (_fsBusy || gen !== _fsGen) return;
     if (actual !== isFullscreen) {
       isFullscreen = actual;
-      appEl.classList.toggle("app-fullscreen", isFullscreen);
-      fullscreenBtn.classList.toggle("is-fullscreen", isFullscreen);
-      fullscreenBtn.title = isFullscreen ? "Exit Fullscreen" : "Fullscreen";
+      if (!actual) _remaximizeOnExit = false;
+      applyFullscreenUi(actual);
     }
   } catch (err) {
     console.error("Failed to check fullscreen state:", err);

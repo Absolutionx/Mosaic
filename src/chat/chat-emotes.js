@@ -457,10 +457,15 @@ export const chatEmotesMixin = {
       this._hideEmotePopup();
       return;
     }
-    const popupHeight = this._emotePopup.offsetHeight;
     this._emotePopup.style.position = "fixed";
-    this._emotePopup.style.left = rect.left + "px";
     this._emotePopup.style.width = rect.width + "px";
+    // measured after the width is set: the stylesheet gives the popup a minimum width, so it can be wider
+    // than the text box. it starts at the text box's left edge and is pulled back in if it would run off
+    // the window
+    const popupHeight = this._emotePopup.offsetHeight;
+    const popupWidth = this._emotePopup.offsetWidth;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - popupWidth - 8));
+    this._emotePopup.style.left = left + "px";
     // prefer above the input, fall back to below if there's not enough room
     if (rect.top - popupHeight - 6 >= 0) {
       this._emotePopup.style.top = (rect.top - popupHeight - 6) + "px";

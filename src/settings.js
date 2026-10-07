@@ -69,6 +69,8 @@ export const DEFAULTS = {
   notifyGoLive: true,
   notifyCategory: true,
   notifyWhispers: true,      // desktop notification for a whisper while Mosaic isn't focused
+  notifySubExpiry: true,     // reminder before a Twitch subscription that won't renew runs out (sub-expiry.js)
+  subExpiryDays: 3,          // how many days ahead the first reminder comes
   notifySound: true,
   notifyVolume: 100,         // Mosaic's chime volume, % of the original (0-200): notifications + chat highlight sound
   quietHours: false,
@@ -201,7 +203,7 @@ function inQuietHours(now = new Date()) {
   return start < end ? h >= start && h < end : h >= start || h < end; // windows can wrap midnight
 }
 export function notificationAllowed(kind) {
-  const key = { golive: "notifyGoLive", category: "notifyCategory", whisper: "notifyWhispers" }[kind];
+  const key = { golive: "notifyGoLive", category: "notifyCategory", whisper: "notifyWhispers", subexpiry: "notifySubExpiry" }[kind];
   if (key && !getSetting(key)) return false;
   if (getSetting("quietHours") && inQuietHours()) return false;
   return true;

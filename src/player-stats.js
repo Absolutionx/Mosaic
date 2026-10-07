@@ -15,8 +15,9 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 export function initPlayerMenu(host, d) {
   deps = d;
   host.addEventListener("contextmenu", (e) => {
-    // the overlay's own controls and the chat overlay keep their own behavior
-    if (e.target.closest?.("#chat-overlay, .nerd-stats")) return;
+    // only for the video itself: the control bar (e.g. Track ID's right-click history), any button, text field,
+    // link or menu inside the player, the chat overlay and Stats for nerds keep their own right-click behavior
+    if (e.target.closest?.("#chat-overlay, .nerd-stats, #controls-bar, button, input, textarea, select, a, [role='menu'], [class*='-menu']")) return;
     if (e.shiftKey && getSetting("videoContextMenu")) return; // the browser's menu, on request
     if (!deps.isPlaying?.()) return;
     e.preventDefault();

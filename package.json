@@ -1,13 +1,12 @@
 {
   "name": "mosaic",
   "private": true,
-  "version": "1.4.5",
+  "version": "1.4.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "tauri",
-    "test": "node --test"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/plugin-notification": "^2.0.0",

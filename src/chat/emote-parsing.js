@@ -1,7 +1,6 @@
-// pure, dependency-free emote parsing: the testable core of chat-emotes.js and
-// chat-vod-replay.js (no DOM, tauri, fetch, or `this`). kept separate so
-// tests/emote-parsing.test.js runs under plain `node --test`, since regressions here
-// (native offsets, cheermote tiers) have bitten before
+// pure, dependency-free emote parsing: the core of chat-emotes.js and chat-vod-replay.js
+// (no DOM, tauri, fetch, or `this`). kept separate and side-effect free so it can be exercised
+// on its own, since regressions here (native offsets, cheermote tiers) have bitten before
 
 // IRC @emotes tag format: "id:start-end,start-end/id2:start-end" (character offsets)
 export function parseTwitchEmotesTag(message, emotesTag) {

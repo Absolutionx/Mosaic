@@ -85,6 +85,10 @@ pub struct ChatRoomStateEvent {
 pub struct UserStateEvent {
     pub badges: String,
     pub color: Option<String>,
+    // the "badge-info" tag: details for the badges above. Twitch only fills it for the subscriber / founder
+    // badge, with the number of months subscribed ("subscriber/14"). the Subscribe button's panel reads it
+    // (channel-you.js)
+    pub badge_info: String,
 }
 
 // fired on CLEARCHAT. either one user's messages were cleared (target_user_id/target_username set; ban_duration_secs set only for a timeout, not a permanent ban) or the whole chat was cleared (all three None)
@@ -603,8 +607,9 @@ async fn handle_irc_line<S>(
             // badges here but a real chosen chat color lost that color (the whole event was skipped), color and badges are independent tags, so this checks for either being present rather than gating on badges
             let badges = tags.get("badges").cloned().unwrap_or_default();
             let color = tags.get("color").cloned().filter(|s| !s.is_empty());
-            if !badges.is_empty() || color.is_some() {
-                let _ = app.emit("user-state", UserStateEvent { badges, color });
+            let badge_info = tags.get("badge-info").cloned().unwrap_or_default();
+            if !badges.is_empty() || color.is_some() || !badge_info.is_empty() {
+                let _ = app.emit("user-state", UserStateEvent { badges, color, badge_info });
             }
         }
         _ => {

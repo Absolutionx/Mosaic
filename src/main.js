@@ -9,6 +9,8 @@ import { TwitchChat } from "./chat.js";
 import { openChatFilterModal } from "./chat-filter.js";
 import { openPinAuthModal } from "./pin-auth.js";
 import { openRewardsModal } from "./rewards.js";
+import { initChannelYou, resetChannelYou } from "./channel-you.js";
+import { startSubExpiryReminders, resetSubExpiry } from "./sub-expiry.js";
 import { initModLog, openModLogModal } from "./mod-log.js";
 import { initModMenu } from "./mod-menu.js";
 import { initWhispers, openWhispers } from "./whispers.js";
@@ -467,6 +469,7 @@ initModMenu(chat);
 initWhispers(chat);
 startHypeBadgePolling();
 if (getSetting("autoClaimDrops")) startDropsAutoClaim(); // Settings > App
+startSubExpiryReminders(); // Settings > Notifications > Subscription ending reminders
 // the shield (room controls) only makes sense where you can moderate
 {
   const modmenuBtn = document.getElementById("modmenu-btn");
@@ -1031,6 +1034,12 @@ initChannelInfoBar({
   },
   onTwitchFollowChanged: () => setTimeout(() => sidebar.refreshFollowed().catch?.(() => {}), 2500),
 });
+// the Subscribe button's "you and this channel" panel (Twitch): subscription, follow age, your stats
+initChannelYou({
+  button: document.getElementById("channel-info-subscribe-btn"),
+  loggedIn: () => !!(currentLogin && currentLogin.login),
+  connectTwitch: (done) => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); done?.(); }),
+});
 
 vodsPage.hide();
 // reopen whatever was playing, but ONLY across an F5/reload, never a genuine launch.
@@ -1087,6 +1096,8 @@ const auth = new TwitchAuth({
     chat.setLoggedIn(login, userId, displayName);
     // remember the login so the MultiView chat (created lazily / may not exist yet at first login) can be marked logged-in when it opens
     currentLogin = { login, userId, displayName };
+    resetChannelYou(); // subscription / follow answers belong to the account that asked
+    if (!login) resetSubExpiry(); // signed out: the known end dates were that account's
     if (multiview?.isOpen) multiview.setLoggedIn(login, userId, displayName);
     sidebar.onLogin();
     // homeFeed.show() at startup races ahead of login, so on a fresh launch the first fetch 401s and falls back to empty, and never retried. refresh() re-runs it now a valid token exists

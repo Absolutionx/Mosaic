@@ -10,6 +10,7 @@ import { streamHasDropsEnabled } from "./drops.js";
 import { updateDropsBanner } from "./drops-banner.js";
 import { formatViewerCount } from "./format.js";
 import { session } from "./session.js";
+import { setChannelYouTarget, toggleChannelYou, closeChannelYou } from "./channel-you.js";
 
 let watchChannel = () => {};
 let switchPage = () => {};
@@ -105,6 +106,8 @@ export async function updateChannelInfoBar(channel, stream) {
   // Twitch: a real in-app follow/unfollow (follow_channel), showing whether you already follow this channel
   setTwitchFollowBtn(twitchFollowState(channel));
   channelInfoSubscribeBtn.href = channelUrl;
+  // Twitch: Subscribe opens the "you and this channel" panel, and reads "Subscribed" when you are (channel-you.js)
+  setChannelYouTarget(channel, (stream && stream.user_name) || channel);
   // sync "Link Kick" to THIS channel's alias (and re-show it, the Kick populator hides it).
   // without the per-channel refresh the label followed you across channels and a fresh channel
   // showed the default even with an alias saved
@@ -222,6 +225,7 @@ export function updateKickChannelInfoBar(channel, info) {
   channelInfoFollowBtn.textContent = followed ? "Following" : "Follow";
   channelInfoFollowBtn.classList.toggle("is-following", followed);
   channelInfoSubscribeBtn.href = channelUrl;
+  setChannelYouTarget(null); // Kick: a plain link-out, no panel
   // same in-app VODs page, fetched from kick_channel_videos
   channelInfoVideosBtn.style.display = "";
 
@@ -292,6 +296,7 @@ export function startChannelInfoRefresh(channel, isStillCurrent) {
 export function hideChannelInfoBar() {
   channelInfoBar.style.display = "none";
   lastChannelInfo = null;
+  setChannelYouTarget(null);
   streamInfoOverlay.classList.add("empty");
   if (channelInfoRefreshTimer) {
     clearInterval(channelInfoRefreshTimer);
@@ -304,7 +309,9 @@ export function hideChannelInfoBar() {
 // resolves), which would hold the bar behind the launch wait
 export function resyncChannelInfoBarVisibility() {
   if (!lastChannelInfo) return;
-  channelInfoBar.style.display = session.intendedChannel !== null && !session.pageVisible ? "flex" : "none";
+  const show = session.intendedChannel !== null && !session.pageVisible;
+  channelInfoBar.style.display = show ? "flex" : "none";
+  if (!show) closeChannelYou();
 }
 
 // VOD playback: make sure the bar shows the VOD's channel (name, avatar, Follow / Subscribe / Videos /
@@ -431,8 +438,9 @@ export function toggleCurrentFollow() {
 }
 
 // same intercept-the-click, call openUrl() as dropsBannerLink (target="_blank" does nothing in
-// a Tauri webview). Follow is in-app on both platforms (Twitch: follow_channel; Kick: local list);
-// Subscribe links out to the channel page (paid subs can't be done from an app)
+// a Tauri webview). Follow is in-app on both platforms (Twitch: follow_channel; Kick: local list).
+// Subscribe: on Twitch it opens the read-only "you and this channel" panel, which has the link to Twitch
+// (paid subs can't be done from an app); on Kick it links out to the channel page
 for (const btn of [channelInfoFollowBtn, channelInfoSubscribeBtn]) {
   btn.addEventListener("click", (e) => {
     e.preventDefault();
@@ -453,6 +461,7 @@ for (const btn of [channelInfoFollowBtn, channelInfoSubscribeBtn]) {
       onTwitchFollowClick(btn);
       return;
     }
+    if (btn === channelInfoSubscribeBtn && lastChannelInfo && !lastChannelInfo.kick && toggleChannelYou()) return;
     openUrl(btn.href).catch((err) => {
       console.error("Failed to open channel link in browser:", err);
     });

@@ -18,6 +18,7 @@ import { chatUserCardMixin } from "./chat/chat-usercard.js";
 import { chatModActionsMixin } from "./chat/chat-mod-actions.js";
 import { chatLinkPreviewMixin } from "./chat/chat-link-preview.js";
 import { chatAutocompleteMixin } from "./chat/chat-autocomplete.js";
+import { countOwnMessage, noteOwnChatState } from "./channel-you.js";
 import { chatEventsMixin } from "./chat/chat-events.js";
 import { looksLikeUrl, USER_CARD_HISTORY_LIMIT } from "./chat/shared.js";
 // most recently active chatters whose user-card history + message count are kept per channel
@@ -413,6 +414,7 @@ export class TwitchChat {
           broadcasterUserId: this._kickBroadcasterId,
           message: text,
         });
+        countOwnMessage(this.channel, { kick: true });
         this.inputEl.value = "";
         this._autosizeChatInput();
         this.inputEl.closest?.(".chat-input-wrapper")?.classList.remove("has-text");
@@ -456,6 +458,7 @@ export class TwitchChat {
         message: text,
         replyToMsgId: this._replyToId || null,
       });
+      countOwnMessage(this.channel); // the Subscribe button's panel shows how many you've sent (channel-you.js)
       this.clearReply();
       this.inputEl.value = "";
       this._autosizeChatInput();
@@ -1049,6 +1052,8 @@ export class TwitchChat {
         // cache the badge string to retry after the badge maps finish loading (USERSTATE often arrives before loadGlobalBadges/loadChannelBadges complete)
         this._ownBadgesTag = event.payload.badges;
         this._renderInputBadges(this._ownBadgesTag);
+        // subscriber badge + months, for the Subscribe button and its panel (channel-you.js)
+        noteOwnChatState(this.channel, event.payload.badges, event.payload.badge_info);
         // own chat color for this channel, used by the local echo. Twitch allows unset color; leave it null rather than coercing, since normalizeColor() has its own fallback
         if (event.payload.color) this._ownColor = event.payload.color;
         // mod-tools visibility depends on this, re-derive and let main.js (which owns the hover-icon/menu DOM) re-render, since USERSTATE can arrive after the first messages
@@ -1466,6 +1471,7 @@ export class TwitchChat {
         send.disabled = true;
         try {
           await invoke("send_chat_message", { message: text, replyToMsgId: target });
+          countOwnMessage(this.channel);
           input.value = "";
           // Twitch never echoes our own message back, so render it optimistically. A thread reply is
           // still a normal chat message, so show it in the MAIN CHAT too (not just the thread) — that's

@@ -2583,6 +2583,179 @@ pub async fn get_active_hype_trains(channel_ids: Vec<String>) -> Result<serde_js
     Ok(serde_json::json!(out))
 }
 
+// ---- "You and this channel": the panel behind the Subscribe button (src/channel-you.js) ----
+
+fn valid_login(login: &str) -> bool {
+    !login.is_empty() && login.len() <= 25 && login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+// When you followed a channel. Official API (Helix "Get Followed Channels" narrowed to one broadcaster),
+// with the user:read:follows scope the login already has. { following, followed_at } (followed_at is an
+// RFC 3339 time, null when you don't follow the channel)
+#[tauri::command]
+pub async fn get_follow_info(
+    state: State<'_, ChatState>,
+    login: String,
+) -> Result<serde_json::Value, String> {
+    let login = login.to_lowercase();
+    if !valid_login(&login) {
+        return Err("invalid channel".to_string());
+    }
+    let (token, user_id) = require_auth(&state)?;
+    let body = helix_get(&format!("https://api.twitch.tv/helix/users?login={login}"), Some(token.clone())).await?;
+    let users: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let broadcaster_id = users.pointer("/data/0/id").and_then(|v| v.as_str())
+        .ok_or_else(|| "channel not found".to_string())?
+        .to_string();
+    let body = helix_get(
+        &format!("https://api.twitch.tv/helix/channels/followed?user_id={user_id}&broadcaster_id={broadcaster_id}"),
+        Some(token),
+    ).await?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let followed_at = json.pointer("/data/0/followed_at").and_then(|v| v.as_str());
+    Ok(serde_json::json!({ "following": followed_at.is_some(), "followed_at": followed_at }))
+}
+
+// Your subscription to a channel, read-only. Twitch's web GraphQL (unofficial) with the device login, like
+// the points balance and the resub banner. null when the device login isn't connected.
+//
+// Sent as three small queries, not one: a GraphQL query is rejected as a whole when a single field is
+// unknown, and these field names come from a public dump of Twitch's schema, not from a documented API. If
+// Twitch renames one, only the rows that query fed go blank; `errors` carries Twitch's message for the
+// console.
+//   core:   subscribed or not, tier, Prime                      -> subscribed / tier / prime
+//   detail: renewal / end date, gift + gifter, founder, follow  -> renews_at / ends_at / is_gift / gifter / ...
+//   tenure: months subscribed in total and in a row             -> months / streak_months
+// `subscribed` is null when the core query failed, so "unknown" is never shown as "not subscribed".
+// details = false sends only the core query: that's all the button's "Subscribed" label needs, and it runs
+// on every channel you open
+#[tauri::command]
+pub async fn get_subscription_info(
+    channel_login: String,
+    details: bool,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let login = channel_login.to_lowercase();
+    if !valid_login(&login) {
+        return Err("invalid channel".to_string());
+    }
+    const CORE: &str = "query MosaicSubCore($login: String!) { user(login: $login) { id self { subscriptionBenefit { id tier purchasedWithPrime } } } }";
+    const DETAIL: &str = "query MosaicSubDetail($login: String!) { user(login: $login) { id self { isFounder follower { followedAt } subscriptionBenefit { id renewsAt endsAt gift { isGift giftDate gifter { id displayName } } } } } }";
+    const TENURE: &str = "query MosaicSubTenure($login: String!) { user(login: $login) { id self { cumulative: subscriptionTenure(tenureMethod: CUMULATIVE) { months } streak: subscriptionTenure(tenureMethod: STREAK) { months } } } }";
+    let vars = serde_json::json!({ "login": login });
+    if !details {
+        return Ok(match device_gql(&app, "MosaicSubCore", CORE, vars).await {
+            Ok(None) => serde_json::Value::Null, // no device login
+            Ok(core) => subscription_summary(core.as_ref(), None, None, Vec::new(), false),
+            Err(e) => subscription_summary(None, None, None, vec![e], false),
+        });
+    }
+    let (core, detail, tenure) = tokio::join!(
+        device_gql(&app, "MosaicSubCore", CORE, vars.clone()),
+        device_gql(&app, "MosaicSubDetail", DETAIL, vars.clone()),
+        device_gql(&app, "MosaicSubTenure", TENURE, vars.clone()),
+    );
+    // Ok(None) from device_gql = no device login, and then all three say so
+    if matches!((&core, &detail, &tenure), (Ok(None), Ok(None), Ok(None))) {
+        return Ok(serde_json::Value::Null);
+    }
+    let mut errors: Vec<String> = Vec::new();
+    let mut take = |r: Result<Option<serde_json::Value>, String>| -> Option<serde_json::Value> {
+        match r {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(e);
+                None
+            }
+        }
+    };
+    let (core, detail, tenure) = (take(core), take(detail), take(tenure));
+    Ok(subscription_summary(core.as_ref(), detail.as_ref(), tenure.as_ref(), errors, true))
+}
+
+// the three answers folded into one flat object. split out so it has no I/O.
+// every key is always present, so two flags say what a null means: `detailed` = the detail and tenure
+// queries were asked for; `dates_known` = the detail query answered, so a null renews_at / ends_at really is
+// "no such date" and not "didn't ask" or "couldn't ask"
+fn subscription_summary(
+    core: Option<&serde_json::Value>,
+    detail: Option<&serde_json::Value>,
+    tenure: Option<&serde_json::Value>,
+    errors: Vec<String>,
+    detailed: bool,
+) -> serde_json::Value {
+    let ptr = |v: Option<&serde_json::Value>, p: &str| -> Option<serde_json::Value> {
+        v.and_then(|j| j.pointer(p)).filter(|x| !x.is_null()).cloned()
+    };
+    // a channel that doesn't exist (or is banned) answers with user: null
+    let channel_found = [core, detail, tenure].iter().any(|v| ptr(*v, "/data/user/id").is_some());
+    let benefit = ptr(core, "/data/user/self/subscriptionBenefit");
+    // answered and no benefit -> not subscribed. no answer, or no such channel -> unknown
+    let subscribed = if channel_found { core.map(|_| benefit.is_some()) } else { None };
+    serde_json::json!({
+        "channel_found": channel_found,
+        "detailed": detailed,
+        "dates_known": detail.is_some(),
+        "subscribed": subscribed,
+        "tier": benefit.as_ref().and_then(|b| b.get("tier")).and_then(|v| v.as_str()),
+        "prime": benefit.as_ref().and_then(|b| b.get("purchasedWithPrime")).and_then(|v| v.as_bool()),
+        "renews_at": ptr(detail, "/data/user/self/subscriptionBenefit/renewsAt"),
+        "ends_at": ptr(detail, "/data/user/self/subscriptionBenefit/endsAt"),
+        "is_gift": ptr(detail, "/data/user/self/subscriptionBenefit/gift/isGift"),
+        "gift_date": ptr(detail, "/data/user/self/subscriptionBenefit/gift/giftDate"),
+        "gifter": ptr(detail, "/data/user/self/subscriptionBenefit/gift/gifter/displayName"),
+        "founder": ptr(detail, "/data/user/self/isFounder"),
+        "followed_at": ptr(detail, "/data/user/self/follower/followedAt"),
+        "months": ptr(tenure, "/data/user/self/cumulative/months"),
+        "streak_months": ptr(tenure, "/data/user/self/streak/months"),
+        "errors": errors,
+    })
+}
+
+// Every subscription the device-login account has, for the "ending soon" reminders (src/sub-expiry.js).
+// Unofficial GraphQL, like get_subscription_info: currentUser.subscriptionBenefits, one page of 100. null
+// without the device login; Err (with Twitch's message) when Twitch rejects the query, so the caller can tell
+// "no subscriptions" from "couldn't ask". { user_id, subs: [{ login, name, tier, prime, is_gift, renews_at,
+// ends_at }] }. renews_at is null for a subscription that won't renew (gifted, Prime, cancelled); ends_at
+// is then the day it runs out
+#[tauri::command]
+pub async fn get_my_subscriptions(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    const QUERY: &str = "query MosaicMySubs { currentUser { id subscriptionBenefits(first: 100, criteria: { filter: ALL }) { edges { node { id tier purchasedWithPrime renewsAt endsAt gift { isGift } user { id login displayName } } } } } }";
+    let Some(json) = device_gql(&app, "MosaicMySubs", QUERY, serde_json::json!({})).await? else {
+        return Ok(serde_json::Value::Null);
+    };
+    Ok(my_subscriptions_list(&json))
+}
+
+fn my_subscriptions_list(json: &serde_json::Value) -> serde_json::Value {
+    let edges = json.pointer("/data/currentUser/subscriptionBenefits/edges").and_then(|e| e.as_array());
+    let subs: Vec<serde_json::Value> = edges
+        .map(|edges| {
+            edges
+                .iter()
+                .filter_map(|edge| {
+                    let node = edge.get("node").filter(|n| n.is_object())?;
+                    // a benefit with no channel behind it (Turbo) has nothing to open or name
+                    let login = node.pointer("/user/login").and_then(|v| v.as_str()).filter(|l| !l.is_empty())?;
+                    Some(serde_json::json!({
+                        "login": login.to_lowercase(),
+                        "name": node.pointer("/user/displayName").and_then(|v| v.as_str()).unwrap_or(login),
+                        "tier": node.get("tier").and_then(|v| v.as_str()),
+                        "prime": node.get("purchasedWithPrime").and_then(|v| v.as_bool()).unwrap_or(false),
+                        "is_gift": node.pointer("/gift/isGift").and_then(|v| v.as_bool()).unwrap_or(false),
+                        "renews_at": node.get("renewsAt").and_then(|v| v.as_str()),
+                        "ends_at": node.get("endsAt").and_then(|v| v.as_str()),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "user_id": json.pointer("/data/currentUser/id").and_then(|v| v.as_str()),
+        "subs": subs,
+    })
+}
+
 // Sub-anniversary ("resub") share: detect a pending anniversary the user can share in chat, and share it.
 // Mirrors StreamNook's resub commands (Chat_ShareResub_ChannelData / Chat_ShareResub_UseResubToken).
 #[tauri::command]

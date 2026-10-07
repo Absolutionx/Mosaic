@@ -56,7 +56,7 @@ export const chatEmotePickerMixin = {
     this._emotePickerMenu = this._emotePickerMenuEl;
     this._emotePickerTab = "all";
     this._emotePickerSearch = "";
-    if (!this.emoteBtn || !this._emotePickerMenu) return; // absent in tests/older markup, call sites guard on this.emoteBtn
+    if (!this.emoteBtn || !this._emotePickerMenu) return; // absent in older markup, call sites guard on this.emoteBtn
 
     this.emoteBtn.addEventListener("click", (e) => {
       e.stopPropagation();

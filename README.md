@@ -136,6 +136,17 @@ in-app the first time you use them).
   you on Windows.
 - **Settings panel** (`Ctrl+,`), every option in one searchable place, with
   backup and restore of settings and local data.
+- **You and this channel**, the Subscribe button on a Twitch channel opens a
+  read-only panel: your subscription (months, tier, Prime or gift, renewal or end
+  date), how long you've followed, the messages you've sent from Mosaic, your
+  watch time, channel points and watch streak, with a link to subscribe or manage
+  on Twitch. The button reads "Subscribed" when you are. Mosaic never buys or
+  changes a subscription. Tier and renewal details use the Twitch device login.
+- **Subscription ending reminders**, a desktop notification before a Twitch
+  subscription that won't renew runs out (gifted, Prime or cancelled): once a
+  chosen number of days ahead and once on the last day, for any channel, not just
+  the one you're watching. The panel shows the end date and days left, and the
+  Subscribe button gets a dot when the end is near.
 - **Watch stats**, time watched by day, week and month, top channels, live vs VOD
   and your streak. Stored locally.
 - **Start with your computer**, optionally minimized to the tray.
@@ -321,6 +332,8 @@ src/                    Frontend (vanilla JS, no framework)
   pip.js, mini-player.js  Always-on-top PiP window, in-app mini player
   multiview.js          Multi-stream grid
   channel-info-bar.js   Below-player info strip, follow button, overlay
+  channel-you.js        Subscribe button panel: your sub, follow age, stats
+  sub-expiry.js         Reminders before a subscription runs out
   layout.js             Page switching, theater/fullscreen, chrome
   titlebar.js           Custom window controls
   raid-banner.js        Raid countdown banner

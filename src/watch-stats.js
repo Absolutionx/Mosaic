@@ -77,6 +77,18 @@ export function computeStats(period, stats = load(), today = new Date()) {
     .map(([login, secs]) => ({ login, name: stats.names[login] || login, secs }));
   return { total, live, vod, series, top, streak: streak(stats, today), since: Object.keys(stats.days).sort()[0] || null };
 }
+// one channel's total over everything kept (KEEP_DAYS), and the first day it was watched (null if never)
+export function channelWatchTime(login, stats = load()) {
+  const l = String(login || "").toLowerCase();
+  let secs = 0, since = null;
+  for (const [day, entries] of Object.entries(stats.days)) {
+    const e = entries && entries[l];
+    if (!e) continue;
+    secs += (e.live || 0) + (e.vod || 0);
+    if (!since || day < since) since = day;
+  }
+  return { secs, since };
+}
 function dayTotal(day) {
   return day ? Object.values(day).reduce((a, e) => a + (e.live || 0) + (e.vod || 0), 0) : 0;
 }
