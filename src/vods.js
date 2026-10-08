@@ -398,7 +398,11 @@ export class VodsPage {
     // one active popup at a time
     let activePopup = null;
     const closePopup = () => { activePopup?.remove(); activePopup = null; };
-    document.addEventListener("click", closePopup, { capture: true, once: false });
+    // one page-wide listener for the whole VODs page, replaced on each load. it used to be added on every
+    // load and never removed, each copy keeping that load's cards alive
+    if (this._closeChapterPopup) document.removeEventListener("click", this._closeChapterPopup, { capture: true });
+    this._closeChapterPopup = closePopup;
+    document.addEventListener("click", closePopup, { capture: true });
 
     await Promise.all(cardRefs.map(async ({ vodId, card, totalSeconds, meta: vodMeta }) => {
       try {

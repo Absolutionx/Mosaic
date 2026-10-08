@@ -404,6 +404,10 @@ export const chatEmotesMixin = {
   },
 
   _showEmotePopup(names) {
+    // the popup is shared with the @name suggestions, and this flag decides what a pick inserts. it has to
+    // be set here: it used to be left at "user" after a name list was shown and dismissed without a pick,
+    // and the next emote you completed went in as "@EmoteName" at the start of the message
+    this._popupMode = "emote";
     const popup = this._emotePopup;
     popup.innerHTML = "";
     this._emotePopupIndex = -1;
@@ -479,6 +483,7 @@ export const chatEmotesMixin = {
   _hideEmotePopup() {
     this._emotePopup.style.display = "none";
     this._emotePopupIndex = -1;
+    this._popupMode = "emote"; // nothing is showing: no stale "user" mode for the next list to inherit
   },
 
   _moveEmoteSelection(delta) {

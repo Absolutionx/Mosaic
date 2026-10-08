@@ -585,7 +585,7 @@ fn url_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
+            b'%' if i + 3 <= bytes.len() => {
                 if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
                     if let Ok(byte) = u8::from_str_radix(hex, 16) {
                         out.push(byte as char);

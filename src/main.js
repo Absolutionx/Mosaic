@@ -26,7 +26,7 @@ import { initPlayerMenu } from "./player-stats.js";
 import { initAudioNormalizer, normalizerReduction } from "./audio-normalizer.js";
 import { initAmbientGlow } from "./ambient-glow.js";
 import { initVodBookmarks, addBookmarkNow, openBookmarksList } from "./vod-bookmarks.js";
-import { PlaybackControls } from "./playback-controls.js";
+import { PlaybackControls, pipVodLowUrls } from "./playback-controls.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
 import { initTooltips } from "./tooltips.js";
@@ -148,26 +148,32 @@ automodToggleBtn?.addEventListener("click", () => chat.toggleAutomodPanel());
 // player's URL is a single-variant media playlist (streamlink resolves one quality), so
 // capLevelToPlayerSize can't help and a ~480px PiP pulled source segments. resolving here pays the
 // streamlink spawn once per VOD while nothing waits on it. PiP falls back to the main URL if this fails or goes stale
-function resolvePipVodUrl(videoId, currentM3u8Url) {
-  const key = `pipVodLowUrl:${videoId}`;
-  try {
-    const cached = JSON.parse(localStorage.getItem(key) || "null");
-    // "fresh" means fresh for THIS session: these URLs point at the app's localhost HLS proxy, whose
-    // port is ephemeral per launch, so a URL outliving its session points at a dead port. the current
-    // main-player URL is from this session, so matching ports is the session check
-    const samePort = cached?.url && currentM3u8Url &&
-      new URL(cached.url).port === new URL(currentM3u8Url).port;
-    if (samePort && Date.now() - cached.ts < 3 * 3600_000) return; // still fresh AND this session
-  } catch (_) {}
+function resolvePipVodUrl(videoId) {
+  const key = String(videoId);
+  const cached = pipVodLowUrls.get(key);
+  if (cached && Date.now() - cached.ts < 3 * 3600_000) return; // still fresh
   invoke("get_vod_m3u8_url", { videoId, quality: "480p,360p,worst" })
     .then((url) => {
-      localStorage.setItem(key, JSON.stringify({ url, ts: Date.now() }));
+      pipVodLowUrls.delete(key);
+      pipVodLowUrls.set(key, { url, ts: Date.now() });
+      // a long session of VOD hopping: keep the most recent few
+      while (pipVodLowUrls.size > 20) pipVodLowUrls.delete(pipVodLowUrls.keys().next().value);
       console.log(`[main] pre-resolved low-quality VOD playlist for PiP (${videoId})`);
     })
     .catch((err) => {
       console.warn("[main] PiP low-quality VOD pre-resolve failed (PiP will use the main-quality URL):", err);
     });
 }
+// earlier versions kept those in localStorage under "pipVodLowUrl:<vod id>" and never removed them: clear
+// out what they left behind (one small dead entry per VOD ever opened)
+try {
+  const stale = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith("pipVodLowUrl:")) stale.push(k);
+  }
+  for (const k of stale) localStorage.removeItem(k);
+} catch { /* ignore */ }
 
 // auto-recovery guard for onStreamDead: allow a burst of restarts (blips recover on the first),
 // but a relay dying right after every restart means something's wrong, give up after 4 attempts in
@@ -358,7 +364,7 @@ const playbackControls = new PlaybackControls({
         : await invoke("get_vod_m3u8_url", { videoId, quality: session.currentQuality });
       playbackControls._liveDvr = { channel: session.intendedChannel, videoId, streamStartedAt };
       playbackControls.attachHlsDvr(m3u8Url, vodOffset);
-      resolvePipVodUrl(videoId, m3u8Url);
+      resolvePipVodUrl(videoId);
       // switch chat to VOD replay, using the channel login for badge loading. vodOffset tells replay where playback lands, see setVodMode's initialPositionSecs for why it matters on long streams
       await chat.setVodMode(videoId, () => playbackControls.lastKnownPosition, session.intendedChannel, vodOffset);
       setStatus(`DVR: ${session.intendedChannel}`);
@@ -1093,11 +1099,23 @@ const auth = new TwitchAuth({
   userMenuEl:      document.getElementById("user-menu"),
   userMenuSignout: document.getElementById("user-menu-signout"),
   statusCallback: (login, userId, displayName) => {
+    // signed out (auth.logout calls this with nulls). this used to run the LOGIN steps with a null account:
+    // the chat box stayed enabled ("Failed to send"), the clip button stayed live, the sidebar kept the old
+    // followed list, and the whisper connection was started again
+    if (!login) {
+      currentLogin = null;
+      chat.setLoggedOut();
+      multiview?.setLoggedOut(); // open or not: its chat is kept between openings
+      sidebar.onLogout();
+      resetChannelYou();
+      resetSubExpiry(); // the known end dates were that account's
+      homeFeed.refresh();
+      return;
+    }
     chat.setLoggedIn(login, userId, displayName);
     // remember the login so the MultiView chat (created lazily / may not exist yet at first login) can be marked logged-in when it opens
     currentLogin = { login, userId, displayName };
     resetChannelYou(); // subscription / follow answers belong to the account that asked
-    if (!login) resetSubExpiry(); // signed out: the known end dates were that account's
     if (multiview?.isOpen) multiview.setLoggedIn(login, userId, displayName);
     sidebar.onLogin();
     // homeFeed.show() at startup races ahead of login, so on a fresh launch the first fetch 401s and falls back to empty, and never retried. refresh() re-runs it now a valid token exists
@@ -1131,8 +1149,22 @@ chatExpandStrip.addEventListener("click", toggleChatCollapse);
 
 fullscreenBtn.addEventListener("click", toggleFullscreen);
 
+// Panels and menus that close on Escape with their own handler, outside the escape stack (escape-stack.js).
+// While one of them is open, that Escape is theirs alone. Without this the same press closed the panel AND
+// dropped you out of theater mode and fullscreen. The check has to happen in the capture phase: by the time
+// the shortcut handler below runs, the panel's own handler has already closed it.
+const ESC_OWNERS = ".chat-filter-overlay, .hidden-channels-overlay, .modmenu-overlay, .hide-channel-menu, .chat-context-menu, " +
+  ".mod-timeout-menu, .badge-picker, .mv-quality-menu, .mvl-sound-menu, .emote-picker-menu, .emote-autocomplete, #chat-settings-menu, #track-id-panel";
+let escapeWasForAPanel = false;
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  escapeWasForAPanel = [...document.querySelectorAll(ESC_OWNERS)]
+    .some((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden");
+}, true);
+
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    if (escapeWasForAPanel) { escapeWasForAPanel = false; return; }
     // both checked independently (not else-if), theater mode and fullscreen are unrelated states that can be active together, so one Escape exits both at once (like every video app)
     if (appEl.classList.contains("theater-mode")) {
       setTheaterMode(false);
@@ -1801,7 +1833,7 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
     setStatus(`Playing VOD ${videoId}`);
     videoPlaceholder.style.display = "none";
     playbackControls.start(`vod:${videoId}`, m3u8Url, session.currentQuality, vodTotalSeconds, startPositionSecs);
-    resolvePipVodUrl(videoId, m3u8Url);
+    resolvePipVodUrl(videoId);
     updateBackToStreamBtn();
     // show the VOD's channel in the info bar (Follow / Subscribe / Videos), even when it was opened
     // from Home where no channel info was loaded; keeps existing info when it's already this channel

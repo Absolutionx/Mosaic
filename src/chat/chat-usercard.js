@@ -4,6 +4,7 @@
 // lookup), this session's message count + a short recent-message log (client-side), timeout/ban
 import { invoke } from "@tauri-apps/api/core";
 import { USER_CARD_HISTORY_LIMIT } from "./shared.js";
+import { pushEscape } from "../escape-stack.js";
 
 export const chatUserCardMixin = {
   // msgId/messageText scope the Delete button to THAT message, delete is message-scoped unlike timeout/ban
@@ -24,6 +25,9 @@ export const chatUserCardMixin = {
     });
     document.body.appendChild(card);
     this._userCardEl = card;
+    // Escape closes the card, like every other panel (it used to fall through to the app's own Escape
+    // shortcut and leave theater mode / fullscreen with the card still open)
+    this._userCardPopEscape = pushEscape(() => this._closeUserCard());
     // whether THIS card was dragged, so the reposition after the async lookup doesn't snap a
     // moved card back. on the element so it's scoped per card
     card._dragged = false;
@@ -129,17 +133,30 @@ export const chatUserCardMixin = {
     noteInput.rows = 2;
     noteInput.placeholder = "Private note\u2026";
     noteInput.addEventListener("mousedown", (e) => e.stopPropagation()); // don't start a card drag
-    noteInput.addEventListener("change", () => {
+    // saved when the box loses focus ("change"), and again when the card closes: a card that closes while
+    // you're still in the box (Escape, scrolling chat, switching channel) never fires "change", and the note
+    // you had just typed was lost
+    let savedNote = "", noteTouched = false;
+    const saveNote = () => {
+      if (!noteTouched || noteInput.value === savedNote) return;
+      savedNote = noteInput.value;
       invoke("set_user_note", { userId, note: noteInput.value }).catch(() => {});
       if (this._noteUserIds) {
         if (noteInput.value.trim()) this._noteUserIds.add(userId);
         else this._noteUserIds.delete(userId);
       }
-    });
+    };
+    noteInput.addEventListener("input", () => { noteTouched = true; });
+    noteInput.addEventListener("change", saveNote);
+    card._flushNote = saveNote;
     noteWrap.appendChild(noteInput);
     body.appendChild(noteWrap);
     invoke("get_user_note", { userId })
-      .then((n) => { noteInput.value = n || ""; })
+      .then((n) => {
+        if (noteTouched) return; // you started typing before the saved note arrived: keep what you typed
+        noteInput.value = n || "";
+        savedNote = noteInput.value;
+      })
       .catch(() => {});
 
     // isSelf/enabled recomputed each open since isMod can change
@@ -315,7 +332,10 @@ export const chatUserCardMixin = {
   },
 
   _closeUserCard() {
+    this._userCardPopEscape?.();
+    this._userCardPopEscape = null;
     if (this._userCardEl) {
+      this._userCardEl._flushNote?.(); // a note still being typed
       // if the card is removed mid-drag (a scroll-triggered close) its mouseup never fires, so detach here to avoid a leak
       this._userCardEl._dragCleanup?.();
       this._userCardEl.remove();

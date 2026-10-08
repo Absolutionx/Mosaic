@@ -891,7 +891,7 @@ pub async fn start_relay(
     ensure_listener_running(&state).await?;
 
     let port = state.port.load(Ordering::SeqCst);
-    Ok(format!("http://127.0.0.1:{port}/stream"))
+    Ok(format!("http://127.0.0.1:{port}/stream?k={}", proxy_key()))
 }
 
 // binds the hls-proxy / relay HTTP listener if it isn't already running (i.e. if state.port is still 0). called from both start_relay (live streams) and get_vod_m3u8_url (VODs), without this, watching a VOD on a fresh launch where no live stream was ever started leaves port=0 and makes the proxy URL unusable (black screen)
@@ -935,25 +935,51 @@ fn pct_encode(s: &str) -> String {
     out
 }
 
+// A secret that every URL of the local server carries (?k=...), generated once per run.
+//
+// The server listens on 127.0.0.1 only, but that doesn't keep web pages out: any page open in a browser on
+// this computer can send requests to 127.0.0.1 as well. /hls-proxy fetches whatever URL it is handed (it has
+// to stay host-agnostic for Kick and the CDNs) and answers with Access-Control-Allow-Origin: *, so without a
+// secret a page could find the port and read things only this computer can reach (a router's pages, other
+// local services) through it. Only URLs this app built carry the key; anything else gets a 403.
+fn proxy_key() -> &'static str {
+    static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
+}
+
+// "http://127.0.0.1:PORT/<route>?k=KEY&url=<upstream, encoded>"
+fn proxy_url(proxy_base: &str, route: &str, upstream: &str) -> String {
+    format!("{proxy_base}/{route}?k={}&url={}", proxy_key(), pct_encode(upstream))
+}
+
+// does this request path ("/route?a=b&k=...") carry the key
+fn has_proxy_key(path: &str) -> bool {
+    path.split_once('?')
+        .map(|(_, query)| query.split('&').any(|p| p.strip_prefix("k=") == Some(proxy_key())))
+        .unwrap_or(false)
+}
+
 // decodes a percent-encoded query-parameter value
 fn pct_decode(s: &str) -> String {
     let bytes = s.as_bytes();
-    let mut out = String::new();
+    // collected as bytes and read as UTF-8 at the end: pushing each decoded byte as its own char mangled any
+    // non-ASCII character (every UTF-8 byte became a separate Latin-1 letter)
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             let h = char::from(bytes[i + 1]).to_digit(16);
             let l = char::from(bytes[i + 2]).to_digit(16);
             if let (Some(h), Some(l)) = (h, l) {
-                out.push(((h * 16 + l) as u8) as char);
+                out.push((h * 16 + l) as u8);
                 i += 3;
                 continue;
             }
         }
-        out.push(if bytes[i] == b'+' { ' ' } else { bytes[i] as char });
+        out.push(if bytes[i] == b'+' { b' ' } else { bytes[i] });
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 // returns everything up to and including the last '/' of a URL (the base directory), used to resolve relative segment paths in an M3U8 playlist
@@ -976,7 +1002,8 @@ fn rewrite_m3u8(content: &str, base_url: &str, proxy_base: &str) -> String {
             } else {
                 format!("{base_url}{t}")
             };
-            out.push_str(&format!("{proxy_base}/hls-proxy?url={}\n", pct_encode(&abs)));
+            out.push_str(&proxy_url(proxy_base, "hls-proxy", &abs));
+            out.push('\n');
         } else if t.starts_with("#EXT-X-MAP:") {
             // init-segment reference, rewrite URI="..." inside the tag
             out.push_str(&rewrite_tag_uri(t, base_url, proxy_base));
@@ -1001,7 +1028,7 @@ fn rewrite_tag_uri(tag: &str, base_url: &str, proxy_base: &str) -> String {
             } else {
                 format!("{base_url}{uri}")
             };
-            let proxied = format!("{proxy_base}/hls-proxy?url={}", pct_encode(&abs));
+            let proxied = proxy_url(proxy_base, "hls-proxy", &abs);
             return format!(
                 "{}URI=\"{}\"{}",
                 &tag[..s],
@@ -1150,8 +1177,12 @@ async fn handle_hls_proxy(
         ("video/mp4", body_bytes.to_vec())
     };
 
+    // no-store: without it the webview writes every response to its disk cache (Chromium caches a response
+    // that has no caching headers at all), and nothing here is ever read back from there: playlists change
+    // every few seconds and a segment is fetched once. watching through this proxy (VODs, Kick, clips) wrote
+    // the whole video to disk as it played, a few GB an hour, pushing the images worth caching out
     let header = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: {out_type}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: {out_type}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         out_body.len()
     );
     socket.write_all(header.as_bytes()).await?;
@@ -1258,6 +1289,9 @@ async fn run_accept_loop(listener: TcpListener, state: Arc<StreamRelayState>) {
             }
             Err(e) => {
                 eprintln!("[stream_relay] accept() error: {e}");
+                // a failing accept() usually keeps failing for a while (out of handles, say): without a
+                // pause this loop spins at full speed, printing the same error
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
     }
@@ -1279,6 +1313,14 @@ async fn handle_connection(
     let path = req_str.lines().next()
         .and_then(|l| l.split_whitespace().nth(1))
         .unwrap_or("/stream");
+
+    // every URL this app hands out carries the key (see proxy_key). no key: not ours
+    if !has_proxy_key(path) {
+        let _ = socket
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await;
+        return Ok(());
+    }
 
     // route: /hls-proxy?url=... proxies a Twitch CDN request with CORS headers. all other paths fall through to the stream relay
     if path.starts_with("/hls-proxy") {
@@ -1586,7 +1628,7 @@ pub async fn resolve_clip_url(
     let port = state.port.load(Ordering::Relaxed);
     Ok(serde_json::json!({
         "kind": "mp4",
-        "url": format!("http://127.0.0.1:{port}/clip-proxy?url={}", pct_encode(&cdn_url)),
+        "url": proxy_url(&format!("http://127.0.0.1:{port}"), "clip-proxy", &cdn_url),
     }))
 }
 
@@ -1642,10 +1684,7 @@ pub(crate) async fn proxied_hls_url(
 ) -> Result<String, String> {
     ensure_listener_running(state).await?;
     let port = state.port.load(Ordering::Relaxed);
-    Ok(format!(
-        "http://127.0.0.1:{port}/hls-proxy?url={}",
-        pct_encode(upstream)
-    ))
+    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), "hls-proxy", upstream))
 }
 
 #[tauri::command]

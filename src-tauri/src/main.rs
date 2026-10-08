@@ -181,6 +181,13 @@ fn main() {
                 let _ = win.maximize();
             }
 
+            // installers left in the temp folder by earlier updates (see app_extras::remove_old_update_files)
+            let app_name = app.package_info().name.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                app_extras::remove_old_update_files(&std::env::temp_dir(), &app_name);
+            });
+
             // watch heartbeat: reports minute-watched so Twitch drops + channel points accrue while
             // watching. needs the device-login token (opt-in); no-ops without it. must be created here
             // since it needs the AppHandle to read that token.

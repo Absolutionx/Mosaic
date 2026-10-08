@@ -38,7 +38,12 @@ export async function openModMenu(anchorBtn, chat) {
   try { settings = (await invoke("get_chat_settings", { broadcasterId })) || {}; }
   catch (err) {
     const body = menu.querySelector(".modmenu-body");
-    if (body) body.innerHTML = `<div class="chat-filter-intro">Couldn't load room settings: ${String(err)}</div>`;
+    if (body) {
+      const note = document.createElement("div");
+      note.className = "chat-filter-intro";
+      note.textContent = `Couldn't load room settings: ${String(err)}`; // an error message, never markup
+      body.replaceChildren(note);
+    }
     positionModMenu(menu, anchorBtn);
     return;
   }

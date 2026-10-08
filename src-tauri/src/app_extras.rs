@@ -9,6 +9,48 @@ pub fn launched_at_startup() -> bool {
     std::env::args().any(|a| a == "--autostart")
 }
 
+// Leftover update installers. The updater downloads each new version's installer into its own folder in the
+// temp directory ("Mosaic-<version>-updater-<random>") and nothing ever removes it: the app exits so the
+// installer can run. One installer per update adds up over time. This clears them out; main.rs calls it a
+// little after startup, by which time the installer that put this version in place has finished (one that
+// is still running simply fails to delete and goes at the next start).
+// Deliberately narrow: only folders with that name shape, directly inside `temp`, and in them only the
+// installer files; a folder holding anything else is left where it is. Returns how many folders went.
+pub fn remove_old_update_files(temp: &std::path::Path, app_name: &str) -> usize {
+    let app = app_name.to_lowercase();
+    if app.is_empty() {
+        return 0;
+    }
+    let prefix = format!("{app}-");
+    let Ok(entries) = std::fs::read_dir(temp) else { return 0 };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if !(name.starts_with(&prefix) && name.contains("-updater-")) {
+            continue;
+        }
+        // file_type() doesn't follow links: a link to a folder elsewhere is not one of ours
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let dir = entry.path();
+        if let Ok(files) = std::fs::read_dir(&dir) {
+            for f in files.flatten() {
+                let fname = f.file_name().to_string_lossy().to_lowercase();
+                let installer = fname.starts_with(&app) && (fname.ends_with(".exe") || fname.ends_with(".msi"));
+                if installer && f.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    let _ = std::fs::remove_file(f.path());
+                }
+            }
+        }
+        // not recursive: this only succeeds if the folder is empty now
+        if std::fs::remove_dir(&dir).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 // Settings > App > Back up settings: writes the backup JSON to the Downloads folder (falling back to the
 // app's data folder) as Mosaic-backup-YYYY-MM-DD.json and returns the full path, so the UI can show it
 #[tauri::command]

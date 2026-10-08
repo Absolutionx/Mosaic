@@ -41,6 +41,24 @@ function graphemeSegmenter() {
   return _graphemeSegmenter;
 }
 
+// What an Up/Down press in the chat box should do: "older" / "newer" to step through the messages you've
+// sent, or null to leave the key to the text box (moving the caret).
+//   idx: which sent message is showing (-1 = your draft), count: how many there are,
+//   shown: the text that was put in the box for idx, oneLine: the text sits on one line.
+// it steps when the caret has nowhere to go in that direction: a one-line box, the caret at the very start
+// (Up) or very end (Down), or a recalled message exactly as it was recalled, so holding Up runs through long
+// messages too. Down from your own draft does nothing: there's nothing newer
+export function historyKeyAction({ key, value, selStart, selEnd, idx, count, shown, oneLine }) {
+  if (!count) return null;
+  const up = key === "ArrowUp";
+  if (!up && idx === -1) return null;
+  const collapsed = selStart === selEnd;
+  const atStart = collapsed && selStart === 0;
+  const atEnd = collapsed && selEnd === value.length;
+  const untouched = idx !== -1 && value === shown && atEnd;
+  return oneLine || untouched || (up ? atStart : atEnd) ? (up ? "older" : "newer") : null;
+}
+
 // Keeps chat art scaled to fit the chat column. One shared ResizeObserver watches each art block's
 // outer box (full chat width): it fits when the block is first laid out (so it works even if the chat
 // was hidden or the line was built off-DOM) and again whenever the column width changes. The inner box
@@ -149,6 +167,7 @@ export class TwitchChat {
     this._sentHistory  = [];
     this._historyIdx   = -1;
     this._historyDraft = "";
+    this._historyEdits = new Map(); // idx -> a recalled message as you edited it, until the next send
 
     // shown when scrolled up. scoped to this instance's container so a second chat (MultiView) uses its own
     this.jumpToLatestBtn = this._jumpToLatestBtnEl
@@ -211,33 +230,40 @@ export class TwitchChat {
             return;
           }
         } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-          // only active when the emote popup is closed (handled above) and there's actually history to show
-          if (!this._sentHistory.length) return;
+          // only active when the emote popup is closed (handled above). Up/Down belong to the text box first:
+          // with Shift/Ctrl/Alt they select or jump, and in a draft that has wrapped onto several lines they
+          // move the caret between those lines. they only step through the sent messages when there's nowhere
+          // for the caret to go (see historyKeyAction). this used to take every Up/Down as soon as one message
+          // had been sent, so the caret couldn't be moved up a line in a long draft
+          if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+          const el = this.inputEl;
+          const shown = (i) => (i === -1 ? this._historyDraft : (this._historyEdits.get(i) ?? this._sentHistory[i]));
+          const action = historyKeyAction({
+            key: e.key, value: el.value, selStart: el.selectionStart, selEnd: el.selectionEnd,
+            idx: this._historyIdx, count: this._sentHistory.length,
+            shown: this._historyIdx === -1 ? null : shown(this._historyIdx),
+            oneLine: this._inputIsOneLine(),
+          });
+          if (!action) return;
           e.preventDefault();
 
-          if (e.key === "ArrowUp") {
-            if (this._historyIdx === -1) {
-              // save whatever the user was composing before navigating
-              this._historyDraft = this.inputEl.value;
-            }
-            if (this._historyIdx < this._sentHistory.length - 1) {
-              this._historyIdx++;
-            }
+          // keep what's in the box before leaving it: the draft, or an edit made to a recalled message
+          // (so stepping away and back doesn't throw the edit away)
+          if (this._historyIdx === -1) this._historyDraft = el.value;
+          else if (el.value !== this._sentHistory[this._historyIdx]) this._historyEdits.set(this._historyIdx, el.value);
+          else this._historyEdits.delete(this._historyIdx);
+
+          if (action === "older") {
+            if (this._historyIdx < this._sentHistory.length - 1) this._historyIdx++;
           } else {
-            if (this._historyIdx === -1) return; // nothing to go forward to
             this._historyIdx--;
           }
 
-          const text = this._historyIdx === -1
-            ? this._historyDraft
-            : this._sentHistory[this._historyIdx];
-
-          this.inputEl.value = text;
-          this._autosizeChatInput();
+          const text = shown(this._historyIdx);
+          el.value = text;
+          this._autosizeChatInput(); // also keeps .has-text (the Send button) in step
           // place cursor at end so it's easy to edit the recalled message
-          this.inputEl.setSelectionRange(text.length, text.length);
-          this.inputEl.closest?.(".chat-input-wrapper")
-            ?.classList.toggle("has-text", text.length > 0);
+          el.setSelectionRange(text.length, text.length);
           return;
         } else if (e.key === "Tab") {
           // Tab opens it now. it used to auto-open on every keystroke, so typing "lol" pre-selected an emote and the next Enter committed it instead of sending. only swallow Tab if there's a word worth suggesting for
@@ -319,9 +345,27 @@ export class TwitchChat {
   // grows/shrinks the textarea to fit content up to the CSS max-height (then scrolls internally).
   // height must reset to "auto" before reading scrollHeight, else it reports the stale current height.
   // overflow-y is toggled to auto only past MAX_HEIGHT_PX so a short line doesn't show stray scroll arrows
+  // whether the text in the chat box sits on a single line (no line break, and not wrapped). needs layout,
+  // so it's only asked on an Up/Down press. not laid out (hidden) counts as one line
+  _inputIsOneLine() {
+    const el = this.inputEl;
+    if (!el) return true;
+    if (el.value.includes("\n")) return false;
+    if (!el.scrollHeight) return true;
+    const cs = getComputedStyle(el);
+    const lineHeight = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 13) * 1.2;
+    const padding = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    return el.scrollHeight - padding < lineHeight * 1.5;
+  }
+
   _autosizeChatInput() {
     const el = this.inputEl;
     if (!el) return;
+    // the Send button only exists while there's text (.has-text), and it takes its width out of the text
+    // box. so the class has to be right BEFORE measuring: going from empty to a long text in one step (Up for
+    // a sent message, a paste, an emote from the picker) used to be measured at the wide, button-less width,
+    // then the button appeared, the text re-wrapped onto another line, and that line was cut off
+    el.closest?.(".chat-input-wrapper")?.classList.toggle("has-text", el.value.length > 0);
     // not laid out yet (hidden panel, pre-first-paint): scrollHeight reads 0 and writing height:0px would collapse the box. a later call from a visible state settles it
     if (el.scrollHeight === 0) return;
     // squeezed (the chat column collapsed to 0 for the theater-mode chat overlay, or mid-animation): text
@@ -355,10 +399,7 @@ export class TwitchChat {
     if (this.inputEl) {
       this.inputEl.disabled = false;
       this.inputEl.placeholder = "Send a message";
-      const wrapper = this.inputEl.closest(".chat-input-wrapper");
-      this.inputEl.addEventListener("input", () => {
-        wrapper?.classList.toggle("has-text", this.inputEl.value.length > 0);
-      });
+      // (.has-text, which shows the Send button, is kept in step by _autosizeChatInput on every input)
       // settle the composer at its computed height now, else the empty box sits at the browser's rows="1" height until the first keystroke, misaligning the badge/placeholder
       this._autosizeChatInput();
     }
@@ -422,6 +463,7 @@ export class TwitchChat {
         if (this._sentHistory.length > 50) this._sentHistory.pop();
         this._historyIdx = -1;
         this._historyDraft = "";
+        this._historyEdits.clear();
         // Kick's Pusher feed echoes the sender's own message back (unlike Twitch IRC), so no optimistic local echo here, it would double every sent message
       } catch (err) {
         this.systemLine(`Couldn't send to Kick: ${err}`);
@@ -469,6 +511,7 @@ export class TwitchChat {
       if (this._sentHistory.length > 50) this._sentHistory.pop();
       this._historyIdx   = -1;
       this._historyDraft = "";
+      this._historyEdits.clear();
 
       // Twitch IRC doesn't echo a client's own PRIVMSG back, so render it optimistically here. this
       // doesn't reflect server-side moderation (a dropped message still looks sent), acceptable.
@@ -860,6 +903,25 @@ export class TwitchChat {
   }
 
   // the composer DOM is SHARED between platforms and _applyKickInputState mutates it, with nothing on the Twitch return path undoing it (symptom: a Twitch stream after a Kick session showing a dead composer asking for a Kick login). called from connect() and disconnect()
+  // signing out of Twitch: the reverse of setLoggedIn. without it the composer stayed enabled with no account
+  // behind it, and Enter just produced "Failed to send"
+  setLoggedOut() {
+    this.isLoggedIn = false;
+    this.ownLogin = null;
+    this.ownDisplayName = null;
+    this.ownUserId = null;
+    this._ownBadgesTag = null;
+    this._renderInputBadges(null);
+    this._updateModStatus();
+    if (this._isKickChat) {
+      this._applyKickInputState(); // Kick chat has its own login
+      return;
+    }
+    if (this.inputEl) this.inputEl.value = "";
+    this._applyTwitchInputState();
+    this._autosizeChatInput();
+  }
+
   _applyTwitchInputState() {
     const canSend = this.isLoggedIn;
     if (this.inputEl) {
@@ -1862,16 +1924,18 @@ export class TwitchChat {
     const _own = (this._isKickChat ? this._kickLogin : this.ownLogin) || this.ownDisplayName;
     const isOwnMsg = !!(_own && username && username.toLowerCase() === _own.toLowerCase());
     const stripEmotes = !isOwnMsg && !!(this._compiledFilter && this._compiledFilter.emotes.size);
-    // Settings > Chat > Highlight my name: messages mentioning you (or a keyword) stand out, optional chime
-    // (never for VOD chat replay, where "new" messages aren't new)
-    if (!isOwnMsg && getSetting("highlightMentions") && this._mentionsMe(message)) {
-      line.classList.add("chat-mention");
-      if (getSetting("highlightSound") && !this._vodReplayStop) playChime();
-    }
     if (stripEmotes && this._messageIsOnlyBlockedEmotes(message, emotesTag)) return;
 
     const line = document.createElement("div");
     line.className = "chat-line";
+    // Settings > Chat > Highlight my name: messages mentioning you (or a keyword) stand out, optional chime
+    // (never for VOD chat replay, where "new" messages aren't new). this has to come AFTER the line exists:
+    // it used to sit above `const line`, so every message that mentioned you threw ("Cannot access 'line'
+    // before initialization") and was never shown at all
+    if (!isOwnMsg && getSetting("highlightMentions") && this._mentionsMe(message)) {
+      line.classList.add("chat-mention");
+      if (getSetting("highlightSound") && !this._vodReplayStop) playChime();
+    }
     // synthetic local ids (our own un-echoed messages) go in the store for threading but must not be
     // exposed as dataset.msgId — they're not real Twitch ids, so Reply/Delete against them would fail
     if (msgId && !String(msgId).startsWith("local-")) line.dataset.msgId = msgId;

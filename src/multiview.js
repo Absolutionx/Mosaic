@@ -45,6 +45,11 @@ export class MultiView {
     this._chat?.setLoggedIn(login, userId, displayName);
   }
 
+  setLoggedOut() {
+    this._login = null;
+    this._chat?.setLoggedOut();
+  }
+
   _ensureRoot() {
     if (this.rootEl) return;
     const root = document.createElement("div");
@@ -210,10 +215,9 @@ export class MultiView {
       .addEventListener("click", () => this._toggleFollowedPanel(false));
   }
 
+  // safe for text and for quoted attribute values
   _escape(str) {
-    const d = document.createElement("div");
-    d.textContent = String(str ?? "");
-    return d.innerHTML;
+    return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
   _toggleFollowedPanel(force) {
@@ -428,9 +432,9 @@ export class MultiView {
     tileEl.innerHTML = `
       <div class="multiview-tile-video">
         <video playsinline muted></video>
-        <div class="multiview-tile-loading">Loading ${channel}...</div>
+        <div class="multiview-tile-loading">Loading ${this._escape(channel)}...</div>
         <div class="multiview-tile-overlay">
-          <span class="multiview-tile-name">${channel}</span>
+          <span class="multiview-tile-name">${this._escape(channel)}</span>
           <div class="multiview-tile-actions">
             <button class="multiview-tile-quality" type="button" title="Quality"><span class="mv-q-label">Source</span>${MV_ICONS.chevron}</button>
             <button class="multiview-tile-mute" type="button" title="Mute/unmute">${MV_ICONS.muted}</button>

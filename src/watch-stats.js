@@ -24,16 +24,39 @@ function save(s) {
 
 // ---- tracking ----
 let lastTick = 0;
+// time is counted every tick but written once a minute: each write re-saves the whole history (a year of it
+// is a couple of hundred KB), and doing that every 15 seconds for as long as something plays is a lot of
+// disk writing for a number shown in hours and minutes. anything not yet written is written before the
+// numbers are read (current()) and when the window goes away
+const SAVE_EVERY_MS = 60000;
+const pending = new Map(); // "login|kind" -> { login, name, kind, secs }
+let lastSave = 0;
+export function flushWatchTime() {
+  if (!pending.size) return;
+  const items = [...pending.values()];
+  pending.clear();
+  for (const p of items) recordWatch(p.login, p.name, p.kind, p.secs);
+}
+const current = () => { flushWatchTime(); return load(); };
+
 // getNow() -> null when nothing is playing, else { login, name, kind: "live" | "vod" }
 export function startWatchTracking(getNow, everyMs = 15000) {
-  lastTick = Date.now();
+  lastTick = lastSave = Date.now();
   setInterval(() => {
     const now = Date.now();
     const secs = Math.min(MAX_GAP_S, Math.max(0, (now - lastTick) / 1000));
     lastTick = now;
     const w = getNow();
-    if (w && w.login) recordWatch(w.login, w.name, w.kind, secs);
+    if (w && w.login && secs > 0) {
+      const kind = w.kind === "vod" ? "vod" : "live";
+      const key = `${String(w.login).toLowerCase()}|${kind}`;
+      const p = pending.get(key);
+      if (p) { p.secs += secs; if (w.name) p.name = w.name; }
+      else pending.set(key, { login: w.login, name: w.name, kind, secs });
+    }
+    if (now - lastSave >= SAVE_EVERY_MS) { lastSave = now; flushWatchTime(); }
   }, everyMs);
+  window.addEventListener("pagehide", flushWatchTime);
 }
 
 export function recordWatch(login, name, kind, secs, when = new Date()) {
@@ -43,15 +66,22 @@ export function recordWatch(login, name, kind, secs, when = new Date()) {
   const d = dayKey(when);
   const day = (s.days[d] ||= {});
   const entry = (day[l] ||= { live: 0, vod: 0 });
-  entry[kind === "vod" ? "vod" : "live"] += secs;
+  const field = kind === "vod" ? "vod" : "live";
+  entry[field] = Math.round((entry[field] + secs) * 10) / 10; // tenths: no 17-digit fractions in the saved file
   if (name) s.names[l] = name;
   const keys = Object.keys(s.days);
-  if (keys.length > KEEP_DAYS) for (const k of keys.sort().slice(0, keys.length - KEEP_DAYS)) delete s.days[k];
+  if (keys.length > KEEP_DAYS) {
+    for (const k of keys.sort().slice(0, keys.length - KEEP_DAYS)) delete s.days[k];
+    // display names of channels that no longer appear in any kept day went with them (they used to stay forever)
+    const seen = new Set();
+    for (const day of Object.values(s.days)) for (const login of Object.keys(day || {})) seen.add(login);
+    for (const login of Object.keys(s.names || {})) if (!seen.has(login)) delete s.names[login];
+  }
   save(s);
 }
 
 // ---- numbers ----
-export function computeStats(period, stats = load(), today = new Date()) {
+export function computeStats(period, stats = current(), today = new Date()) {
   const days = period === "week" ? 7 : period === "month" ? 30 : null;
   const series = [];
   if (days) {
@@ -78,7 +108,7 @@ export function computeStats(period, stats = load(), today = new Date()) {
   return { total, live, vod, series, top, streak: streak(stats, today), since: Object.keys(stats.days).sort()[0] || null };
 }
 // one channel's total over everything kept (KEEP_DAYS), and the first day it was watched (null if never)
-export function channelWatchTime(login, stats = load()) {
+export function channelWatchTime(login, stats = current()) {
   const l = String(login || "").toLowerCase();
   let secs = 0, since = null;
   for (const [day, entries] of Object.entries(stats.days)) {

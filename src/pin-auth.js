@@ -152,7 +152,12 @@ async function startFlow(modal, onConnected) {
   } catch (err) {
     // the modal may have been closed; only update if still open
     const w = document.getElementById("pin-auth-waiting");
-    if (w) w.innerHTML = `<span class="pin-auth-error">${String(err)}</span>`;
+    if (w) {
+      const note = document.createElement("span");
+      note.className = "pin-auth-error";
+      note.textContent = String(err); // an error message, never markup
+      w.replaceChildren(note);
+    }
   }
 }
 

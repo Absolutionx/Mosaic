@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";
 import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
+import { pushEscape } from "./escape-stack.js";
 
 let chatRef = null;
 let overlay = null;
@@ -104,8 +105,14 @@ function updateBadge(n) {
   badge.style.display = n > 0 ? "" : "none";
 }
 
+let threadListeners = null; // AbortController for the open thread's page-wide listeners
+let popEscape = null;       // Escape closes the panel (it had no Escape at all), one press, nothing else
 function close() {
   if (overlay) { overlay.remove(); overlay = null; }
+  threadListeners?.abort();
+  threadListeners = null;
+  popEscape?.();
+  popEscape = null;
 }
 
 export function openWhispers() {
@@ -119,6 +126,12 @@ export function openWhispers() {
   modal.className = "whisper-modal";
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+  // Escape: an open emote menu or suggestion list first, then the panel
+  popEscape = pushEscape(() => {
+    const open = [...(overlay?.querySelectorAll(".whisper-ac, .whisper-emote-menu") || [])].find((el) => el.getClientRects().length > 0);
+    if (open) open.style.display = "none";
+    else close();
+  });
   render();
 }
 
@@ -291,9 +304,13 @@ async function renderThread(modal) {
     if (emoteMenu.style.display === "none") { buildEmoteMenu(); emoteMenu.style.display = ""; acBox.style.display = "none"; }
     else emoteMenu.style.display = "none";
   });
+  // one page-wide listener per open thread: the previous thread's is dropped first (it used to be added on
+  // every thread you opened and never removed)
+  threadListeners?.abort();
+  threadListeners = new AbortController();
   document.addEventListener("mousedown", (e) => {
     if (!emoteMenu.contains(e.target) && e.target !== emoteBtn && !emoteBtn.contains(e.target)) emoteMenu.style.display = "none";
-  });
+  }, { signal: threadListeners.signal });
 
   // --- inline autocomplete (type ":" or 2+ chars of a word) ---
   let acItems = [];

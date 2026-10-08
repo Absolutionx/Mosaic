@@ -80,6 +80,15 @@ export class ChannelsSidebar {
     }
   }
 
+  // signing out of Twitch: the followed list was that account's
+  onLogout() {
+    this.loggedIn = false;
+    if (isKick()) return; // Kick's Following list is local and needs no login
+    this.followed = [];
+    this.renderFollowed();
+    this.loginPromptEl.style.display = "";
+  }
+
   // call unconditionally at startup. also restores the notification opt-in set (a local file, independent of login)
   async init() {
     try {

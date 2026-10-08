@@ -447,7 +447,7 @@ fn flatten_emote_tokens(content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::flatten_emote_tokens;
+    use super::{flatten_emote_tokens, kick_badges_tag};
 
     #[test]
     fn flattens_tokens_to_id_name_markers() {

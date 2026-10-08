@@ -27,9 +27,24 @@ pub async fn fetch_link_preview(url: String) -> Result<LinkPreview, String> {
         return Err("Refusing to fetch non-http(s) URL".to_string());
     }
 
+    // a link in chat is picked by a stranger. hovering it must not make this computer send a request to
+    // itself or to something on the local network (a router's address, say), directly or via a redirect
+    let parsed = reqwest::Url::parse(&url).map_err(|e| e.to_string())?;
+    if is_local_target(&parsed) {
+        return Err("Refusing to fetch a local address".to_string());
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                attempt.error("too many redirects")
+            } else if is_local_target(attempt.url()) {
+                attempt.stop() // the redirect itself becomes the (non-success) answer
+            } else {
+                attempt.follow()
+            }
+        }))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -88,6 +103,38 @@ pub async fn fetch_link_preview(url: String) -> Result<LinkPreview, String> {
         image,
         site_name: site_name.map(|s| decode_html_entities(&s)),
     })
+}
+
+// true for URLs that point at this computer or the local network: loopback, private, link-local and
+// carrier-NAT addresses, and names that only resolve locally. it goes by what the URL says: a public name
+// that resolves to a private address is not caught
+fn is_local_target(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str() else { return true };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return is_local_ip(ip);
+    }
+    let name = host.trim_end_matches('.').to_ascii_lowercase();
+    name == "localhost"
+        || !name.contains('.')
+        || [".localhost", ".local", ".lan", ".internal", ".home.arpa"].iter().any(|s| name.ends_with(s))
+}
+
+fn is_local_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast()
+                || (o[0] == 100 && (o[1] & 0xC0) == 64) // 100.64.0.0/10, carrier-grade NAT
+        }
+        std::net::IpAddr::V6(v6) => {
+            let first = v6.segments()[0];
+            v6.is_loopback() || v6.is_unspecified()
+                || (first & 0xfe00) == 0xfc00 // fc00::/7, unique local
+                || (first & 0xffc0) == 0xfe80 // fe80::/10, link-local
+                || v6.to_ipv4_mapped().map(|v4| is_local_ip(std::net::IpAddr::V4(v4))).unwrap_or(false)
+        }
+    }
 }
 
 // finds <meta property="og:X" content="..."> (or content-then-property order, both occur) and returns the content value. tolerant of attribute order/whitespace/quote style, since this scans real-world HTML

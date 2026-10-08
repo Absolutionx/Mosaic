@@ -4,8 +4,13 @@
 // prevent_close handler breaks the popup's close button. instead we open the auth URL in the system
 // browser and catch the redirect on a local tokio server (127.0.0.1:17543). the token comes back in
 // the URL #fragment (never sent to the server), so the server serves a one-shot bridge page whose JS
-// reads the fragment and GETs /token?t=<token>; we then emit "oauth-token" to the main window and
-// shut down. port 17543 must match the redirect URI registered at dev.twitch.tv
+// reads the fragment and GETs /token?t=<token>&s=<state>; we then emit "oauth-token" to the main window
+// and shut down. port 17543 must match the redirect URI registered at dev.twitch.tv
+//
+// the state value: every login attempt sends Twitch a fresh random `state`, Twitch hands it back in the
+// fragment next to the token, and the local server only accepts a token that arrives with it. without
+// that, any web page open in the browser while a login was pending could call /token itself and sign
+// Mosaic into an account of its choosing
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -88,41 +93,74 @@ struct ValidateResponse {
     scopes: Vec<String>,
 }
 
-// opens the Twitch login page in the default browser and starts a local HTTP server to catch the OAuth redirect. on success it emits "oauth-token" to the main window and shuts down
-#[tauri::command]
-pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
-    let scope = REQUIRED_SCOPES.join(" ");
+// the state of the login attempt that is waiting for its redirect, if any. kept here (not only inside the
+// server task) so that pressing Log in again while the first attempt is still pending opens the same
+// login: either browser tab then completes it
+static PENDING_STATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-    let auth_url = format!(
+fn pending_state() -> Option<String> {
+    PENDING_STATE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+fn set_pending_state(v: Option<String>) {
+    *PENDING_STATE.lock().unwrap_or_else(|e| e.into_inner()) = v;
+}
+
+// 122 random bits from the OS, as 32 hex characters (nothing in it needs URL-encoding)
+fn new_state() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+fn authorize_url(state: &str) -> String {
+    format!(
         "https://id.twitch.tv/oauth2/authorize\
          ?response_type=token\
          &client_id={}\
          &redirect_uri={}\
-         &scope={}",
+         &scope={}\
+         &state={}",
         CLIENT_ID,
         urlencoding_lite(REDIRECT_URI),
-        urlencoding_lite(&scope),
-    );
+        urlencoding_lite(&REQUIRED_SCOPES.join(" ")),
+        urlencoding_lite(state),
+    )
+}
 
+// opens the Twitch login page in the default browser and starts a local HTTP server to catch the OAuth redirect. on success it emits "oauth-token" to the main window and shuts down
+#[tauri::command]
+pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
     // try to bind the port before opening the browser. if it's already in use a previous login attempt is still running, just open the URL again so the user can retry without restarting the app
     let listener = match TcpListener::bind(format!("127.0.0.1:{REDIRECT_PORT}")).await {
         Ok(l) => l,
         Err(_) => {
-            // port busy, open the URL anyway so the user sees the prompt, but don't spawn a second server
-            open_browser(&app, &auth_url)?;
+            // port busy: don't spawn a second server, open the login the running one is waiting for.
+            // (no pending state means something else holds the port; the page still opens, as before)
+            let state = pending_state().unwrap_or_else(new_state);
+            open_browser(&app, &authorize_url(&state))?;
             return Ok(());
         }
     };
 
+    let state = new_state();
+    set_pending_state(Some(state.clone()));
+    let auth_url = authorize_url(&state);
+
     // spawn the redirect-catcher; open the browser in parallel
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mine = state.clone();
         // 5-minute timeout in case the user abandons the flow
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(300),
-            run_redirect_server(listener, app2),
+            run_redirect_server(listener, state, move |token| {
+                let _ = app2.emit("oauth-token", OAuthTokenEvent { access_token: token });
+            }),
         )
         .await;
+        // finished or abandoned: this state is spent (unless a newer attempt has already replaced it)
+        if pending_state().as_deref() == Some(mine.as_str()) {
+            set_pending_state(None);
+        }
     });
 
     open_browser(&app, &auth_url)?;
@@ -138,7 +176,7 @@ fn open_browser(app: &AppHandle, url: &str) -> Result<(), String> {
 
 // bridge HTML served when the browser reaches http://localhost:17543. its JS reads location.hash
 // (fragments aren't sent to the server, which is why the implicit grant needs this extra hop), pulls
-// out the access_token, and GETs /token?t=<token> so the server can pick it up. styled to match the app's dark theme
+// out the access_token and the state, and GETs /token?t=<token>&s=<state> so the server can pick it up. styled to match the app's dark theme
 const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -179,7 +217,12 @@ const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
   var hash = location.hash.substring(1);
   var params = new URLSearchParams(hash);
   var token = params.get('access_token');
+  var state = params.get('state') || '';
   var card = document.getElementById('card');
+
+  // the address of this page contains the login token: take it out of the address bar and the
+  // browser history now that it has been read
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
 
   function show(title, body, cls) {
     card.innerHTML =
@@ -192,11 +235,14 @@ const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
     return;
   }
 
-  fetch('/token?t=' + encodeURIComponent(token))
+  fetch('/token?t=' + encodeURIComponent(token) + '&s=' + encodeURIComponent(state))
     .then(function (r) {
       if (r.ok) {
         show('Login successful!',
              'You can close this tab and return to Mosaic.', 'ok');
+      } else if (r.status === 403) {
+        show('This login wasn\'t started by Mosaic',
+             'Close this tab and press Log in again in the app.', 'err');
       } else {
         show('Something went wrong', 'Please try logging in again.', 'err');
       }
@@ -209,7 +255,10 @@ const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
 </body>
 </html>"#;
 
-async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
+// serves the bridge page and waits for it to hand over the token. `expected_state` is what this login
+// attempt sent to Twitch: a /token request without it is refused and the server keeps waiting for the
+// real one. `on_token` runs once, with the accepted token, and then the server stops
+async fn run_redirect_server<F: Fn(String)>(listener: TcpListener, expected_state: String, on_token: F) {
     loop {
         let (mut socket, _) = match listener.accept().await {
             Ok(s) => s,
@@ -225,14 +274,22 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
         let request = String::from_utf8_lossy(&buf[..n]);
         let first_line = request.lines().next().unwrap_or("");
 
-        if first_line.contains("GET /token?") {
-            // bridge page is handing us the token
-            if let Some(token) = extract_token_from_line(first_line) {
-                let _ = app.emit("oauth-token", OAuthTokenEvent { access_token: token });
+        if first_line.starts_with("GET /token?") {
+            // the bridge page handing us the token, or some other page pretending to be it
+            let token = query_param(first_line, "t").filter(|t| !t.is_empty());
+            let state_ok = query_param(first_line, "s").as_deref() == Some(expected_state.as_str());
+            match token {
+                Some(token) if state_ok => {
+                    on_token(token);
+                    let resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
+                    let _ = socket.write_all(resp).await;
+                    break; // done, shut down the server
+                }
+                _ => {
+                    let resp = b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nForbidden";
+                    let _ = socket.write_all(resp).await;
+                }
             }
-            let resp = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK";
-            let _ = socket.write_all(resp).await;
-            break; // done, shut down the server
         } else if first_line.starts_with("GET /") {
             // probably the initial Twitch redirect, serve the bridge page (ignore favicon.ico, etc.)
             if !first_line.contains("favicon") {
@@ -240,6 +297,7 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
                 let header = format!(
                     "HTTP/1.1 200 OK\r\n\
                      Content-Type: text/html; charset=utf-8\r\n\
+                     Cache-Control: no-store\r\n\
                      Content-Length: {}\r\n\
                      Connection: close\r\n\r\n",
                     body.len()
@@ -252,16 +310,14 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
     }
 }
 
-// extracts the token from a GET request line like `GET /token?t=abc123&... HTTP/1.1`
-fn extract_token_from_line(line: &str) -> Option<String> {
+// one query parameter from a GET request line like `GET /token?t=abc123&s=... HTTP/1.1`, percent-decoded
+fn query_param(line: &str, name: &str) -> Option<String> {
     let path = line.split_whitespace().nth(1)?;
-    let query = path.split('?').nth(1)?;
-    for param in query.split('&') {
-        if let Some(encoded) = param.strip_prefix("t=") {
-            return Some(url_decode(encoded));
-        }
-    }
-    None
+    let query = path.split_once('?')?.1;
+    query.split('&').find_map(|param| {
+        let (k, v) = param.split_once('=')?;
+        (k == name).then(|| url_decode(v))
+    })
 }
 
 // percent-decodes a URL-encoded string (the token passed from the bridge)
@@ -270,7 +326,7 @@ fn url_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
+        if bytes[i] == b'%' && i + 3 <= bytes.len() {
             if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
                 if let Ok(byte) = u8::from_str_radix(hex, 16) {
                     out.push(byte as char);

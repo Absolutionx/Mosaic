@@ -61,6 +61,12 @@ const RESOLUTION_MBPS = {
 // other apps on the network can eat into it unseen
 const STEP_UP_HEADROOM = 1.4;
 
+// low-quality playlist URLs pre-resolved for the PiP window, by VOD id: { url, ts } (filled by main.js's
+// resolvePipVodUrl). memory only: the URLs point at this run's local proxy (its port and key change every
+// launch), so they are worthless afterwards. they used to be written to localStorage, one entry per VOD
+// ever opened, and nothing removed them
+export const pipVodLowUrls = new Map();
+
 export class PlaybackControls {
   // onQualityChange: switching means restarting streamlink with a new quality arg (no in-memory
   // rendition switch), so this file asks main.js to redo start_stream and feed it the fresh relay
@@ -592,11 +598,8 @@ export class PlaybackControls {
     if (this._hlsVod) {
       const vid = (this.currentChannel || "").replace(/^vod:/, "");
       try {
-        const cached = JSON.parse(localStorage.getItem(`pipVodLowUrl:${vid}`) || "null");
-        // port match = minted by this session; see resolvePipVodUrl for why a stale session's URL is a dead localhost port, not just lower quality
-        const samePort = cached?.url && this._currentSourceUrl &&
-          new URL(cached.url).port === new URL(this._currentSourceUrl).port;
-        if (samePort && Date.now() - cached.ts < 3 * 3600_000) {
+        const cached = pipVodLowUrls.get(vid);
+        if (cached && Date.now() - cached.ts < 3 * 3600_000) {
           params.set("lowsrc", cached.url);
         }
       } catch (_) {}
