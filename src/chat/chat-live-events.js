@@ -53,6 +53,9 @@ export const chatLiveEventsMixin = {
         ended: null,      // a prediction that just left the running/locked lists: kept on screen with its result
         pollEnded: null,  // a poll that just ended: final results kept on screen for a while
         myBets: new Map(), myVotes: new Map(), collapsed: new Set(), dismissed: new Set(),
+        // closed while still running. stays closed, except that a prediction you bet on comes back for its
+        // result (you'd want to know); dismissed is for good
+        closedRunning: new Set(),
         finishedIds: new Set(), // predictions whose result was shown (kept across channel switches)
         sel: null, amount: "", busy: false, error: "", keys: {},
       };
@@ -312,7 +315,7 @@ export const chatLiveEventsMixin = {
     if (!slot) return;
     const s = this._leState();
     const d = getSetting("predictionsPolls") ? this._leData(kind) : null; // Settings > Chat
-    if (!d || s.dismissed.has(d.id)) {
+    if (!d || this._leHidden(kind, d)) {
       slot.style.display = "none";
       slot.replaceChildren();
       s.keys[kind] = null;
@@ -326,6 +329,16 @@ export const chatLiveEventsMixin = {
     if (kind === "pred") this._updatePredCard(slot, d); else this._updatePollCard(slot, d);
     this._leUpdateTimer(kind, slot, d);
     slot.style.display = "block";
+  },
+
+  // closed with x: an ended card for good; a running one until it ends, and then only a prediction you
+  // put points on comes back, to show how it went
+  _leHidden(kind, d) {
+    const s = this._leState();
+    if (s.dismissed.has(d.id)) return true;
+    if (!s.closedRunning.has(d.id)) return false;
+    const resultShowing = kind === "pred" && !s.pred && s.ended && s.ended.event.id === d.id && !!s.ended.result;
+    return !(resultShowing && s.myBets.has(d.id));
   },
 
   _predStatus(d) {
@@ -360,17 +373,19 @@ export const chatLiveEventsMixin = {
       this._leRender(kind);
     });
     head.append(badge, spacer, statusNode, collapse);
-    if (ended) {
-      const x = el("button", "le-icon-btn le-dismiss");
-      x.type = "button";
-      x.title = "Dismiss";
-      x.innerHTML = ICONS.close;
-      x.addEventListener("click", () => {
-        s.dismissed.add(d.id);
-        this._leRender(kind);
-      });
-      head.appendChild(x);
-    }
+    // close, at any stage. while it's still running it used to offer only Minimize, so a locked prediction
+    // sat over chat until the streamer got round to resolving it
+    const running = kind === "pred" ? !!s.pred && s.pred.id === d.id && !ended : !ended;
+    const x = el("button", "le-icon-btn le-dismiss");
+    x.type = "button";
+    x.title = !running ? "Dismiss"
+      : kind === "pred" && s.myBets.has(d.id) ? "Close (it comes back with the result)" : "Close";
+    x.innerHTML = ICONS.close;
+    x.addEventListener("click", () => {
+      if (running) s.closedRunning.add(d.id); else s.dismissed.add(d.id);
+      this._leRender(kind);
+    });
+    head.appendChild(x);
     // the question gets its own full-width line (it used to share the header row and got cut off)
     card.append(head, el("div", "le-title", d.title || ""));
     return card;
