@@ -54,6 +54,7 @@ export const DEFAULTS = {
   seekStep: 5,               // seconds per arrow key (Shift doubles it)
   streamInfoOverlay: true,
   mutedSegments: true,       // muted-audio markers on the VOD seek bar
+  skipMutedSegments: "off",  // VOD ranges muted for copyright: "off" play / "ask" prompt / "auto" skip (muted-skip.js)
   seekThumbnails: true,      // preview thumbnails when hovering the VOD seek bar
   vodSpeed: 1,               // VOD playback speed (remembered across VODs)
   clipLength: 30,            // last length picked in the clip panel (Alt+X uses it)
@@ -115,6 +116,8 @@ function load() {
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
     store = raw && typeof raw === "object" ? raw : {};
   } catch { store = {}; }
+  // "Muted sections" began as an on/off switch (skipMutedSegments: true/false): on means "auto"
+  if (typeof store.skipMutedSegments === "boolean") store.skipMutedSegments = store.skipMutedSegments ? "auto" : "off";
   return store;
 }
 

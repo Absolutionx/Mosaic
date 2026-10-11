@@ -9895,3 +9895,97 @@ body:not(.ambient-glow) #ambient-glow-wrap::after { display: none; }
 .cyou-btn:focus-visible {
   outline: none; border-color: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.07);
 }
+
+/* Skip muted sections (muted-skip.js / _showMutedNotice): "Skipped a muted section (1:23) [Watch it]",
+   bottom-left of the video for a few seconds. sits above the controls bar when that's showing, lower when
+   it has faded, so it never covers the seek bar */
+.muted-skip-notice {
+  position: absolute;
+  left: 16px;
+  bottom: 24px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 8px;
+  background: rgba(14, 14, 16, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #efeff1;
+  font-size: 12.5px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease, bottom .2s ease;
+}
+.muted-skip-notice.visible { opacity: 1; transform: none; pointer-events: auto; }
+#video-frame.controls-visible .muted-skip-notice { bottom: 84px; }
+.muted-skip-text { white-space: nowrap; }
+.muted-skip-watch {
+  font: inherit;
+  font-weight: 600;
+  color: #efeff1;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.muted-skip-watch:hover { background: rgba(255, 255, 255, 0.14); border-color: rgba(255, 255, 255, 0.35); }
+.muted-skip-watch:focus-visible { outline: none; border-color: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12); }
+/* ask mode: "Muted section (1:23) [Skip] [x]". Skip is the one action, so it's the solid button. sits at the
+   bottom-right, where a "skip" offer usually is (the after-skip notice stays bottom-left) */
+.muted-skip-notice.ask { left: auto; right: 16px; }
+.muted-skip-notice.ask .muted-skip-watch { background: #efeff1; color: #0e0e10; border-color: #efeff1; }
+.muted-skip-notice.ask .muted-skip-watch:hover { background: #fff; border-color: #fff; }
+.muted-skip-close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: -4px;
+  padding: 0;
+  color: #adadb8;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.muted-skip-notice.ask .muted-skip-close { display: inline-flex; }
+.muted-skip-close:hover { color: #efeff1; background: rgba(255, 255, 255, 0.08); }
+.muted-skip-close:focus-visible { outline: none; border-color: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12); }
+
+/* the player's settings menu, VODs: "Muted sections  [Play | Ask | Skip]" */
+.qm-muted-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 6px 5px 10px;
+  font-size: 13px;
+  color: var(--m-text, #e7ebf2);
+  white-space: nowrap;
+}
+.qm-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--m-border-soft, #212832);
+}
+.qm-seg-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--m-muted, #9aa5b4);
+  cursor: pointer;
+}
+.qm-seg-btn:hover { color: var(--m-text, #e7ebf2); background: rgba(255, 255, 255, 0.06); }
+.qm-seg-btn.active { color: #fff; background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08); }

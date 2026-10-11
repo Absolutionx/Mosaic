@@ -11,6 +11,7 @@ import { fetchVodChapters, fetchVodSeekPreviewsUrl } from "./chapters.js";
 import { loadVodStoryboard } from "./seek-thumbnails.js";
 import { attachHlsVod } from "./vod-player.js";
 import { formatViewerCount } from "./format.js";
+import { mutedRanges, mutedSkipTarget, mutedRangeAt, mutedSkipMode } from "./muted-skip.js";
 import { attachMseStream } from "./stream-player.js";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { currentMonitor, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/window";
@@ -167,6 +168,15 @@ export class PlaybackControls {
     this.lastKnownDuration = 0;
     // copyright-muted VOD ranges, for seek-bar markers and the hover label. raw {offset, duration} from Helix, kept so updateSeekTooltip doesn't need them passed in
     this._mutedSegments = [];
+    // Skip muted sections (muted-skip.js): the ranges, where continuous playback was a moment ago (null after
+    // a seek), range starts the user chose to watch via "Watch it", and a flag for our own skip-seek
+    this._mutedRanges = [];
+    this._mutedLastT = null;
+    this._mutedAllowed = new Set();
+    this._mutedSkipSeeking = false;
+    this._mutedNotice = null;
+    this._mutedNoticeTimer = null;
+    this._mutedNoticeRange = null; // { from, to, ask } of what the box is about
     // anchors currentTime (session-relative) to the broadcast's absolute elapsed time. re-derived per session; null = not yet available
     this._liveSessionAbsoluteStart = null;
     // set when the user seeks past the MSE buffer into the live stream's recording VOD (HLS.js).
@@ -288,6 +298,14 @@ export class PlaybackControls {
       if (!r) return;
       this._catchUpSuspended = (r.end - this.videoEl.currentTime) > CATCHUP_START_BEHIND;
     });
+
+    // Skip muted sections. a seek that wasn't ours forgets where playback was, so landing inside a muted
+    // range plays it (see muted-skip.js); timeupdate is where running into one is noticed
+    this.videoEl.addEventListener("seeking", () => {
+      if (this._mutedSkipSeeking) { this._mutedSkipSeeking = false; return; }
+      this._mutedLastT = null;
+    });
+    this.videoEl.addEventListener("timeupdate", () => this._maybeSkipMuted());
 
     // exiting native PiP other than via our pipBtn (the OS window's own close) must reflect back in our UI
     this.videoEl.addEventListener("leavepictureinpicture", () => {
@@ -1190,6 +1208,38 @@ export class PlaybackControls {
     });
     pillsRow.appendChild(audioItem);
     this.qualityMenu.appendChild(pillsRow);
+
+    if (this.isVod && !this._isKickSession) {
+      // Muted sections: Play / Ask / Skip, the same setting as Settings > Player > VODs
+      const divider = document.createElement("div");
+      divider.className = "quality-menu-divider";
+      this.qualityMenu.appendChild(divider);
+      const row = document.createElement("div");
+      row.className = "qm-muted-row";
+      row.title = "What to do when this VOD reaches a part whose audio was muted for copyright";
+      const label = document.createElement("span");
+      label.className = "qm-muted-label";
+      label.textContent = "Muted sections";
+      const seg = document.createElement("div");
+      seg.className = "qm-seg";
+      const current = mutedSkipMode(getSetting("skipMutedSegments"));
+      for (const [value, text] of [["off", "Play"], ["ask", "Ask"], ["auto", "Skip"]]) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "qm-seg-btn" + (value === current ? " active" : "");
+        btn.textContent = text;
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setSetting("skipMutedSegments", value);
+          for (const o of seg.children) o.classList.toggle("active", o === btn);
+          if (value === "off") this._hideMutedNotice();
+        });
+        seg.appendChild(btn);
+      }
+      row.addEventListener("click", (e) => e.stopPropagation());
+      row.append(label, seg);
+      this.qualityMenu.appendChild(row);
+    }
 
     if (!this.isVod) {
       const divider = document.createElement("div");
@@ -2129,7 +2179,7 @@ export class PlaybackControls {
     if (this.isVod) {
       const total = this.vodTotalSeconds || duration;
       const absSeconds = hoverRatio * total;
-      const muted = this._mutedSegments.some(
+      const muted = getSetting("mutedSegments") && this._mutedSegments.some(
         (seg) => absSeconds >= (seg.offset ?? 0) && absSeconds < (seg.offset ?? 0) + (seg.duration ?? 0)
       );
       // near one of the heatmap's chat spikes (within ~1.5% of the VOD): say so
@@ -2252,9 +2302,123 @@ export class PlaybackControls {
   }
 
   // stores the raw list so updateSeekTooltip can label muted ranges on hover
+  // timeupdate (a few times a second): a muted range that playback has just run into gets skipped ("auto")
+  // or a Skip prompt ("ask"); see muted-skip.js
+  _maybeSkipMuted() {
+    const v = this.videoEl;
+    const t = v.currentTime;
+    const mode = mutedSkipMode(getSetting("skipMutedSegments"));
+    if (!this.isVod || this._isKickSession || !this._mutedRanges.length || mode === "off") {
+      this._mutedLastT = t;
+      return;
+    }
+    // a seek still settling: wait for where it lands. paused: just remember where we are
+    if (v.seeking) return;
+    if (mode === "ask") {
+      // the prompt is up for as long as you're in a muted range, however you got there (playing into it,
+      // clicking into it, resuming in it, paused in it), and goes when you leave it. x puts it away for
+      // that range. it used to appear only when playback ran into a range, and only for 10 seconds
+      this._mutedLastT = t;
+      const at = mutedRangeAt(this._mutedRanges, t, this._mutedAllowed, this._vodDuration());
+      const shown = this._mutedNoticeRange;
+      if (!at) { if (shown?.ask) this._hideMutedNotice(); return; }
+      if (!shown || !shown.ask || shown.from !== at.from || shown.to !== at.to) this._showMutedNotice(at, { ask: true });
+      return;
+    }
+    if (this._mutedNoticeRange?.ask) this._hideMutedNotice(); // switched from Ask to Skip with a prompt up
+    if (v.paused) { this._mutedLastT = t; return; }
+    const hit = mutedSkipTarget(this._mutedRanges, t, this._mutedLastT, this._mutedAllowed, this._vodDuration());
+    if (!hit) { this._mutedLastT = t; return; }
+    this._skipMutedTo(hit.to);
+    this._showMutedNotice(hit);
+  }
+
+  _skipMutedTo(to) {
+    this._mutedSkipSeeking = true;
+    this.videoEl.currentTime = to;
+    this._mutedLastT = to;
+    this.onSeek(to); // chat replay follows
+  }
+
+  // one small box at the bottom-left of the video, two uses:
+  //   after a skip:  "Skipped a muted section (1:23)  [Watch it]"        6 seconds
+  //   ask mode:      "Muted section (1:23)  [Skip]  [x]"                 while you're in the range
+  _showMutedNotice({ from, to }, { ask = false } = {}) {
+    if (!this._mutedNotice) {
+      const el = document.createElement("div");
+      el.className = "muted-skip-notice";
+      el.setAttribute("role", "status");
+      const text = document.createElement("span");
+      text.className = "muted-skip-text";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "muted-skip-watch";
+      const close = document.createElement("button");
+      close.type = "button";
+      close.className = "muted-skip-close";
+      close.title = "Keep watching";
+      close.setAttribute("aria-label", "Dismiss");
+      close.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>';
+      el.append(text, btn, close);
+      // clicks here are for the box, not the video underneath (which would toggle play/pause)
+      for (const type of ["click", "dblclick", "mousedown"]) el.addEventListener(type, (e) => e.stopPropagation());
+      btn.addEventListener("click", () => {
+        const r = this._mutedNoticeRange;
+        this._hideMutedNotice();
+        if (!r) return;
+        if (r.ask) {
+          // Skip: only if playback is still in that range (it may have been left meanwhile)
+          const now = this.videoEl.currentTime;
+          if (now >= r.from - 0.5 && now < r.to) this._skipMutedTo(r.to);
+        } else {
+          // Watch it: back to the start of what was skipped, and let it play this time
+          this._mutedAllowed.add(r.from);
+          this._seekToVodPosition(r.from);
+        }
+      });
+      // x: keep watching this one, don't offer it again
+      close.addEventListener("click", () => {
+        const r = this._mutedNoticeRange;
+        if (r) this._mutedAllowed.add(r.from);
+        this._hideMutedNotice();
+      });
+      (this.videoRegionEl || this.videoRegion)?.appendChild(el);
+      this._mutedNotice = el;
+    }
+    const el = this._mutedNotice;
+    this._mutedNoticeRange = { from, to, ask };
+    const len = this.formatDuration(to - from);
+    el.classList.toggle("ask", ask);
+    el.querySelector(".muted-skip-text").textContent = ask ? `Muted section (${len})` : `Skipped a muted section (${len})`;
+    const btn = el.querySelector(".muted-skip-watch");
+    btn.textContent = ask ? "Skip" : "Watch it";
+    btn.title = ask ? "Jump to where the sound comes back" : "Go back and play this section (its sound stays muted)";
+    el.classList.add("visible");
+    clearTimeout(this._mutedNoticeTimer);
+    // the after-skip notice goes by itself; the prompt stays while you're in the range
+    if (!ask) this._mutedNoticeTimer = setTimeout(() => this._hideMutedNotice(), 6000);
+  }
+
+  _hideMutedNotice() {
+    clearTimeout(this._mutedNoticeTimer);
+    this._mutedNoticeRange = null;
+    this._mutedNotice?.classList.remove("visible");
+  }
+
+  // the VOD's muted ranges. kept for Skip muted sections whatever the markers setting; drawn on the seek bar
+  // only with Muted-segment markers on. an empty list (a different VOD, or playback stopped) also forgets
+  // the "Watch it" choices and takes the notice down
   renderMutedSegments(segments, totalDurationSecs) {
-    this._mutedSegments = segments || [];
+    this._mutedSegments = Array.isArray(segments) ? segments : [];
+    this._mutedRanges = mutedRanges(this._mutedSegments);
+    this._mutedLastT = null;
+    if (this._mutedNoticeRange?.ask) this._hideMutedNotice(); // about the old list; the next timeupdate re-offers
+    if (!this._mutedSegments.length) {
+      this._mutedAllowed = new Set();
+      this._hideMutedNotice();
+    }
     this.mutedSegmentsContainer.innerHTML = "";
+    if (!getSetting("mutedSegments")) return;
     if (!totalDurationSecs || totalDurationSecs <= 0 || this._mutedSegments.length === 0) return;
 
     for (const seg of this._mutedSegments) {

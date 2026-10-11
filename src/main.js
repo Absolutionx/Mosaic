@@ -27,6 +27,7 @@ import { initAudioNormalizer, normalizerReduction } from "./audio-normalizer.js"
 import { initAmbientGlow } from "./ambient-glow.js";
 import { initVodBookmarks, addBookmarkNow, openBookmarksList } from "./vod-bookmarks.js";
 import { PlaybackControls, pipVodLowUrls } from "./playback-controls.js";
+import { mutedSkipMode } from "./muted-skip.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
 import { initTooltips } from "./tooltips.js";
@@ -944,6 +945,28 @@ initChatOverlay({
 // ---- Settings (settings.js / settings-panel.js) ----
 applyAppearance(); // chat font size, emote size, timestamps
 // settings that apply live the moment they change (the rest are read where they act)
+// a VOD's copyright-muted ranges (get_vod_muted_segments): seek-bar markers and Skip muted sections.
+// mutedSegmentsVideo is the VOD they were loaded for, so a setting switched on mid-VOD knows whether to fetch
+let mutedSegmentsVideo = null;
+function loadMutedSegments(videoId, totalSecs) {
+  invoke("get_vod_muted_segments", { videoId })
+    .then((raw) => {
+      if (playbackControls.currentChannel !== `vod:${videoId}`) return; // moved on to something else meanwhile
+      mutedSegmentsVideo = videoId;
+      playbackControls.renderMutedSegments(JSON.parse(raw), totalSecs);
+    })
+    .catch((err) => console.warn("Failed to load muted segments:", err));
+}
+// either muted-segment setting changed while a Twitch VOD plays: redraw from what's loaded, or load it now
+onSettingChange((id, v) => {
+  if (id !== "mutedSegments" && id !== "skipMutedSegments") return;
+  const ch = playbackControls.currentChannel || "";
+  if (!playbackControls.active || !playbackControls.isVod || playbackControls._isKickSession || !ch.startsWith("vod:")) return;
+  const videoId = ch.slice(4);
+  if (mutedSegmentsVideo === videoId) playbackControls.renderMutedSegments(playbackControls._mutedSegments, playbackControls.vodTotalSeconds);
+  else if (id === "mutedSegments" ? v : mutedSkipMode(v) !== "off") loadMutedSegments(videoId, playbackControls.vodTotalSeconds);
+});
+
 onSettingChange((id, v) => {
   switch (id) {
     case "lowLatency":
@@ -1858,9 +1881,8 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
       resyncChannelInfoBarVisibility();
     }
     // fire-and-forget: muted-segment markers are a nice-to-have, never something playback waits on. shows none if the user isn't logged in (Helix only returns muted_segments for a user token) or on any failure
-    if (getSetting("mutedSegments")) invoke("get_vod_muted_segments", { videoId }) // Settings > Player
-      .then((raw) => playbackControls.renderMutedSegments(JSON.parse(raw), vodTotalSeconds))
-      .catch((err) => console.warn("Failed to load muted segments:", err));
+    // the same list drives Skip muted sections, so it's fetched when either setting is on
+    if (getSetting("mutedSegments") || mutedSkipMode(getSetting("skipMutedSegments")) !== "off") loadMutedSegments(String(videoId), vodTotalSeconds); // Settings > Player
     // chat heatmap on the seek bar (vod-heatmap.js). fire-and-forget like the muted segments
     if (getSetting("vodHeatmap")) startChatHeatmap(videoId, vodTotalSeconds); // Settings > Player
     // most-viewed clips of this VOD: seek-bar markers + the Top clips list (get_vod_top_clips in helix.rs)

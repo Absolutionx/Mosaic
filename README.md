@@ -27,7 +27,8 @@ memory, with no ads SDK and no browser chrome.
   broadcaster has VODs enabled.
 - **VODs** with a full seek bar, chapter markers, hover seek-preview
   thumbnails, a chat-activity heatmap, top-clip markers,
-  copyright-muted-segment markers, and resume-where-you-left-off.
+  copyright-muted-segment markers (play, skip, or ask with a Skip button), and
+  resume-where-you-left-off.
 - **VOD playback speed** from 0.5x to 2x, with pitch preserved.
 - **VOD bookmarks.** Mark a moment with an optional note (`B`); bookmarks show
   on the seek bar and are listed per VOD and across all VODs.
@@ -341,6 +342,7 @@ src/                    Frontend (vanilla JS, no framework)
   vod-downloads.js      VOD download dialog + downloads panel
   vod-bookmarks.js      VOD bookmarks (seek-bar markers, lists)
   vod-heatmap.js        VOD chat-activity heatmap
+  muted-skip.js         Skip muted sections in VODs
   chat.js               Chat connection lifecycle + message pipeline
   chat-overlay.js       Chat over the video in theater mode / fullscreen
   chat-filter.js        Word / user / emote filter

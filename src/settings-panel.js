@@ -101,6 +101,8 @@ const SECTIONS = [
     { kind: "toggle", id: "vodHeatmap", title: "Chat heatmap", desc: "Chat activity drawn above the VOD seek bar." },
     { kind: "toggle", id: "vodTopClips", title: "Top clips", desc: "Markers and a list of the VOD's most-viewed clips." },
     { kind: "toggle", id: "mutedSegments", title: "Muted-segment markers", desc: "Where the VOD's audio was muted for copyright." },
+    { kind: "segmented", id: "skipMutedSegments", title: "Muted sections", desc: "When a VOD reaches a part whose audio was muted for copyright: play it, ask with a Skip button on the player, or skip it. Clicking into one on the seek bar always plays it. Needs the Twitch login.",
+      options: [{ value: "off", label: "Play" }, { value: "ask", label: "Ask" }, { value: "auto", label: "Skip" }] },
     { kind: "toggle", id: "seekThumbnails", title: "Seek thumbnails", desc: "Preview images when you hover the VOD seek bar." },
   ]},
   { id: "notifications", label: "Notifications", icon: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>', rows: [
