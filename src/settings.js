@@ -92,6 +92,7 @@ export const DEFAULTS = {
   homeLauncher: true,        // MultiView launcher for live favorites (else the top-streams carousel)
   homeContinueRow: true,     // "Continue where you left off"
   homeRecommendedRow: true,  // "Live channels we think you'll like"
+  livePreviews: true,        // hovering a live stream or VOD card plays it, muted (live-preview.js)
   multiviewLayout: "spotlight", // "spotlight" (focus layout once there are 3+ streams, as before) | "grid"
   multiviewSound: "first",   // "first" stream audible | "muted" (all start muted)
   // app

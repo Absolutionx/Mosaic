@@ -10259,3 +10259,15 @@ header .titlebar-action-buttons #login-btn { position: relative; overflow: hidde
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 #login-btn.has-avatar .account-icon { display: none; }
+
+/* live video on hover (live-preview.js): the stream plays over the card's 16:9 thumbnail, muted, and fades in
+   once its first frame is up, so a slow start just shows the thumbnail a little longer. badges and the
+   viewer count come after it in the card, so they stay on top */
+.live-hover-video {
+  position: absolute; left: 0; top: 0; width: 100%; aspect-ratio: 16 / 9; height: auto;
+  object-fit: cover; background: transparent; pointer-events: none;
+  opacity: 0; transition: opacity .28s ease;
+}
+.live-hover-playing > .live-hover-video { opacity: 1; }
+.home-grid-card:hover .live-hover-video { transform: scale(1.015); transition: opacity .28s ease, transform .18s ease; }
+.home-carousel-card > .live-hover-video { border-radius: 11px 11px 0 0; }

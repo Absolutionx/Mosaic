@@ -9,6 +9,7 @@ import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
 import { filterHidden, isHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
 import { relativeDate } from "./format.js";
+import { attachLivePreview, attachVodPreview, vodPreviewStart } from "./live-preview.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
@@ -234,6 +235,8 @@ export class HomeFeed {
       thumb.classList.add("no-thumb");
     }
     thumbWrap.appendChild(thumb);
+    // video on hover, from where you left off
+    attachVodPreview(card, { host: thumbWrap, videoId: it.videoId, startAt: vodPreviewStart(it.positionSecs, it.totalSecs), after: thumb });
 
     const left = document.createElement("span");
     left.className = "home-grid-viewers";
@@ -780,6 +783,7 @@ export class HomeFeed {
     thumb.src = thumbnailUrl(s.thumbnail_url, 440, 248);
     thumb.alt = "";
     card.appendChild(thumb);
+    attachLivePreview(card, { host: card, login: s.user_login, after: thumb }); // live video on hover
 
     // hype trains are shown as a glow on the card (see hype-badges.js), no badge
 
@@ -894,6 +898,7 @@ export class HomeFeed {
     thumb.src = thumbnailUrl(s.thumbnail_url, 320, 180);
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
+    attachLivePreview(card, { host: thumbWrap, login: s.user_login, after: thumb }); // live video on hover
 
     // hype trains are shown as a glow on the card (see hype-badges.js), no badge
 

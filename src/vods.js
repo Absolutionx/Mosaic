@@ -7,6 +7,7 @@ import { fetchVodChapters } from "./chapters.js";
 import { relativeDate } from "./format.js";
 import { openClipPlayer } from "./chat/chat-clips.js";
 import { openDownloadDialog } from "./vod-downloads.js";
+import { attachVodPreview, vodPreviewStart } from "./live-preview.js";
 
 function resolveThumbnailUrl(url, width = 440, height = 248) {
   return url
@@ -335,6 +336,11 @@ export class VodsPage {
       thumb.onerror = markNoThumb;
     }
     thumbWrap.appendChild(thumb);
+    // video on hover: from your saved spot, else a little way in. not for one still recording/processing
+    if (!isProcessing) {
+      attachVodPreview(card, { host: thumbWrap, videoId: vod.id, after: thumb,
+        startAt: vodPreviewStart(progress?.position_secs, progress?.total_secs || totalSeconds) });
+    }
 
     if (vod.duration) {
       const dur = document.createElement("span");

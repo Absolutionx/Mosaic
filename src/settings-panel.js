@@ -137,6 +137,7 @@ const SECTIONS = [
     { kind: "toggle", id: "homeLauncher", title: "MultiView launcher", desc: "When favorites or notified channels are live, show them at the top of Home ready to watch together. Off: always the top-streams carousel." },
     { kind: "toggle", id: "homeContinueRow", title: "Continue where you left off", desc: "The row of VODs you were partway through." },
     { kind: "toggle", id: "homeRecommendedRow", title: "Live channels we think you'll like", desc: "The recommended streams row." },
+    { kind: "toggle", id: "livePreviews", title: "Video on hover", desc: "Hovering a live stream or a VOD (Home, Browse, a channel's Videos, the sidebar's preview card) plays it there, muted." },
     { kind: "group", title: "MultiView" },
     { kind: "segmented", id: "multiviewLayout", title: "Default layout", desc: "Focus puts one stream big once there are 3 or more. The Home launcher uses its own choice.",
       options: [{ value: "spotlight", label: "Focus" }, { value: "grid", label: "Grid" }] },

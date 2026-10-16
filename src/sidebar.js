@@ -10,6 +10,7 @@ import { getKickFollows, onKickFollowsChange } from "./kick-follows.js";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { streamHasDropsEnabled } from "./drops.js";
 import { isHidden, hideChannel, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
+import { startLivePreview, stopLivePreview } from "./live-preview.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 const COLLAPSED_LIVE_COUNT = 8;
@@ -892,6 +893,7 @@ export class ChannelsSidebar {
 
   _hidePreview() {
     clearTimeout(this._previewTimer);
+    stopLivePreview();
     if (this._previewEl) this._previewEl.style.display = "none";
   }
 
@@ -919,6 +921,8 @@ export class ChannelsSidebar {
         `?t=${Math.floor(Date.now() / 60000)}`;
       img.onerror = () => media.remove();
       media.appendChild(img);
+      // the card already waited out the hover delay, so the live video starts right away
+      startLivePreview(media, ch.login, { after: img, delay: 0 });
       const badge = document.createElement("span");
       badge.className = "sidebar-preview-live";
       const up = previewUptime(ch.startedAt);

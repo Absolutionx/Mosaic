@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { feedInvoke, isKick } from "./platform.js";
 import { streamHasDropsEnabled } from "./drops.js";
 import { filterHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
+import { attachLivePreview } from "./live-preview.js";
 
 // every category is shown now (see get_top_games pagination in main.rs)
 const CATEGORIES_COLLAPSED_COUNT = 18;
@@ -680,6 +681,7 @@ export class BrowsePage {
     thumb.src = thumbnailUrl(s.thumbnail_url, 320, 180);
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
+    attachLivePreview(card, { host: thumbWrap, login: s.user_login, after: thumb }); // live video on hover
 
     // hype trains are shown as a glow on the card (see hype-badges.js), no badge
 

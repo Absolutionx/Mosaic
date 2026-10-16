@@ -262,6 +262,8 @@ fn main() {
             stream_relay::get_vod_m3u8_url,
             stream_relay::resolve_clip_url,
             stream_relay::get_live_m3u8_url,
+            stream_relay::get_live_preview_url,
+            stream_relay::get_vod_preview_url,
             stream_relay::stop_stream,
             stream_relay::get_available_qualities,
             stream_relay::get_available_vod_qualities,

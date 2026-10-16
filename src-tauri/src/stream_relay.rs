@@ -989,7 +989,18 @@ fn m3u8_base(url: &str) -> &str {
 
 // rewrites every URI in an M3U8 playlist to go through the local proxy. handles bare segment lines
 // (relative or absolute paths) and #EXT-X-MAP:URI="..." init-segment attributes
-fn rewrite_m3u8(content: &str, base_url: &str, proxy_base: &str) -> String {
+// the URIs inside point back at the same `route` (/hls-proxy or /hls-preview). on the "hls-preview" route (live hover previews,
+// whose playlist comes straight from Twitch rather than through streamlink) Twitch's stitched-ad segments
+// are dropped too, the job --twitch-disable-ads does for the other paths
+fn rewrite_m3u8_route(content: &str, base_url: &str, proxy_base: &str, route: &str) -> String {
+    if route == "hls-preview" {
+        let filtered = strip_twitch_ad_segments(content);
+        return rewrite_m3u8_lines(&filtered, base_url, proxy_base, route);
+    }
+    rewrite_m3u8_lines(content, base_url, proxy_base, route)
+}
+
+fn rewrite_m3u8_lines(content: &str, base_url: &str, proxy_base: &str, route: &str) -> String {
     let mut out = String::with_capacity(content.len() * 2);
     for line in content.lines() {
         let t = line.trim();
@@ -1002,11 +1013,11 @@ fn rewrite_m3u8(content: &str, base_url: &str, proxy_base: &str) -> String {
             } else {
                 format!("{base_url}{t}")
             };
-            out.push_str(&proxy_url(proxy_base, "hls-proxy", &abs));
+            out.push_str(&proxy_url(proxy_base, route, &abs));
             out.push('\n');
         } else if t.starts_with("#EXT-X-MAP:") {
             // init-segment reference, rewrite URI="..." inside the tag
-            out.push_str(&rewrite_tag_uri(t, base_url, proxy_base));
+            out.push_str(&rewrite_tag_uri_route(t, base_url, proxy_base, route));
             out.push('\n');
         } else {
             out.push_str(line);
@@ -1016,8 +1027,74 @@ fn rewrite_m3u8(content: &str, base_url: &str, proxy_base: &str) -> String {
     out
 }
 
+// drops Twitch's stitched ad segments from a live media playlist (a master playlist passes through
+// unchanged). Twitch titles a live segment "live" on its #EXTINF line and an ad segment something else
+// ("Amazon", "...stitched-ad..."), the same signal streamlink keys on. a segment's own tags (#EXTINF,
+// #EXT-X-PROGRAM-DATE-TIME, #EXT-X-BYTERANGE) go with it. ads come in one contiguous block (a pre-roll or
+// a break), so #EXT-X-MEDIA-SEQUENCE is moved past ads dropped from the front, keeping the remaining
+// segments' sequence numbers right, and a discontinuity marks a gap left in the middle
+fn strip_twitch_ad_segments(content: &str) -> String {
+    if !content.contains("#EXTINF") {
+        return content.to_owned();
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    // first pass: which segments are ads, in order
+    let mut is_ad: Vec<bool> = Vec::new();
+    let mut pending_title: Option<String> = None;
+    for l in &lines {
+        let t = l.trim();
+        if let Some(rest) = t.strip_prefix("#EXTINF:") {
+            pending_title = Some(rest.split_once(',').map(|(_, title)| title.trim().to_string()).unwrap_or_default());
+        } else if !t.is_empty() && !t.starts_with('#') {
+            let title = pending_title.take().unwrap_or_default();
+            is_ad.push(!title.is_empty() && !title.eq_ignore_ascii_case("live"));
+        }
+    }
+    if !is_ad.iter().any(|&a| a) {
+        return content.to_owned();
+    }
+    let leading_ads = is_ad.iter().take_while(|&&a| a).count() as u64;
+
+    let mut out = String::with_capacity(content.len());
+    let mut seg_tags: Vec<&str> = Vec::new(); // the current segment's own tags, held until its URI decides
+    let mut idx = 0usize;
+    let mut dropped_since_kept = false;
+    let mut kept_any = false;
+    for l in &lines {
+        let t = l.trim();
+        if let Some(seq) = t.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
+            match seq.trim().parse::<u64>() {
+                Ok(n) => out.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", n + leading_ads)),
+                Err(_) => { out.push_str(l); out.push('\n'); }
+            }
+        } else if t.starts_with("#EXTINF:") || t.starts_with("#EXT-X-PROGRAM-DATE-TIME:") || t.starts_with("#EXT-X-BYTERANGE:") {
+            seg_tags.push(l);
+        } else if !t.is_empty() && !t.starts_with('#') {
+            let ad = is_ad.get(idx).copied().unwrap_or(false);
+            idx += 1;
+            if ad {
+                seg_tags.clear();
+                if kept_any { dropped_since_kept = true; }
+                continue;
+            }
+            if dropped_since_kept {
+                out.push_str("#EXT-X-DISCONTINUITY\n");
+                dropped_since_kept = false;
+            }
+            for tag in seg_tags.drain(..) { out.push_str(tag); out.push('\n'); }
+            out.push_str(l);
+            out.push('\n');
+            kept_any = true;
+        } else {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 // rewrites the URI="..." attribute inside an HLS tag line (e.g. EXT-X-MAP)
-fn rewrite_tag_uri(tag: &str, base_url: &str, proxy_base: &str) -> String {
+fn rewrite_tag_uri_route(tag: &str, base_url: &str, proxy_base: &str, route: &str) -> String {
     const MARK: &str = "URI=\"";
     if let Some(s) = tag.find(MARK) {
         let uri_start = s + MARK.len();
@@ -1028,7 +1105,7 @@ fn rewrite_tag_uri(tag: &str, base_url: &str, proxy_base: &str) -> String {
             } else {
                 format!("{base_url}{uri}")
             };
-            let proxied = proxy_url(proxy_base, "hls-proxy", &abs);
+            let proxied = proxy_url(proxy_base, route, &abs);
             return format!(
                 "{}URI=\"{}\"{}",
                 &tag[..s],
@@ -1059,6 +1136,8 @@ async fn handle_hls_proxy(
     state: &Arc<StreamRelayState>,
     path: &str,
 ) -> std::io::Result<()> {
+    // /hls-preview is /hls-proxy plus ad-segment filtering (live hover previews), see rewrite_m3u8_route
+    let route = if path.starts_with("/hls-preview") { "hls-preview" } else { "hls-proxy" };
     // extract ?url= query parameter
     let raw_url = path.split('?').nth(1)
         .and_then(|q| q.split('&').find(|p| p.starts_with("url=")))
@@ -1170,7 +1249,7 @@ async fn handle_hls_proxy(
     let (out_type, out_body): (&str, Vec<u8>) = if is_playlist {
         let text = String::from_utf8_lossy(&body_bytes);
         let base = m3u8_base(&raw_url);
-        let rewritten = rewrite_m3u8(&text, base, &proxy_base);
+        let rewritten = rewrite_m3u8_route(&text, base, &proxy_base, route);
         ("application/x-mpegURL; charset=utf-8", rewritten.into_bytes())
     } else {
         // segment file, pass through as-is
@@ -1323,7 +1402,7 @@ async fn handle_connection(
     }
 
     // route: /hls-proxy?url=... proxies a Twitch CDN request with CORS headers. all other paths fall through to the stream relay
-    if path.starts_with("/hls-proxy") {
+    if path.starts_with("/hls-proxy") || path.starts_with("/hls-preview") {
         return handle_hls_proxy(&mut socket, &state, path).await;
     }
     // route: /clip-proxy?url=... streams a Twitch clip MP4 (chat clip cards' in-app player)
@@ -1677,6 +1756,101 @@ pub async fn get_live_m3u8_url(
     proxied_hls_url(&state, &cdn_url).await
 }
 
+// the playback-token query for get_live_preview_url (Twitch's web GQL, no login needed)
+const PREVIEW_TOKEN_QUERY: &str = "query PlaybackAccessToken($login: String!, $playerType: String!) { \
+streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) \
+{ value signature } }";
+
+// the VOD counterpart of PREVIEW_TOKEN_QUERY, for get_vod_preview_url
+const VOD_PREVIEW_TOKEN_QUERY: &str = "query PlaybackAccessToken($id: ID!, $playerType: String!) { \
+videoPlaybackAccessToken(id: $id, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) \
+{ value signature } }";
+
+// one anonymous web-GQL playback token (value, signature) for a live channel or a VOD, see
+// get_live_preview_url / get_vod_preview_url
+async fn preview_token(query: &str, variables: serde_json::Value, field: &str) -> Result<(String, String), String> {
+    let body = serde_json::json!({ "operationName": "PlaybackAccessToken", "query": query, "variables": variables });
+    let resp = crate::http::client()
+        .post("https://gql.twitch.tv/gql")
+        .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+        .header("Content-Type", "application/json")
+        .timeout(std::time::Duration::from_secs(8))
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| format!("preview token request failed: {e}"))?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("preview token parse error: {e}"))?;
+    let tok = json.pointer(&format!("/data/{field}"));
+    let value = tok.and_then(|t| t.get("value")).and_then(|v| v.as_str()).unwrap_or("");
+    let sig = tok.and_then(|t| t.get("signature")).and_then(|v| v.as_str()).unwrap_or("");
+    if value.is_empty() || sig.is_empty() {
+        return Err("no playback token".into());
+    }
+    Ok((value.to_string(), sig.to_string()))
+}
+
+// a Twitch VOD's playlist for the hover preview, fast (one token request, no streamlink), like
+// get_live_preview_url. sub-only VODs refuse the anonymous token; the frontend then falls back to
+// get_vod_m3u8_url. through /hls-proxy, VODs carry no stitched ads
+#[tauri::command]
+pub async fn get_vod_preview_url(
+    video_id: String,
+    state: tauri::State<'_, Arc<StreamRelayState>>,
+) -> Result<String, String> {
+    let id = video_id.trim().to_string();
+    if id.is_empty() || id.len() > 20 || !id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("invalid video id".into());
+    }
+    let (value, sig) = preview_token(
+        VOD_PREVIEW_TOKEN_QUERY,
+        serde_json::json!({ "id": id, "playerType": "site" }),
+        "videoPlaybackAccessToken",
+    )
+    .await
+    .map_err(|e| format!("{e} for VOD {id}"))?;
+    let usher = format!(
+        "https://usher.ttvnw.net/vod/{id}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
+&p={}&player_backend=mediaplayer&playlist_include_framerate=true&supported_codecs=avc1",
+        pct_encode(&sig),
+        pct_encode(&value),
+        rand::random::<u32>() % 10_000_000,
+    );
+    proxied_hls_url(&state, &usher).await
+}
+
+// a live channel's playlist for the hover preview (live-preview.js), FAST: one GQL request for the
+// playback token plus Twitch's usher URL, instead of starting streamlink (a Python process launch, then
+// the same token request) which made a first hover take seconds. served through /hls-preview, which drops
+// stitched ad segments the way --twitch-disable-ads does for the streamlink paths. the frontend falls back
+// to get_live_m3u8_url if this fails
+#[tauri::command]
+pub async fn get_live_preview_url(
+    channel: String,
+    state: tauri::State<'_, Arc<StreamRelayState>>,
+) -> Result<String, String> {
+    let login = channel.trim().to_ascii_lowercase();
+    if login.is_empty() || login.len() > 32 || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("invalid channel".into());
+    }
+    let (value, sig) = preview_token(
+        PREVIEW_TOKEN_QUERY,
+        serde_json::json!({ "login": login, "playerType": "site" }),
+        "streamPlaybackAccessToken",
+    )
+    .await
+    .map_err(|e| format!("{e} for {login}"))?;
+    let usher = format!(
+        "https://usher.ttvnw.net/api/channel/hls/{login}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
+&fast_bread=true&p={}&player_backend=mediaplayer&playlist_include_framerate=true&supported_codecs=avc1",
+        pct_encode(&sig),
+        pct_encode(&value),
+        rand::random::<u32>() % 10_000_000,
+    );
+    ensure_listener_running(&state).await?;
+    let port = state.port.load(Ordering::Relaxed);
+    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), "hls-preview", &usher))
+}
+
 // builds a localhost hls-proxy URL for an arbitrary upstream HLS URL, starting the proxy listener first if it isn't running. that ensure step matters: on a fresh launch where playback starts through here without start_relay ever running, state.port is still 0 and any URL built from it is unusable (black screen). shared by get_vod_m3u8_url above and the Kick failover (kick.rs), the proxy itself is host-agnostic (it fetches whatever ?url= says with browser headers and rewrites playlist URIs recursively through itself), so non-Twitch HLS rides through it the same way
 pub(crate) async fn proxied_hls_url(
     state: &Arc<StreamRelayState>,
@@ -1813,4 +1987,46 @@ fn clip_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()?;
     let _ = CLIP_CLIENT.set(c.clone());
     Ok(c)
+}
+
+#[cfg(test)]
+mod preview_ad_tests {
+    use super::strip_twitch_ad_segments;
+
+    #[test]
+    fn no_ads_passes_through() {
+        let p = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:10\n#EXTINF:2.000,live\na.ts\n#EXTINF:2.000,live\nb.ts\n";
+        assert_eq!(strip_twitch_ad_segments(p), p);
+        let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\n360p.m3u8\n";
+        assert_eq!(strip_twitch_ad_segments(master), master);
+    }
+
+    #[test]
+    fn leading_ads_dropped_and_sequence_moved() {
+        let p = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n\
+#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00Z\n#EXTINF:2.000,Amazon|123\nad1.ts\n\
+#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:02Z\n#EXTINF:2.000,Amazon|123\nad2.ts\n\
+#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:04Z\n#EXTINF:2.000,live\nl1.ts\n";
+        let out = strip_twitch_ad_segments(p);
+        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:102\n"), "{out}");
+        assert!(!out.contains("ad1.ts") && !out.contains("ad2.ts") && !out.contains("Amazon"));
+        assert!(out.contains("#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:04Z\n#EXTINF:2.000,live\nl1.ts"));
+        assert!(!out.contains("00:00:00Z") && !out.contains("DISCONTINUITY"));
+    }
+
+    #[test]
+    fn mid_ads_leave_a_discontinuity() {
+        let p = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:5\n#EXTINF:2.000,live\nl1.ts\n#EXTINF:2.000,stitched-ad-x\nad.ts\n#EXTINF:2.000,live\nl2.ts\n";
+        let out = strip_twitch_ad_segments(p);
+        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:5\n"));
+        assert!(out.contains("l1.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:2.000,live\nl2.ts"), "{out}");
+        assert!(!out.contains("ad.ts"));
+    }
+
+    #[test]
+    fn all_ads_leaves_no_segments() {
+        let p = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2.000,Amazon\na.ts\n#EXTINF:2.000,Amazon\nb.ts\n";
+        let out = strip_twitch_ad_segments(p);
+        assert!(!out.contains(".ts") && out.contains("#EXT-X-MEDIA-SEQUENCE:3"));
+    }
 }
