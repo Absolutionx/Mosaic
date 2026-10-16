@@ -45,7 +45,7 @@
         "compression": "lzma"
       }
     },
-    "createUpdaterArtifacts": false
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {

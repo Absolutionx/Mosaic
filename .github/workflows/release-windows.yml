@@ -60,6 +60,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # tauri.conf.json keeps createUpdaterArtifacts off so a local `tauri build` works without the signing
+      # key. A release MUST have it on: without it the build makes no .sig and no latest.json, and installed
+      # copies never see the update (what happened to the first v1.5.1). So it's switched on here, for CI only
+      - name: Turn on updater artifacts for this release
+        shell: bash
+        run: |
+          node -e "const fs=require('fs');const f='src-tauri/tauri.conf.json';const j=JSON.parse(fs.readFileSync(f,'utf8'));j.bundle.createUpdaterArtifacts=true;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n');console.log('createUpdaterArtifacts:',j.bundle.createUpdaterArtifacts,'version:',j.version)"
+
       - name: Build, sign, and publish the release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5  # pinned = the v0.x that built v1.2.0
         env:
