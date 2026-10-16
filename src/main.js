@@ -1,3 +1,4 @@
+import { showAppToast } from "./app-toast.js";
 import "./titlebar.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -2221,6 +2222,7 @@ kickLoginBtn.addEventListener("click", async (e) => {
     // the browser opens; completion arrives via the kick-oauth-result event below. nothing to await here
   } catch (err) {
     console.warn("[kick] login failed to start:", err);
+    showAppToast(`Couldn't start the Kick login: ${typeof err === "string" ? err : err?.message || "try again"}`, { error: true });
   }
 });
 
@@ -2230,6 +2232,7 @@ listen("kick-oauth-result", (event) => {
     setKickLoggedInUi(login || "Kick user");
   } else {
     console.warn("[kick] login failed:", error);
+    if (error) showAppToast(`Kick login didn't finish: ${error}`, { error: true });
     setKickLoggedInUi(null);
   }
 });

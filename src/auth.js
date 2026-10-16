@@ -1,6 +1,7 @@
 // Twitch OAuth, frontend half. the actual browser flow lives in Rust (oauth.rs); this
 // triggers it, waits for the token event, validates, and stores the login
 
+import { showAppToast } from "./app-toast.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -132,6 +133,7 @@ export class TwitchAuth {
       await invoke("start_oauth_login");
     } catch (err) {
       console.error("Failed to start login:", err);
+      showAppToast(`Couldn't start the Twitch login: ${typeof err === "string" ? err : err?.message || "try again"}`, { error: true });
       this._setLoginLabel("Log in with Twitch");
       this.loginBtn.disabled = false;
     }

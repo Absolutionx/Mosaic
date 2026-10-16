@@ -83,6 +83,9 @@ jobs:
       # Leaving it unset entirely is what actually skips codesigning.
       - name: Build the .app and .dmg
         run: npm run tauri build -- --target ${{ matrix.target }}
+        env:
+          # Kick login's client secret, baked in at build time (kick_oauth.rs); a repo secret, not in the source
+          KICK_CLIENT_SECRET: ${{ secrets.KICK_CLIENT_SECRET }}
 
       - name: Upload the .dmg
         uses: actions/upload-artifact@v5

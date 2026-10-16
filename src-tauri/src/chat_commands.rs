@@ -14,6 +14,10 @@ use crate::{ChatState, EventSubState, SevenTvEventsState};
 // connects authenticated and able to send; otherwise anonymous/read-only
 #[tauri::command]
 pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: String) -> Result<(), String> {
+    // the name goes into a raw IRC line ("JOIN #channel"): a space or line break there would be a second command
+    if !crate::stream_relay::valid_twitch_login(&channel) {
+        return Err("invalid channel".to_string());
+    }
     // if a chat session is already running, signal it to stop first so we don't end up with two concurrent connections
     {
         let mut guard = state.stop_tx.lock().map_err(|e| e.to_string())?;
@@ -81,6 +85,9 @@ pub fn send_chat_message(
     // multi-row chat art is meant to travel (rows separated by single spaces).
     let message = message.replace("\r\n", " ").replace(['\r', '\n'], " ");
 
+    // the reply id goes into the IRC line's tag section: Twitch message ids are UUIDs, so allow only that
+    // shape, never a space, ';' or line break that would end the tag
+    let reply_to_msg_id = reply_to_msg_id.filter(|id| id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     let outgoing = match reply_to_msg_id {
         Some(id) if !id.is_empty() => {
             chat::OutgoingMessage::ReplyPrivmsg { reply_to_id: id, text: message }

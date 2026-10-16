@@ -10,6 +10,9 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 
 mod app_extras;
+mod secret_store;
+#[cfg(test)]
+mod fuzz_support;
 mod downloads;
 mod http;
 mod chat;

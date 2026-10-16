@@ -1176,3 +1176,14 @@ mod discovery_tests {
         assert_eq!(urlencode("50% & more"), "50%25%20%26%20more");
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn timestamp_parsing_never_panics() {
+        for s in crate::fuzz_support::strings(9, 60_000, 12) {
+            let _ = super::to_iso_utc(&s);
+            let _ = super::urlencode(&s);
+        }
+    }
+}

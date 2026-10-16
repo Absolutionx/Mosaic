@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.5.1"
+version = "1.5.2"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
@@ -98,3 +98,7 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# login tokens go to Windows Credential Manager (secret_store.rs). Windows only: other platforms keep files
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }

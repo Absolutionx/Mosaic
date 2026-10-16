@@ -1639,6 +1639,9 @@ export class TwitchChat {
     if (!login) return;
     const check = async () => {
       if (this.channel !== login) return;
+      // hidden (minimized, in the tray): skip, and check once when the window is back (_bindVisibilityResume)
+      if (document.hidden) { this._resubMissed = true; return; }
+      this._resubMissed = false;
       let info = null;
       try { info = await invoke("get_resub_notification", { channelLogin: login }); } catch { return; }
       if (this.channel !== login) return;
@@ -1651,12 +1654,15 @@ export class TwitchChat {
       this._renderResubBanner(el, info, login, months);
     };
     this._resubCheck = check;
+    this._resubResume = () => { if (this._resubMissed) check(); };
+    this._bindVisibilityResume();
     check();
     this._resubTimer = setInterval(check, 5 * 60 * 1000); // anniversaries don't appear often
   }
 
   _stopResubPoll() {
     if (this._resubTimer) { clearInterval(this._resubTimer); this._resubTimer = null; }
+    this._resubResume = null;
     const el = document.getElementById("resub-banner");
     if (el) { el.style.display = "none"; el.innerHTML = ""; el.classList.remove("resub-share"); }
   }
@@ -1771,6 +1777,8 @@ export class TwitchChat {
     this._stopPinPoll();
     if (!channelId) return;
     const poll = async () => {
+      if (document.hidden) { this._pinMissed = true; return; } // nobody's looking: catch up on return
+      this._pinMissed = false;
       try {
         const pins = await invoke("get_pinned_chat_messages", { channelId });
         this._renderPin(Array.isArray(pins) ? pins : []);
@@ -1778,8 +1786,24 @@ export class TwitchChat {
         console.error("[pinned] GetPinnedChat failed:", err);
       }
     };
+    this._pinResume = () => { if (this._pinMissed) poll(); };
+    this._bindVisibilityResume();
     poll();
     this._pinPollTimer = setInterval(poll, 30000);
+  }
+
+  // the pinned-message, hype-train and sub-anniversary checks don't run while the window is hidden
+  // (minimized or in the tray: nothing on screen to update, and each check is a Twitch request). each
+  // notes what it skipped; back on screen, the ones that skipped run once right away
+  _bindVisibilityResume() {
+    if (this._visibilityResumeBound) return;
+    this._visibilityResumeBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      for (const resume of [this._pinResume, this._hypeResume, this._resubResume]) {
+        try { resume?.(); } catch (err) { console.error("[chat] resume after hidden failed:", err); }
+      }
+    });
   }
 
   _stopPinPoll() {
@@ -1787,6 +1811,7 @@ export class TwitchChat {
       clearInterval(this._pinPollTimer);
       this._pinPollTimer = null;
     }
+    this._pinResume = null;
     this._dismissedPinId = null;
     this._renderPin([]);
   }
@@ -1859,6 +1884,9 @@ export class TwitchChat {
     const IDLE = 15000, ACTIVE = 3000, IMMINENT = 1000;
     const poll = async () => {
       if (!this._hypePollActive) return;
+      // hidden: let the loop stop here; _hypeResume restarts it when the window is back
+      if (document.hidden) { this._hypeMissed = true; return; }
+      this._hypeMissed = false;
       let next = IDLE;
       try {
         const d = await invoke("get_hype_train", { channelLogin: login });
@@ -1885,11 +1913,15 @@ export class TwitchChat {
       }
       if (this._hypePollActive) this._hypePollTimer = setTimeout(poll, next);
     };
+    this._hypeMissed = false;
+    this._hypeResume = () => { if (this._hypeMissed && this._hypePollActive) poll(); };
+    this._bindVisibilityResume();
     poll();
   }
 
   _stopHypePoll() {
     this._hypePollActive = false;
+    this._hypeResume = null;
     if (this._hypePollTimer) { clearTimeout(this._hypePollTimer); this._hypePollTimer = null; }
     this._hypeView?.clear();
   }

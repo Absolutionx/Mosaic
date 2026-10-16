@@ -13,7 +13,7 @@
 // Mosaic into an account of its choosing
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -24,27 +24,23 @@ struct PersistedToken {
     access_token: String,
 }
 
+// stored via secret_store: Windows Credential Manager on Windows, a file elsewhere
 pub fn save_token(app: &AppHandle, access_token: &str) {
-    let Ok(dir) = app.path().app_local_data_dir() else { return };
-    let path = dir.join(TOKEN_FILE);
     if let Ok(json) = serde_json::to_string(&PersistedToken {
         access_token: access_token.to_string(),
     }) {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(&path, json);
+        let _ = crate::secret_store::save(app, TOKEN_FILE, &json);
     }
 }
 
 pub fn load_token(app: &AppHandle) -> Option<String> {
-    let dir = app.path().app_local_data_dir().ok()?;
-    let json = std::fs::read_to_string(dir.join(TOKEN_FILE)).ok()?;
+    let json = crate::secret_store::load(app, TOKEN_FILE)?;
     let persisted: PersistedToken = serde_json::from_str(&json).ok()?;
     Some(persisted.access_token)
 }
 
 pub fn clear_token(app: &AppHandle) {
-    let Ok(dir) = app.path().app_local_data_dir() else { return };
-    let _ = std::fs::remove_file(dir.join(TOKEN_FILE));
+    crate::secret_store::delete(app, TOKEN_FILE);
 }
 
 // this app's Client-ID, registered at dev.twitch.tv. OAuth client IDs (unlike client secrets) are
@@ -98,6 +94,11 @@ struct ValidateResponse {
 // login: either browser tab then completes it
 static PENDING_STATE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+// true while OUR redirect server holds the port. if the port is busy and this is false, some other program
+// has it, and opening the login would hand that program the token (Twitch redirects it there), so the
+// login is refused with an explanation instead
+static SERVER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn pending_state() -> Option<String> {
     PENDING_STATE.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
@@ -133,13 +134,20 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
     let listener = match TcpListener::bind(format!("127.0.0.1:{REDIRECT_PORT}")).await {
         Ok(l) => l,
         Err(_) => {
-            // port busy: don't spawn a second server, open the login the running one is waiting for.
-            // (no pending state means something else holds the port; the page still opens, as before)
-            let state = pending_state().unwrap_or_else(new_state);
-            open_browser(&app, &authorize_url(&state))?;
-            return Ok(());
+            // port busy. ours (an earlier attempt still waiting): open the login it's waiting for. anyone else's:
+            // stop, Twitch would deliver the token to that program
+            match pending_state().filter(|_| SERVER_RUNNING.load(std::sync::atomic::Ordering::SeqCst)) {
+                Some(state) => {
+                    open_browser(&app, &authorize_url(&state))?;
+                    return Ok(());
+                }
+                None => return Err(format!(
+                    "Another program is using port {REDIRECT_PORT}, which Mosaic's Twitch login needs. Close it and try again."
+                )),
+            }
         }
     };
+    SERVER_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
 
     let state = new_state();
     set_pending_state(Some(state.clone()));
@@ -161,6 +169,7 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
         if pending_state().as_deref() == Some(mine.as_str()) {
             set_pending_state(None);
         }
+        SERVER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
 
     open_browser(&app, &auth_url)?;
@@ -265,9 +274,13 @@ async fn run_redirect_server<F: Fn(String)>(listener: TcpListener, expected_stat
             Err(_) => break,
         };
 
-        // read enough of the request to identify it
+        // read enough of the request to identify it. bounded in time: connections are handled one at a time,
+        // so one that never sends anything must not hold up the browser's real redirect
         let mut buf = vec![0u8; 4096];
-        let n = socket.read(&mut buf).await.unwrap_or(0);
+        let n = match tokio::time::timeout(std::time::Duration::from_secs(5), socket.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => 0,
+        };
         if n == 0 {
             continue;
         }
@@ -433,4 +446,52 @@ async fn reqwest_lite_get(url: &str, headers: &[(&str, &str)]) -> Result<String,
         return Err(format!("Request failed with status {}", response.status()));
     }
     response.text().await.map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn redirect_parsing_never_panics() {
+        for s in crate::fuzz_support::strings(6, 60_000, 24) {
+            let _ = super::url_decode(&s);
+            let _ = super::query_param(&s, "t");
+            let _ = super::query_param(&format!("GET /token?{s} HTTP/1.1"), "s");
+        }
+    }
+}
+
+#[cfg(test)]
+mod redirect_server_tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+
+    async fn get(addr: std::net::SocketAddr, path: &str) -> String {
+        let mut s = TcpStream::connect(addr).await.unwrap();
+        s.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();
+        let mut out = String::new();
+        let _ = s.read_to_string(&mut out).await;
+        out
+    }
+
+    // a silent connection can't block the real redirect; a forged token (wrong or missing state) is
+    // refused and the server keeps waiting; the real one is accepted exactly once
+    #[tokio::test]
+    async fn redirect_server_resists_silence_and_forgery() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let got2 = got.clone();
+        let server = tokio::spawn(super::run_redirect_server(listener, "STATE123".into(), move |t| got2.lock().unwrap().push(t)));
+
+        let _silent = TcpStream::connect(addr).await.unwrap(); // connects, never sends
+        let t0 = std::time::Instant::now();
+        let forged = get(addr, "/token?t=evil&s=WRONG").await;
+        assert!(forged.starts_with("HTTP/1.1 403"), "{forged}");
+        assert!(t0.elapsed() < std::time::Duration::from_secs(7), "silent connection held the server {:?}", t0.elapsed());
+        assert!(get(addr, "/token?t=evil").await.starts_with("HTTP/1.1 403"));
+        assert!(get(addr, "/").await.contains("Completing login"));
+        assert!(get(addr, "/token?t=real%2Btoken&s=STATE123").await.starts_with("HTTP/1.1 200"));
+        tokio::time::timeout(std::time::Duration::from_secs(2), server).await.expect("server should stop after the real token").unwrap();
+        assert_eq!(*got.lock().unwrap(), vec!["real+token".to_string()]);
+    }
 }

@@ -40,6 +40,29 @@ fn resolve_streamlink_path() -> std::path::PathBuf {
     resolve_dep_path("streamlink")
 }
 
+// what may be handed to streamlink from the frontend. both end up on streamlink's command line: an
+// unchecked quality like "--player=..." or "--plugin-dirs=..." would be read as an OPTION (writing files,
+// loading code), so only plain values get through. Twitch logins are 1-25 of [A-Za-z0-9_]; a quality is
+// streamlink's comma-separated name list ("best", "720p60,720p,best", "audio_only")
+pub(crate) fn valid_twitch_login(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 25 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub(crate) fn valid_quality(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 100
+        && !s.starts_with('-')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ',' || c == '+')
+}
+
+fn check_login(channel: &str) -> Result<(), String> {
+    if valid_twitch_login(channel) { Ok(()) } else { Err("invalid channel".into()) }
+}
+
+fn check_quality(quality: &str) -> Result<(), String> {
+    if valid_quality(quality) { Ok(()) } else { Err("invalid quality".into()) }
+}
+
 // resolves an external binary (streamlink, ffmpeg) to a path we can spawn. on Windows and Linux a bare
 // name is right: PATH lookup finds it, as it always has here. macOS needs more: an .app launched from
 // Finder/Dock does NOT inherit the shell's PATH, it gets a minimal system PATH with neither
@@ -1236,6 +1259,14 @@ async fn handle_hls_proxy(
         || content_type.contains("mpegURL")
         || content_type.contains("m3u8");
 
+    // a segment (video bytes) is passed through as it arrives, so the player starts on the first bytes
+    // instead of waiting for the whole segment to download here first (which added a full segment's
+    // download time to every VOD/Kick/preview fetch and every seek). playlists are small and need
+    // rewriting, so they're still read whole below
+    if !is_playlist {
+        return stream_segment(socket, response).await;
+    }
+
     let body_bytes = match response.bytes().await {
         Ok(b) => b,
         Err(e) => {
@@ -1246,15 +1277,10 @@ async fn handle_hls_proxy(
         }
     };
 
-    let (out_type, out_body): (&str, Vec<u8>) = if is_playlist {
-        let text = String::from_utf8_lossy(&body_bytes);
-        let base = m3u8_base(&raw_url);
-        let rewritten = rewrite_m3u8_route(&text, base, &proxy_base, route);
-        ("application/x-mpegURL; charset=utf-8", rewritten.into_bytes())
-    } else {
-        // segment file, pass through as-is
-        ("video/mp4", body_bytes.to_vec())
-    };
+    // a playlist (segments returned above): every URI inside is pointed back through this proxy
+    let text = String::from_utf8_lossy(&body_bytes);
+    let rewritten = rewrite_m3u8_route(&text, m3u8_base(&raw_url), &proxy_base, route);
+    let (out_type, out_body): (&str, Vec<u8>) = ("application/x-mpegURL; charset=utf-8", rewritten.into_bytes());
 
     // no-store: without it the webview writes every response to its disk cache (Chromium caches a response
     // that has no caching headers at all), and nothing here is ever read back from there: playlists change
@@ -1267,6 +1293,37 @@ async fn handle_hls_proxy(
     socket.write_all(header.as_bytes()).await?;
     socket.write_all(&out_body).await?;
     Ok(())
+}
+
+// sends one upstream segment response on to the player chunk by chunk. with a known length the header
+// carries it; without one the body simply ends when the connection closes (HTTP/1.1 allows that with
+// Connection: close), so the player can never mistake a cut-off segment for a whole one: a short body
+// with a Content-Length is an error to it, and an upstream failure mid-way just closes the socket
+async fn stream_segment(
+    socket: &mut tokio::net::TcpStream,
+    response: reqwest::Response,
+) -> std::io::Result<()> {
+    use futures_util::StreamExt;
+    let length = response
+        .content_length()
+        .map(|n| format!("Content-Length: {n}\r\n"))
+        .unwrap_or_default();
+    // same no-store reasoning as the playlist path below
+    let header = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\n{length}Connection: close\r\n\r\n"
+    );
+    socket.write_all(header.as_bytes()).await?;
+    let mut body = response.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        match chunk {
+            Ok(bytes) => socket.write_all(&bytes).await?,
+            Err(e) => {
+                eprintln!("[hls-proxy] segment body error: {e}");
+                break; // closing the socket ends the response; with Content-Length the player sees it short
+            }
+        }
+    }
+    socket.flush().await
 }
 
 // Streams a Twitch clip MP4 to the in-app clip player. Unlike /hls-proxy (which buffers whole, small HLS
@@ -1387,7 +1444,14 @@ async fn handle_connection(
 ) -> std::io::Result<()> {
     // read the HTTP request to determine which handler to use (previously this was a discard; now we need the path)
     let mut req_buf = [0u8; 8192];
-    let n = socket.read(&mut req_buf).await.unwrap_or(0);
+    // bounded in time: a connection that never sends a request is dropped instead of held forever
+    let n = match tokio::time::timeout(std::time::Duration::from_secs(10), socket.read(&mut req_buf)).await {
+        Ok(Ok(n)) => n,
+        _ => 0,
+    };
+    if n == 0 {
+        return Ok(());
+    }
     let req_str = std::str::from_utf8(&req_buf[..n]).unwrap_or("");
     let path = req_str.lines().next()
         .and_then(|l| l.split_whitespace().nth(1))
@@ -1636,6 +1700,7 @@ pub(crate) async fn resolve_vod_cdn_url(video_id: &str, quality: &str) -> Result
     if video_id.is_empty() || !video_id.chars().all(|c| c.is_ascii_digit()) {
         return Err("invalid video id".to_string());
     }
+    check_quality(quality)?;
     let target = format!("https://www.twitch.tv/videos/{video_id}");
     let mut cmd = Command::new(resolve_streamlink_path());
     cmd.arg(&target)
@@ -1727,6 +1792,8 @@ pub async fn get_live_m3u8_url(
     quality: String,
     state: tauri::State<'_, Arc<StreamRelayState>>,
 ) -> Result<String, String> {
+    check_login(&channel)?;
+    check_quality(&quality)?;
     let target = format!("https://www.twitch.tv/{channel}");
     let mut cmd = Command::new(resolve_streamlink_path());
     cmd.arg(&target)
@@ -1829,9 +1896,7 @@ pub async fn get_live_preview_url(
     state: tauri::State<'_, Arc<StreamRelayState>>,
 ) -> Result<String, String> {
     let login = channel.trim().to_ascii_lowercase();
-    if login.is_empty() || login.len() > 32 || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err("invalid channel".into());
-    }
+    check_login(&login)?;
     let (value, sig) = preview_token(
         PREVIEW_TOKEN_QUERY,
         serde_json::json!({ "login": login, "playerType": "site" }),
@@ -1868,6 +1933,9 @@ pub async fn start_stream(
     quality: Option<String>,
     low_latency: Option<bool>,
 ) -> Result<String, String> {
+    check_login(&channel)?;
+    let quality = quality.unwrap_or_else(|| "best".to_string());
+    check_quality(&quality)?;
     let target = format!("https://www.twitch.tv/{channel}");
     let mut extra_args: Vec<String> = Vec::new();
     if low_latency == Some(true) {
@@ -1877,7 +1945,7 @@ pub async fn start_stream(
     start_relay(
         state.inner().clone(),
         target,
-        quality.unwrap_or_else(|| "best".to_string()),
+        quality,
         extra_args,
     )
     .await
@@ -1946,12 +2014,16 @@ async fn list_available_qualities(target_url: &str) -> Result<Vec<String>, Strin
 // lists available qualities for a live channel
 #[tauri::command]
 pub async fn get_available_qualities(channel: String) -> Result<Vec<String>, String> {
+    check_login(&channel)?;
     list_available_qualities(&format!("https://www.twitch.tv/{channel}")).await
 }
 
 // lists available qualities for a VOD
 #[tauri::command]
 pub async fn get_available_vod_qualities(video_id: String) -> Result<Vec<String>, String> {
+    if video_id.is_empty() || video_id.len() > 20 || !video_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err("invalid video id".into());
+    }
     list_available_qualities(&format!("https://www.twitch.tv/videos/{video_id}")).await
 }
 
@@ -2028,5 +2100,113 @@ mod preview_ad_tests {
         let p = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2.000,Amazon\na.ts\n#EXTINF:2.000,Amazon\nb.ts\n";
         let out = strip_twitch_ad_segments(p);
         assert!(!out.contains(".ts") && out.contains("#EXT-X-MEDIA-SEQUENCE:3"));
+    }
+}
+
+#[cfg(test)]
+mod streamlink_arg_tests {
+    use super::{valid_quality, valid_twitch_login};
+
+    #[test]
+    fn qualities() {
+        for ok in ["best", "worst", "audio_only", "720p60", "1080p60,1080p,best", "360p30,360p,480p30,480p,worst"] {
+            assert!(valid_quality(ok), "{ok}");
+        }
+        for bad in ["", "--player=calc.exe", "-o", "best --output x", "best;rm", "../x", "best\n--record=x"] {
+            assert!(!valid_quality(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn logins() {
+        for ok in ["xqc", "TheBurntPeanut", "a_b_1"] {
+            assert!(valid_twitch_login(ok), "{ok}");
+        }
+        for bad in ["", "--help", "x y", "x/../y", "abcdefghijklmnopqrstuvwxyz", "x?y"] {
+            assert!(!valid_twitch_login(bad), "{bad}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod segment_stream_tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    // a slow CDN: sends half a segment, waits, sends the rest. the player side must see the first half
+    // well before the CDN finishes (the old code waited for all of it), and the whole body intact
+    #[tokio::test]
+    async fn segment_bytes_arrive_before_the_upstream_finishes() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let up_addr = upstream.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = upstream.accept().await.unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = s.read(&mut buf).await;
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 200000\r\n\r\n").await.unwrap();
+            s.write_all(&vec![1u8; 100_000]).await.unwrap();
+            s.flush().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            s.write_all(&vec![2u8; 100_000]).await.unwrap();
+        });
+        let resp = reqwest::get(format!("http://{up_addr}/seg.m4s")).await.unwrap();
+
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let p_addr = proxy.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = proxy.accept().await.unwrap();
+            super::stream_segment(&mut s, resp).await.unwrap();
+        });
+        let t0 = std::time::Instant::now();
+        let mut player = tokio::net::TcpStream::connect(p_addr).await.unwrap();
+        let mut got = Vec::new();
+        let mut first_half_at = None;
+        let mut buf = vec![0u8; 65536];
+        loop {
+            let n = player.read(&mut buf).await.unwrap();
+            if n == 0 { break; }
+            got.extend_from_slice(&buf[..n]);
+            if first_half_at.is_none() && got.len() > 100_000 { first_half_at = Some(t0.elapsed()); }
+        }
+        let head_end = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let head = String::from_utf8_lossy(&got[..head_end]).to_string();
+        let body = &got[head_end..];
+        assert!(head.contains("Content-Length: 200000") && head.contains("no-store"), "{head}");
+        assert_eq!(body.len(), 200_000);
+        assert!(body[..100_000].iter().all(|&b| b == 1) && body[100_000..].iter().all(|&b| b == 2));
+        let first = first_half_at.unwrap();
+        assert!(first < std::time::Duration::from_millis(600), "first half took {first:?}");
+        assert!(t0.elapsed() >= std::time::Duration::from_millis(950));
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn proxy_parsers_never_panic() {
+        for s in crate::fuzz_support::strings(3, 40_000, 30) {
+            let _ = super::pct_decode(&s);
+            let _ = super::has_proxy_key(&s);
+            let _ = super::has_proxy_key(&format!("/hls-proxy?{s}"));
+            let _ = super::strip_twitch_ad_segments(&s);
+            let _ = super::rewrite_m3u8_route(&s, "https://cdn.example/a/", "http://127.0.0.1:1", "hls-preview");
+            let _ = super::rewrite_m3u8_route(&s, "https://cdn.example/a/", "http://127.0.0.1:1", "hls-proxy");
+            let _ = super::rewrite_tag_uri_route(&s, "https://cdn.example/a/", "http://127.0.0.1:1", "hls-proxy");
+            let _ = super::valid_quality(&s);
+            let _ = super::valid_twitch_login(&s);
+        }
+    }
+
+    // whatever the playlist, the ad filter only ever removes lines: every line it outputs is an input line,
+    // or one of the two lines it may write itself (a moved sequence number, a discontinuity marker)
+    #[test]
+    fn ad_filter_only_removes() {
+        for s in crate::fuzz_support::strings(4, 20_000, 30) {
+            let out = super::strip_twitch_ad_segments(&s);
+            for l in out.lines() {
+                assert!(s.lines().any(|x| x == l) || l.starts_with("#EXT-X-MEDIA-SEQUENCE:") || l == "#EXT-X-DISCONTINUITY",
+                    "invented line {l:?} from {s:?}");
+            }
+        }
     }
 }

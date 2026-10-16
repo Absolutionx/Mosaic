@@ -7,7 +7,7 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -16,14 +16,16 @@ use tokio::net::TcpListener;
 // to be committed: set them before running the build and option_env! bakes them in
 pub const CLIENT_ID: &str = match option_env!("KICK_CLIENT_ID") {
     Some(v) => v,
-    None => "01KXA9BRSGK8QWV8G2F3RB46PZ",
+    None => "01M51TR1P2VSHYHGRNKWGT4ZTP",
 };
 
-// Kick demands this on the PKCE token exchange (see header). NOT a real secret once shipped in a
-// binary, treat it as a semi-public app identifier, and if abused, rotate it in the Kick dev console (a build-time KICK_CLIENT_SECRET still overrides this)
+// Kick demands this on the PKCE token exchange (see header). it ships inside the app (no way around that
+// for a desktop client), but it is NOT kept in the source: it comes only from the KICK_CLIENT_SECRET
+// environment variable at build time (a GitHub Actions secret for releases; set it yourself for a local
+// build). without it the build simply has no Kick login (kick_oauth_configured below)
 pub const CLIENT_SECRET: &str = match option_env!("KICK_CLIENT_SECRET") {
     Some(v) => v,
-    None => "3eb07b640555e7aab2a115040c79733e68aba3b424fc42a54a0858411a12282c",
+    None => "",
 };
 
 const REDIRECT_URI: &str = "http://localhost:17544/";
@@ -41,7 +43,7 @@ const SCOPES: &str = "user:read chat:write";
 // true once a real client secret has been filled in. the frontend hides the Kick "Log in" button (with a short explainer) while false, so a placeholder build doesn't offer a login that could only fail at the token exchange
 #[tauri::command]
 pub fn kick_oauth_configured() -> bool {
-    CLIENT_SECRET != "REPLACE_WITH_KICK_CLIENT_SECRET" && !CLIENT_ID.is_empty()
+    !CLIENT_SECRET.is_empty() && !CLIENT_ID.is_empty()
 }
 
 // mirrors oauth.rs; separate file so the two providers never clobber each other's stored token
@@ -54,24 +56,20 @@ struct PersistedToken {
     refresh_token: String,
 }
 
+// stored via secret_store: Windows Credential Manager on Windows, a file elsewhere
 fn save_token(app: &AppHandle, tok: &PersistedToken) {
-    let Ok(dir) = app.path().app_local_data_dir() else { return };
     if let Ok(json) = serde_json::to_string(tok) {
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(dir.join(TOKEN_FILE), json);
+        let _ = crate::secret_store::save(app, TOKEN_FILE, &json);
     }
 }
 
 fn load_token(app: &AppHandle) -> Option<PersistedToken> {
-    let dir = app.path().app_local_data_dir().ok()?;
-    let json = std::fs::read_to_string(dir.join(TOKEN_FILE)).ok()?;
+    let json = crate::secret_store::load(app, TOKEN_FILE)?;
     serde_json::from_str(&json).ok()
 }
 
 fn clear_token_file(app: &AppHandle) {
-    if let Ok(dir) = app.path().app_local_data_dir() {
-        let _ = std::fs::remove_file(dir.join(TOKEN_FILE));
-    }
+    crate::secret_store::delete(app, TOKEN_FILE);
 }
 
 #[derive(Default)]
@@ -229,7 +227,7 @@ pub async fn start_kick_oauth_login(app: AppHandle) -> Result<(), String> {
     let challenge = b64url_nopad(&sha256(verifier.as_bytes()));
     let state = random_token(24);
 
-    *PENDING.lock().unwrap() = Some(PendingAuth {
+    *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingAuth {
         verifier,
         state: state.clone(),
     });
@@ -247,11 +245,17 @@ pub async fn start_kick_oauth_login(app: AppHandle) -> Result<(), String> {
     let listener = match TcpListener::bind(format!("127.0.0.1:{REDIRECT_PORT}")).await {
         Ok(l) => l,
         Err(_) => {
-            // port busy: a prior attempt's server is still up. reopen the URL so the user can complete it against that server
-            open_browser(&app, &auth_url)?;
-            return Ok(());
+            // port busy. ours (a prior attempt's server is still up): reopen the URL so the user can complete it
+            // against that server, which reads the PENDING just replaced above. anyone else's: stop
+            if KICK_SERVER_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+                open_browser(&app, &auth_url)?;
+                return Ok(());
+            }
+            *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            return Err(format!("Another program is using port {REDIRECT_PORT}, which Mosaic's Kick login needs. Close it and try again."));
         }
     };
+    KICK_SERVER_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
 
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -260,6 +264,7 @@ pub async fn start_kick_oauth_login(app: AppHandle) -> Result<(), String> {
             run_redirect_server(listener, app2),
         )
         .await;
+        KICK_SERVER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
     });
 
     open_browser(&app, &auth_url)?;
@@ -287,6 +292,14 @@ const DONE_HTML_ERR: &str =
      <div style='text-align:center'><h1 style='color:#e91916'>Kick login failed</h1>\
      <p style='color:#adadb8'>Please close this tab and try again.</p></div>";
 
+// true while our redirect server holds REDIRECT_PORT (see start: a busy port held by anything else is refused)
+static KICK_SERVER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn pending_state_is(state: Option<&str>) -> bool {
+    let guard = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    matches!((guard.as_ref(), state), (Some(p), Some(s)) if p.state == s)
+}
+
 async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
     // only one meaningful request: the browser hitting the redirect URI with ?code&state. loop so a stray favicon/preflight before it doesn't end the server early
     loop {
@@ -294,7 +307,11 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
             break;
         };
         let mut buf = vec![0u8; 8192];
-        let n = socket.read(&mut buf).await.unwrap_or(0);
+        // bounded: connections are served one at a time, a silent one must not block the real redirect
+        let n = match tokio::time::timeout(std::time::Duration::from_secs(5), socket.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => 0,
+        };
         if n == 0 {
             continue;
         }
@@ -321,6 +338,12 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
             }
         }
 
+        // only Kick's redirect, carrying the state this login sent, ends the wait. anything else (a web page
+        // poking this port, a stale tab) gets a 403 and the login keeps waiting, instead of being thrown away
+        if !pending_state_is(state.as_deref()) {
+            let _ = socket.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+            continue;
+        }
         let outcome = finish_login(&app, code, state).await;
         let (status, body) = match &outcome {
             Ok(_) => ("200 OK", DONE_HTML_OK),
@@ -358,7 +381,7 @@ async fn finish_login(
     code: Option<String>,
     state: Option<String>,
 ) -> Result<String, String> {
-    let pending = PENDING.lock().unwrap().take();
+    let pending = PENDING.lock().unwrap_or_else(|e| e.into_inner()).take();
     let Some(pending) = pending else {
         return Err("no login in progress".into());
     };
@@ -642,5 +665,27 @@ mod tests {
         let b = random_token(24);
         assert_ne!(a, b);
         assert!(a.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn redirect_parsing_never_panics() {
+        for s in crate::fuzz_support::strings(7, 60_000, 24) {
+            let _ = super::url_decode(&s);
+        }
+    }
+}
+
+#[cfg(test)]
+mod pending_tests {
+    #[test]
+    fn only_the_sent_state_matches() {
+        *super::PENDING.lock().unwrap() = Some(super::PendingAuth { verifier: "v".into(), state: "abc".into() });
+        assert!(super::pending_state_is(Some("abc")));
+        assert!(!super::pending_state_is(Some("abd")) && !super::pending_state_is(None) && !super::pending_state_is(Some("")));
+        *super::PENDING.lock().unwrap() = None;
+        assert!(!super::pending_state_is(Some("abc")));
     }
 }

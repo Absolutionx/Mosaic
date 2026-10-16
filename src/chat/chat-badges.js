@@ -55,8 +55,10 @@ export const chatBadgesMixin = {
       const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
       return 0.2126 * lin(rr) + 0.7152 * lin(gg) + 0.0722 * lin(bb);
     };
-    // contrast vs the chat bg (~#0e0e10, lum ~0.004) at 4.5:1 needs lum >= this ((L+0.05)/(0.004+0.05)=4.5 -> L ~= 0.193)
-    const MIN_LUM = 0.193;
+    // 4.5:1 (readable small text) against the chat background. chat sits on the theme surface (#161b22,
+    // luminance ~0.0103), not the old #0e0e10 this was tuned for, so the old 0.193 left some names at ~4:1.
+    // (L+0.05)/(0.0103+0.05) = 4.5 -> L ~= 0.222, plus a little margin for the rounding to a hex colour
+    const MIN_LUM = 0.228;
     if (relLum(r, g, b) >= MIN_LUM) return hex;
 
     const max = Math.max(r, g, b), min = Math.min(r, g, b);

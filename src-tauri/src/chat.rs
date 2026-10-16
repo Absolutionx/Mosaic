@@ -627,3 +627,16 @@ fn rand_u32() -> u32 {
         .unwrap_or(42);
     nanos
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn irc_parsers_never_panic() {
+        for s in crate::fuzz_support::strings(1, 60_000, 24) {
+            let _ = super::parse_tags(&s);
+            let _ = super::is_reconnect_command(&s);
+            let _ = super::is_reconnect_command(&format!("@{s}"));
+            let _ = super::is_reconnect_command(&format!(":{s}"));
+        }
+    }
+}

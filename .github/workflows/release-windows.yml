@@ -77,6 +77,9 @@ jobs:
           # so it expects to sign. See the setup notes at the top.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Kick login's client secret, baked in at build time (kick_oauth.rs). Not in the source; add it
+          # as a repo secret named KICK_CLIENT_SECRET. Without it the release has no Kick login
+          KICK_CLIENT_SECRET: ${{ secrets.KICK_CLIENT_SECRET }}
         with:
           # tagName/​releaseName use the pushed tag. __VERSION__ is filled by
           # tauri-action from tauri.conf.json's version.

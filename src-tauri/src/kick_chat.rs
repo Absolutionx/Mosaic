@@ -1,11 +1,20 @@
 // Kick chat client (read-only), the chat half of the Twitch -> Kick failover (see kick.rs and
 // tryKickFailover in main.js).
 //
-// Kick chat rides Pusher WebSockets: subscribe to the public chatrooms.{chatroom_id}.v2 (no auth to
-// read); messages arrive as ChatMessageEvent frames. in Rust because WebView2 Tracking Prevention kills
-// webview-opened WebSockets. sending is a separate, login-gated path (kick_oauth.rs); this client is
-// read-only. messages are emitted as the same "chat-message" event the IRC client uses, so the renderer
-// works unchanged. fields with no Kick equivalent (badges, bits, emote positions) are None; inline emote tokens become id-carrying markers (flatten_emote_tokens) the frontend renders directly
+// Transport (since 10-16-26): Kick moved chat off Pusher (the old public app key now gets "4001 App key
+// not in this cluster" on every cluster) onto its own Centrifugo server. The handshake, as kick.com does it:
+//   1. POST web.kick.com/api/v1/realtime/connection {client:{id,type:"web"},capabilities:{...}}
+//      -> the websocket URL (provider "centrifugo")
+//   2. POST web.kick.com/api/v1/realtime/auth/connection {client_id} -> a guest token (JWT, ~45 min)
+//   3. websocket: {"connect":{"token","name":"js"},"id":1}, then {"subscribe":{"channel":
+//      "chatrooms.{chatroom_id}.v2"},"id":2}
+// Messages arrive as {"push":{"channel","pub":{"data":{"event","data"}}}} where event/data are the same
+// App\Events\ChatMessageEvent payloads Pusher used to carry, so the parsing below is unchanged. The server
+// pings with "{}" every ~25 s and expects "{}" back; the token is refreshed in place before it expires.
+// No login needed to read. In Rust because WebView2 Tracking Prevention kills webview-opened WebSockets.
+// sending is a separate, login-gated path (kick_oauth.rs). messages are emitted as the same
+// "chat-message" event the IRC client uses, so the renderer works unchanged; inline emote tokens become
+// id-carrying markers (flatten_emote_tokens) the frontend renders directly
 
 use std::sync::Mutex;
 
@@ -16,22 +25,27 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::chat::{ChatClearMsgEvent, ChatMessageEvent, ChatSystemEvent};
 
-// Kick's public Pusher endpoint (app key + us2 cluster), as used by kick.com's own frontend. unofficial; the key has rotated before and may again, a connect failure is reported as a system line and retried, nothing more
-const PUSHER_URL: &str = "wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679\
-                          ?protocol=7&client=js&version=8.4.0&flash=false";
+// where the handshake goes. unofficial, like everything Kick-web; if Kick moves again, every failure
+// below ends in a visible system line rather than a silent empty chat
+const REALTIME_API: &str = "https://web.kick.com/api/v1/realtime";
+// used if the connection lookup fails but a token was still issued (the URL has been stable)
+const DEFAULT_WS_URL: &str = "wss://realtime.us-west-2.platform.kick.com/connection/websocket";
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+                          (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
 
-// max reconnect backoff. kept short-ish: this client only runs during an active failover session, so a long backoff just means dead chat
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+// max reconnect backoff. kept short-ish: dead chat is worse than a few extra requests
 const MAX_BACKOFF_SECS: u64 = 15;
 
-// how often WE ping Pusher to keep the socket alive. Pusher closes a connection idle past the
-// activity_timeout it sends in pusher:connection_established (typically 120s); the client must ping
-// before then, not just pong server pings. without this, a quiet channel (most notably right after a
-// stream ENDS, when a failover session's chat goes silent) would idle out and drop, reconnect, idle
-// out again, in a visible loop. 30s stays comfortably under Pusher's default; if the server advertises a shorter timeout we tighten to it
-const PING_INTERVAL_SECS: u64 = 30;
-
-// if a ping we sent goes this long with no pong (or any other frame) back, treat the socket as dead and reconnect rather than waiting minutes for TCP to time out. any inbound frame (pong, chat message, Pusher ping) counts as liveness and clears this
-const PONG_TIMEOUT_SECS: u64 = 10;
+// the server pings every `ping` seconds (25 today, sent in the connect reply). if nothing at all arrives
+// for ping + this, the socket is wedged: reconnect instead of waiting minutes for TCP to notice
+const IDLE_GRACE_SECS: u64 = 20;
+// refresh the token this long before it expires
+const REFRESH_EARLY_SECS: u64 = 120;
+// connect + subscribe confirmations must arrive within this
+const HANDSHAKE_SECS: u64 = 15;
 
 pub struct KickChatState {
     // stop-channel for the running client task, if any. dropping or firing it ends the loop cleanly; replaced on every start
@@ -77,41 +91,202 @@ fn system_line(app: &AppHandle, text: impl Into<String>) {
     let _ = app.emit("chat-system", ChatSystemEvent { text: text.into(), msg_id: None });
 }
 
+// ---- handshake over HTTP -------------------------------------------------------------------------
+
+// POST a JSON body to web.kick.com and parse the JSON reply. curl first, like kick.rs (Cloudflare fingerprints
+// TLS and is friendlier to curl's), reqwest only when curl isn't installed
+async fn post_kick_json(url: &str, body: &Value) -> Result<Value, String> {
+    match post_via_curl(url, body).await {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => post_via_reqwest(url, body).await,
+        Err(e) => Err(format!("failed to run curl: {e}")),
+    }
+}
+
+async fn post_via_curl(url: &str, body: &Value) -> Result<Result<Value, String>, std::io::Error> {
+    let mut cmd = tokio::process::Command::new("curl");
+    cmd.args([
+        "-s", "-w", "\n%{http_code}", "--max-time", "10", "-X", "POST",
+        "-H", "Accept: application/json",
+        "-H", "Content-Type: application/json",
+        "-H", "Origin: https://kick.com",
+        "-H", "Referer: https://kick.com/",
+        "-H", "x-app-platform: web",
+        // body on stdin, so nothing from it ever lands on a command line
+        "--data-binary", "@-",
+    ]);
+    cmd.arg("-H").arg(format!("User-Agent: {BROWSER_UA}"));
+    cmd.arg(url);
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        let _ = stdin.write_all(body.to_string().as_bytes()).await;
+        // dropped here, closing stdin so curl sends
+    }
+    let output = child.wait_with_output().await?;
+    Ok((|| {
+        if !output.status.success() {
+            return Err(format!("curl exited with code {:?}", output.status.code()));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (text, code) = stdout.rsplit_once('\n').ok_or_else(|| "no reply".to_string())?;
+        if code.trim() != "200" {
+            return Err(format!("Kick returned {}", code.trim()));
+        }
+        serde_json::from_str(text).map_err(|e| format!("unreadable reply: {e}"))
+    })())
+}
+
+async fn post_via_reqwest(url: &str, body: &Value) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(BROWSER_UA)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(url)
+        .header("Accept", "application/json")
+        .header("Origin", "https://kick.com")
+        .header("Referer", "https://kick.com/")
+        .header("x-app-platform", "web")
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Kick returned {}", resp.status().as_u16()));
+    }
+    resp.json::<Value>().await.map_err(|e| format!("unreadable reply: {e}"))
+}
+
+// the websocket URL from the connection reply. only a wss:// URL on a kick.com host is accepted: this
+// value decides where the app connects, so a tampered or odd reply can't point it anywhere else
+fn ws_url_from(reply: &Value) -> Option<String> {
+    let conns = reply.pointer("/data/connections")?.as_array()?;
+    let url = conns
+        .iter()
+        .find(|c| c.get("provider").and_then(|v| v.as_str()) == Some("centrifugo"))?
+        .pointer("/credentials/url")?
+        .as_str()?;
+    let rest = url.strip_prefix("wss://")?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    let host_ok = !host.contains(['@', ':'])
+        && (host == "kick.com" || host.ends_with(".kick.com"))
+        && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    host_ok.then(|| url.to_string())
+}
+
+fn token_from(reply: &Value) -> Option<String> {
+    let t = reply.pointer("/data/token")?.as_str()?;
+    // a JWT: base64url segments and dots, nothing else
+    let ok = !t.is_empty()
+        && t.len() <= 4096
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    ok.then(|| t.to_string())
+}
+
+async fn fetch_ws_url(client_id: &str) -> Result<String, String> {
+    let body = json!({
+        "client": { "id": client_id, "type": "web" },
+        "capabilities": { "accepted_providers": [{ "provider": "centrifugo" }] },
+    });
+    let reply = post_kick_json(&format!("{REALTIME_API}/connection"), &body).await?;
+    ws_url_from(&reply).ok_or_else(|| "no usable chat server in Kick's reply".to_string())
+}
+
+async fn fetch_token(client_id: &str) -> Result<String, String> {
+    let reply = post_kick_json(
+        &format!("{REALTIME_API}/auth/connection"),
+        &json!({ "client_id": client_id }),
+    )
+    .await?;
+    token_from(&reply).ok_or_else(|| "no chat token in Kick's reply".to_string())
+}
+
+// ---- websocket loop ------------------------------------------------------------------------------
+
 async fn run(
     app: AppHandle,
     chatroom_id: u64,
     mut stop_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
+    // one guest identity per client, like a browser tab's anon id; tokens are issued for it
+    let client_id = uuid::Uuid::new_v4().to_string();
+    let channel = format!("chatrooms.{chatroom_id}.v2");
     let mut attempt: u32 = 0;
     let mut announced = false;
-    // pane-visible diagnostics (system_line), added because the release build is windows_subsystem =
-    // "windows": eprintln! goes to a stderr nobody sees unless the exe was launched with a redirect, so
-    // failures here used to be invisible in the built app. the eprintln!s stay (more detail, useful in
-    // dev); these flags keep the PANE lines rate-limited so a persistent failure doesn't scroll chat with a
-    // system line every retry: warned_unconfirmed (at most one "subscription not confirming" line per
-    // client) and lost_after_healthy ("connection lost" only when a CONFIRMED session drops, paired with one "reconnected" on recovery)
-    let mut warned_unconfirmed = false;
+    // pane lines are rate-limited so a persistent failure doesn't scroll chat with a line per retry:
+    // one "couldn't connect" per client until it recovers, one "lost" per healthy session that drops
+    let mut warned_failing = false;
     let mut lost_after_healthy = false;
-    // flap detection for the pane messages. the keepalive ping means a healthy offline chat basically
-    // never drops, so a drop now is worth surfacing, but a single blip the reconnect swallows in a second
-    // isn't. so: announce the FIRST confirmed drop, then stay quiet unless drops keep coming in a short window, THAT (repeated drops) is the real problem, and exactly what the old silent code hid
     let mut confirmed_drops: u32 = 0;
     let mut last_drop_at: Option<std::time::Instant> = None;
     let mut flap_warned = false;
 
-    // NOTE on stop_rx: a oneshot receiver must not be polled after completing. every select! below breaks/returns the moment it fires, so it's only re-polled while still pending
+    // NOTE on stop_rx: a oneshot receiver must not be polled after completing. every select! below returns the moment it fires
     loop {
         attempt += 1;
 
+        // 1+2: where to connect, and a token. both quick POSTs; stop is honored while they run
+        let handshake = async {
+            let url = match fetch_ws_url(&client_id).await {
+                Ok(u) => u,
+                Err(e) => {
+                    eprintln!("[kick-chat] connection lookup failed ({e}); using the default server");
+                    DEFAULT_WS_URL.to_string()
+                }
+            };
+            let token = fetch_token(&client_id).await?;
+            Ok::<_, String>((url, token))
+        };
+        let (ws_url, token) = tokio::select! {
+            _ = &mut stop_rx => return,
+            r = handshake => match r {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("[kick-chat] token request failed (attempt {attempt}): {e}");
+                    if !warned_failing {
+                        warned_failing = true;
+                        system_line(&app, format!("Couldn't reach Kick chat ({e}) - retrying…"));
+                    }
+                    if backoff_or_stop(&mut stop_rx, attempt).await { return; }
+                    continue;
+                }
+            },
+        };
+
+        let request = match build_ws_request(&ws_url) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[kick-chat] bad websocket URL {ws_url}: {e}");
+                if backoff_or_stop(&mut stop_rx, attempt).await { return; }
+                continue;
+            }
+        };
         let connected = tokio::select! {
             _ = &mut stop_rx => return,
-            r = tokio_tungstenite::connect_async(PUSHER_URL) => r,
+            r = tokio::time::timeout(
+                std::time::Duration::from_secs(HANDSHAKE_SECS),
+                tokio_tungstenite::connect_async(request),
+            ) => r,
         };
         let mut ws = match connected {
-            Ok((ws, _)) => ws,
-            Err(e) => {
-                eprintln!("[kick-chat] connect failed (attempt {attempt}): {e}");
-                if attempt == 1 {
+            Ok(Ok((ws, _))) => ws,
+            other => {
+                let why = match other {
+                    Ok(Err(e)) => e.to_string(),
+                    _ => "timed out".to_string(),
+                };
+                eprintln!("[kick-chat] connect failed (attempt {attempt}): {why}");
+                if !warned_failing {
+                    warned_failing = true;
                     system_line(&app, "Couldn't reach Kick chat - retrying…");
                 }
                 if backoff_or_stop(&mut stop_rx, attempt).await { return; }
@@ -119,24 +294,22 @@ async fn run(
             }
         };
 
-        // subscribe only AFTER pusher:connection_established arrives. this originally subscribed immediately,
-        // on the theory that connection_established only matters for private/presence channels (which need its
-        // socket_id), but Pusher silently DROPS a pusher:subscribe sent before the connection is established,
-        // public channel or not. maximally quiet failure: socket up, pings answered, subscription never
-        // confirmed, zero messages, no reconnect because nothing errored. waiting is also what the working kick-api crate does before subscribing to this same channel
+        // 3: connect with the token; subscribe once the server accepts it
+        let connect = json!({ "connect": { "token": token, "name": "js" }, "id": 1 });
+        if ws.send(Message::Text(connect.to_string())).await.is_err() {
+            if backoff_or_stop(&mut stop_rx, attempt).await { return; }
+            continue;
+        }
+
         let mut subscribed = false;
-
-        // client keepalive: fire the first tick one interval out (not immediately, the handshake frames prove liveness), then every PING_INTERVAL_SECS. only SENDS once subscribed, so a stalled handshake is left to confirm_deadline
-        let mut ping_interval = tokio::time::interval_at(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(PING_INTERVAL_SECS),
-            std::time::Duration::from_secs(PING_INTERVAL_SECS),
-        );
-        // watchdog: Some(deadline) only while a ping is outstanding. any inbound frame clears it back to None (see the frame arm)
-        let mut awaiting_pong: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
-
-        // belt to the ordering fix's suspenders: if the subscription isn't CONFIRMED within this window (subscribe frame lost some other way, Kick renames the channel someday, whatever) force a reconnect instead of hanging silently forever (the trap the old code fell into). generous window: covers established + subscribe + confirmation, each normally <1s
-        let confirm_deadline = tokio::time::sleep(std::time::Duration::from_secs(15));
-        tokio::pin!(confirm_deadline);
+        let mut next_id: u64 = 3;
+        let mut ping_secs: u64 = 25;
+        let handshake_deadline = tokio::time::sleep(std::time::Duration::from_secs(HANDSHAKE_SECS));
+        tokio::pin!(handshake_deadline);
+        let idle = tokio::time::sleep(std::time::Duration::from_secs(ping_secs + IDLE_GRACE_SECS));
+        tokio::pin!(idle);
+        // armed once the connect reply says when the token expires
+        let mut refresh_at: Option<std::pin::Pin<Box<tokio::time::Sleep>>> = None;
 
         loop {
             tokio::select! {
@@ -144,128 +317,134 @@ async fn run(
                     let _ = ws.close(None).await;
                     return;
                 }
-                // `if !subscribed` disarms this branch once the subscription is confirmed, the deadline only polices the handshake, never a healthy connection
-                _ = &mut confirm_deadline, if !subscribed => {
-                    eprintln!(
-                        "[kick-chat] subscription unconfirmed after 15s \
-                         (attempt {attempt}) - reconnecting"
-                    );
-                    if !warned_unconfirmed {
-                        warned_unconfirmed = true;
-                        system_line(
-                            &app,
-                            "Kick chat isn't confirming the subscription - retrying…",
-                        );
+                _ = &mut handshake_deadline, if !subscribed => {
+                    eprintln!("[kick-chat] handshake unconfirmed after {HANDSHAKE_SECS}s (attempt {attempt})");
+                    if !warned_failing {
+                        warned_failing = true;
+                        system_line(&app, "Kick chat isn't confirming the connection - retrying…");
                     }
                     let _ = ws.close(None).await;
-                    break; // reconnect
+                    break;
                 }
-                // time to send our keepalive ping (only once healthy)
-                _ = ping_interval.tick(), if subscribed => {
-                    let ping = json!({"event": "pusher:ping", "data": {}});
-                    if ws.send(Message::Text(ping.to_string())).await.is_err() {
-                        break; // reconnect
-                    }
-                    // arm the watchdog if it isn't already: the next inbound frame of ANY kind disarms it
-                    if awaiting_pong.is_none() {
-                        awaiting_pong = Some(Box::pin(tokio::time::sleep(
-                            std::time::Duration::from_secs(PONG_TIMEOUT_SECS),
-                        )));
-                    }
-                }
-                // pong (or anything) never came back in time: socket is wedged, reconnect now instead of waiting on TCP
-                _ = async { awaiting_pong.as_mut().unwrap().as_mut().await },
-                    if awaiting_pong.is_some() =>
-                {
-                    eprintln!("[kick-chat] ping timed out - reconnecting");
+                _ = &mut idle => {
+                    eprintln!("[kick-chat] nothing received for {}s - reconnecting", ping_secs + IDLE_GRACE_SECS);
                     let _ = ws.close(None).await;
-                    break; // reconnect
+                    break;
+                }
+                _ = async { refresh_at.as_mut().unwrap().as_mut().await }, if refresh_at.is_some() => {
+                    refresh_at = None;
+                    match fetch_token(&client_id).await {
+                        Ok(t) => {
+                            let msg = json!({ "refresh": { "token": t }, "id": next_id });
+                            next_id += 1;
+                            if ws.send(Message::Text(msg.to_string())).await.is_err() { break; }
+                        }
+                        // no fresh token: the server will end the session at expiry and the reconnect path takes over
+                        Err(e) => eprintln!("[kick-chat] token refresh failed: {e}"),
+                    }
                 }
                 frame = ws.next() => {
-                    // any inbound frame proves the socket is alive, our pong arrives as a Text frame, but so does a chat message or a server ping, all equally valid liveness. clear the watchdog before handling it
-                    awaiting_pong = None;
+                    idle.as_mut().reset(
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(ping_secs + IDLE_GRACE_SECS),
+                    );
                     match frame {
-                    Some(Ok(Message::Text(txt))) => {
-                        match handle_frame(&app, &txt) {
-                            FrameAction::Pong => {
-                                let pong = json!({"event": "pusher:pong", "data": {}});
-                                let _ = ws.send(Message::Text(pong.to_string())).await;
-                            }
-                            // connection established, NOW the server will honor a subscribe (see the comment above the loop for why not earlier)
-                            FrameAction::Established => {
-                                let sub = json!({
-                                    "event": "pusher:subscribe",
-                                    "data": {
-                                        "auth": "",
-                                        "channel": format!("chatrooms.{chatroom_id}.v2"),
-                                    },
-                                });
-                                if ws.send(Message::Text(sub.to_string())).await.is_err() {
-                                    break; // reconnect
-                                }
-                            }
-                            FrameAction::Subscribed => {
-                                subscribed = true;
-                                attempt = 0; // healthy, reset the backoff budget
-                                // announce once per client, not once per reconnect, a flaky network shouldn't spam the pane. the one exception: recovery from a drop the pane was told about deserves its closing bracket
-                                if !announced {
-                                    announced = true;
-                                    // whether sending is possible depends on Kick login state, which this read-side client can't see, an unconditional "(read-only)" here was wrong for a logged-in user, and duplicated (or contradicted) the specific reason chat.js's connectKick already prints when sending genuinely isn't available
-                                    system_line(&app, "Kick chat connected.");
-                                } else if lost_after_healthy {
-                                    lost_after_healthy = false;
-                                    // close the bracket on whichever message the drop emitted: a sustained-trouble warning gets an explicit "recovered", a routine blip gets the matching "reconnected". either way, reset the flap state so a future problem warns afresh
-                                    if flap_warned {
-                                        system_line(&app, "Kick chat recovered.");
-                                    } else {
-                                        system_line(&app, "Kick chat reconnected.");
+                        Some(Ok(Message::Text(txt))) => {
+                            let mut reconnect = false;
+                            // the server batches several replies into one frame, one JSON object per line
+                            for line in txt.split('\n').filter(|l| !l.trim().is_empty()) {
+                                match handle_line(&app, line) {
+                                    LineAction::Ping => {
+                                        if ws.send(Message::Text("{}".into())).await.is_err() { reconnect = true; }
                                     }
-                                    flap_warned = false;
-                                    confirmed_drops = 0;
+                                    LineAction::Connected { ping, ttl } => {
+                                        if let Some(p) = ping.filter(|p| (5..=300).contains(p)) { ping_secs = p; }
+                                        if let Some(t) = ttl {
+                                            let wait = t.saturating_sub(REFRESH_EARLY_SECS).max(30);
+                                            refresh_at = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_secs(wait))));
+                                        }
+                                        let sub = json!({ "subscribe": { "channel": channel }, "id": 2 });
+                                        if ws.send(Message::Text(sub.to_string())).await.is_err() { reconnect = true; }
+                                    }
+                                    LineAction::Refreshed { ttl } => {
+                                        if let Some(t) = ttl {
+                                            let wait = t.saturating_sub(REFRESH_EARLY_SECS).max(30);
+                                            refresh_at = Some(Box::pin(tokio::time::sleep(std::time::Duration::from_secs(wait))));
+                                        }
+                                    }
+                                    LineAction::Subscribed => {
+                                        subscribed = true;
+                                        attempt = 0;
+                                        warned_failing = false;
+                                        if !announced {
+                                            announced = true;
+                                            system_line(&app, "Kick chat connected.");
+                                        } else if lost_after_healthy {
+                                            lost_after_healthy = false;
+                                            system_line(&app, if flap_warned { "Kick chat recovered." } else { "Kick chat reconnected." });
+                                            flap_warned = false;
+                                            confirmed_drops = 0;
+                                        }
+                                    }
+                                    LineAction::Failed(why) => {
+                                        eprintln!("[kick-chat] server error: {why}");
+                                        if !warned_failing {
+                                            warned_failing = true;
+                                            system_line(&app, format!("Kick chat refused the connection ({why}) - retrying…"));
+                                        }
+                                        reconnect = true;
+                                    }
+                                    LineAction::Disconnect => reconnect = true,
+                                    LineAction::None => {}
                                 }
+                                if reconnect { break; }
                             }
-                            FrameAction::None => {}
+                            if reconnect {
+                                let _ = ws.close(None).await;
+                                break;
+                            }
                         }
-                    }
-                    // Pusher also sends protocol-level pings
-                    Some(Ok(Message::Ping(payload))) => {
-                        let _ = ws.send(Message::Pong(payload)).await;
-                    }
-                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break, // reconnect
-                    Some(Ok(_)) => {}
+                        Some(Ok(Message::Ping(payload))) => {
+                            let _ = ws.send(Message::Pong(payload)).await;
+                        }
+                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                        Some(Ok(_)) => {}
                     }
                 }
             }
         }
 
-        // fell out of the read loop -> the connection is gone and a reconnect is coming. only tell the pane when a CONFIRMED session dropped: a mid-handshake break is either already covered (warned_unconfirmed) or transient noise the retry absorbs. intentional stops return from inside the select! and never reach here
+        // the connection is gone and a reconnect is coming. only a CONFIRMED session dropping is worth a line
         if subscribed {
             lost_after_healthy = true;
-
-            // flap accounting: reset the counter if the last drop was a while ago (an isolated blip long past doesn't count toward "keeps dropping"); otherwise it's part of a cluster
             let now = std::time::Instant::now();
             if last_drop_at.map_or(true, |t| now.duration_since(t).as_secs() > 60) {
                 confirmed_drops = 0;
             }
             confirmed_drops += 1;
             last_drop_at = Some(now);
-
             if confirmed_drops >= 3 && !flap_warned {
-                // repeated drops in a short window = a real, ongoing problem (Kick trouble, network, a rotated Pusher key). say so ONCE, distinctly, so it's not mistaken for the routine single reconnect below
                 flap_warned = true;
-                system_line(
-                    &app,
-                    "Kick chat keeps dropping - there may be a connection problem.",
-                );
+                system_line(&app, "Kick chat keeps dropping - there may be a connection problem.");
             } else if confirmed_drops < 3 {
-                // first/second drop: the normal, reassuring pair. paired with a "reconnected" on recovery (see the Subscribed arm)
                 system_line(&app, "Kick chat connection lost - reconnecting…");
             }
-            // between the flap warning and recovery, stay quiet, one warning stands until chat is healthy again; no per-cycle spam
         }
 
         if backoff_or_stop(&mut stop_rx, attempt.max(1)).await { return; }
     }
+}
+
+// the websocket upgrade request, with the headers a browser on kick.com would send
+fn build_ws_request(
+    url: &str,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request, String> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    let mut req = url.into_client_request().map_err(|e| e.to_string())?;
+    let h = req.headers_mut();
+    h.insert("Origin", HeaderValue::from_static("https://kick.com"));
+    h.insert("User-Agent", HeaderValue::from_static(BROWSER_UA));
+    Ok(req)
 }
 
 // sleeps the backoff for attempt, returning true if stop fired first
@@ -280,89 +459,133 @@ async fn backoff_or_stop(
     }
 }
 
-enum FrameAction {
+#[derive(Debug, PartialEq)]
+enum LineAction {
     None,
-    Pong,
-    // pusher:connection_established, the earliest moment a subscribe is honored rather than silently dropped
-    Established,
+    // the server's "{}" ping, answered with "{}"
+    Ping,
+    // reply to our connect (id 1): ping interval and token lifetime, in seconds
+    Connected { ping: Option<u64>, ttl: Option<u64> },
+    // reply to a token refresh
+    Refreshed { ttl: Option<u64> },
+    // reply to our subscribe (id 2)
     Subscribed,
+    // an error reply: the server's message
+    Failed(String),
+    // the server is ending the session
+    Disconnect,
 }
 
-// parses one Pusher text frame and emits the matching frontend event. anything unrecognized or malformed is silently skipped, an unofficial protocol drifting must degrade to dropped frames
-fn handle_frame(app: &AppHandle, txt: &str) -> FrameAction {
-    let Ok(env) = serde_json::from_str::<Value>(txt) else { return FrameAction::None };
+// one line of a frame: a reply to one of our commands, a ping, or a push (chat message etc.)
+fn classify_line(line: &str) -> (LineAction, Option<Value>) {
+    let Ok(v) = serde_json::from_str::<Value>(line) else { return (LineAction::None, None) };
+    let Some(obj) = v.as_object() else { return (LineAction::None, None) };
+    if obj.is_empty() {
+        return (LineAction::Ping, None);
+    }
+    if let Some(err) = obj.get("error") {
+        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("error");
+        let code = err.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
+        let msg: String = msg.chars().filter(|c| !c.is_control()).take(80).collect();
+        return (LineAction::Failed(format!("{code} {msg}")), None);
+    }
+    if let Some(c) = obj.get("connect") {
+        return (
+            LineAction::Connected {
+                ping: c.get("ping").and_then(|x| x.as_u64()),
+                ttl: c.get("ttl").and_then(|x| x.as_u64()),
+            },
+            None,
+        );
+    }
+    if let Some(r) = obj.get("refresh") {
+        return (LineAction::Refreshed { ttl: r.get("ttl").and_then(|x| x.as_u64()) }, None);
+    }
+    if obj.contains_key("subscribe") && obj.get("id").and_then(|i| i.as_u64()) == Some(2) {
+        return (LineAction::Subscribed, None);
+    }
+    if let Some(push) = obj.get("push") {
+        if push.get("disconnect").is_some() {
+            return (LineAction::Disconnect, None);
+        }
+        if let Some(data) = push.pointer("/pub/data") {
+            return (LineAction::None, Some(data.clone()));
+        }
+    }
+    (LineAction::None, None)
+}
+
+fn handle_line(app: &AppHandle, line: &str) -> LineAction {
+    let (action, event) = classify_line(line);
+    if let Some(env) = event {
+        if let Some(e) = chat_event_from(&env) {
+            match e {
+                KickEvent::Message(m) => { let _ = app.emit("chat-message", *m); }
+                KickEvent::Deleted(id) => {
+                    let _ = app.emit("chat-clearmsg", ChatClearMsgEvent { target_msg_id: id });
+                }
+            }
+        }
+    }
+    action
+}
+
+enum KickEvent {
+    Message(Box<ChatMessageEvent>),
+    Deleted(String),
+}
+
+// the event payload: {"event": "App\\Events\\ChatMessageEvent", "data": "<json string>"} (data may also
+// arrive as an object; both are accepted). anything unrecognized or malformed is skipped, an unofficial
+// protocol drifting must degrade to dropped messages, never a crash
+fn chat_event_from(env: &Value) -> Option<KickEvent> {
     let event = env.get("event").and_then(|v| v.as_str()).unwrap_or("");
-
+    let data = env.get("data")?;
+    let parsed;
+    let m: &Value = match data.as_str() {
+        Some(s) => {
+            parsed = serde_json::from_str::<Value>(s).ok()?;
+            &parsed
+        }
+        None => data,
+    };
     match event {
-        "pusher:ping" => FrameAction::Pong,
-        "pusher:connection_established" => FrameAction::Established,
-        "pusher_internal:subscription_succeeded" => FrameAction::Subscribed,
-        // Pusher double-encodes: data is a STRING whose content is the actual event JSON, hence the from_str on a str field below
         "App\\Events\\ChatMessageEvent" => {
-            let Some(m) = env
-                .get("data")
-                .and_then(|v| v.as_str())
-                .and_then(|s| serde_json::from_str::<Value>(s).ok())
-            else { return FrameAction::None };
-
-            let username = m
-                .pointer("/sender/username")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let username = m.pointer("/sender/username").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let content = m.get("content").and_then(|v| v.as_str()).unwrap_or("");
             if username.is_empty() || content.is_empty() {
-                return FrameAction::None;
+                return None;
             }
-
-            let _ = app.emit(
-                "chat-message",
-                ChatMessageEvent {
-                    username,
-                    color: m
-                        .pointer("/sender/identity/color")
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string),
-                    message: flatten_emote_tokens(content),
-                    // Kick badge identity, serialized in the kick/-prefixed form renderBadges (chat-badges.js) tells apart from Twitch's set/version pairs, see kick_badges_tag below. the remaining Twitch-specific fields have no Kick equivalent; the renderer treats None like a plain Twitch message without them
-                    badges: kick_badges_tag(&m),
-                    bits: None,
-                    custom_reward_id: None,
-                    reply_parent_user: None,
-                    reply_parent_body: None,
-                    is_action: false,
-                    emotes_tag: None,
-                    msg_id: m.get("id").and_then(|v| v.as_str()).map(str::to_string),
-                    user_id: m
-                        .pointer("/sender/id")
-                        .and_then(|v| v.as_u64())
-                        .map(|id| id.to_string()),
-                    is_first_msg: false,
-                    is_highlighted: false,
-                    reply_parent_msg_id: None,
-                    reply_thread_parent_msg_id: None,
-                },
-            );
-            FrameAction::None
+            Some(KickEvent::Message(Box::new(ChatMessageEvent {
+                username,
+                color: m
+                    .pointer("/sender/identity/color")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+                message: flatten_emote_tokens(content),
+                // Kick badge identity, in the kick/-prefixed form renderBadges (chat-badges.js) tells apart from Twitch's set/version pairs
+                badges: kick_badges_tag(m),
+                bits: None,
+                custom_reward_id: None,
+                reply_parent_user: None,
+                reply_parent_body: None,
+                is_action: false,
+                emotes_tag: None,
+                msg_id: m.get("id").and_then(|v| v.as_str()).map(str::to_string),
+                user_id: m.pointer("/sender/id").and_then(|v| v.as_u64()).map(|id| id.to_string()),
+                is_first_msg: false,
+                is_highlighted: false,
+                reply_parent_msg_id: None,
+                reply_thread_parent_msg_id: None,
+            })))
         }
-        // mod deletions, map onto the existing clearmsg path so deleted Kick messages disappear from the pane like Twitch ones do
-        "App\\Events\\MessageDeletedEvent" => {
-            if let Some(target) = env
-                .get("data")
-                .and_then(|v| v.as_str())
-                .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                .and_then(|d| {
-                    d.pointer("/message/id")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                })
-            {
-                let _ = app.emit("chat-clearmsg", ChatClearMsgEvent { target_msg_id: target });
-            }
-            FrameAction::None
-        }
-        _ => FrameAction::None,
+        // mod deletions, mapped onto the clearmsg path so deleted Kick messages disappear like Twitch ones
+        "App\\Events\\MessageDeletedEvent" => m
+            .pointer("/message/id")
+            .and_then(|v| v.as_str())
+            .map(|id| KickEvent::Deleted(id.to_string())),
+        _ => None,
     }
 }
 
@@ -447,7 +670,67 @@ fn flatten_emote_tokens(content: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{flatten_emote_tokens, kick_badges_tag};
+    use super::{chat_event_from, classify_line, flatten_emote_tokens, kick_badges_tag, token_from, ws_url_from, KickEvent, LineAction};
+    use serde_json::json;
+
+    // the exact shapes captured from kick.com on 10-16-26
+    #[test]
+    fn handshake_replies() {
+        let conn = json!({"data":{"connections":[{"credentials":{"url":"wss://realtime.us-west-2.platform.kick.com/connection/websocket"},"provider":"centrifugo"}],"mode":"websocket"},"message":"success"});
+        assert_eq!(ws_url_from(&conn).as_deref(), Some("wss://realtime.us-west-2.platform.kick.com/connection/websocket"));
+        let tok = json!({"data":{"token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJndWVzdCJ9.sAH_WZjk68eokjw-qlQ"},"message":"success"});
+        assert!(token_from(&tok).is_some());
+    }
+
+    #[test]
+    fn ws_url_must_be_kick() {
+        for bad in [
+            "ws://realtime.kick.com/x", "wss://evil.com/kick.com", "wss://kick.com.evil.com/x",
+            "wss://user@realtime.kick.com/x", "wss://realtime.kick.com:1/x", "https://realtime.kick.com/x", "wss://notkick.com/x",
+        ] {
+            let v = json!({"data":{"connections":[{"credentials":{"url":bad},"provider":"centrifugo"}]}});
+            assert_eq!(ws_url_from(&v), None, "{bad}");
+        }
+        let pusher_only = json!({"data":{"connections":[{"credentials":{"url":"wss://realtime.kick.com/x"},"provider":"pusher"}]}});
+        assert_eq!(ws_url_from(&pusher_only), None);
+        assert_eq!(token_from(&json!({"data":{"token":"a b"}})), None);
+        assert_eq!(token_from(&json!({"data":{"token":""}})), None);
+    }
+
+    #[test]
+    fn protocol_lines() {
+        assert_eq!(classify_line("{}").0, LineAction::Ping);
+        assert_eq!(
+            classify_line(r#"{"id":1,"connect":{"client":"x","version":"6.9.7 PRO","expires":true,"ttl":2699,"ping":25,"pong":true}}"#).0,
+            LineAction::Connected { ping: Some(25), ttl: Some(2699) }
+        );
+        assert_eq!(classify_line(r#"{"id":2,"subscribe":{}}"#).0, LineAction::Subscribed);
+        assert_eq!(classify_line(r#"{"id":5,"subscribe":{}}"#).0, LineAction::None);
+        assert_eq!(classify_line(r#"{"id":3,"refresh":{"expires":true,"ttl":2699}}"#).0, LineAction::Refreshed { ttl: Some(2699) });
+        assert_eq!(classify_line(r#"{"id":1,"error":{"code":109,"message":"token expired"}}"#).0, LineAction::Failed("109 token expired".into()));
+        assert_eq!(classify_line(r#"{"push":{"disconnect":{"code":3005,"reason":"x"}}}"#).0, LineAction::Disconnect);
+        assert_eq!(classify_line("not json").0, LineAction::None);
+    }
+
+    #[test]
+    fn push_becomes_chat_message() {
+        let line = r##"{"push":{"channel":"chatrooms.2393554.v2","pub":{"data":{"event":"App\\Events\\ChatMessageEvent","data":"{\"id\":\"5ac0820a\",\"chatroom_id\":2393554,\"content\":\"so fake [emote:493215:odablockCappp]\",\"type\":\"message\",\"sender\":{\"id\":42,\"username\":\"viewer1\",\"identity\":{\"color\":\"#FF9D00\",\"badges\":[{\"type\":\"subscriber\",\"text\":\"Subscriber\",\"count\":3}]}}}"}}}}"##;
+        let (action, env) = classify_line(line);
+        assert_eq!(action, LineAction::None);
+        match chat_event_from(&env.unwrap()) {
+            Some(KickEvent::Message(m)) => {
+                assert_eq!(m.username, "viewer1");
+                assert_eq!(m.message, "so fake \u{1}493215\u{1}odablockCappp\u{1}");
+                assert_eq!(m.color.as_deref(), Some("#FF9D00"));
+                assert_eq!(m.badges.as_deref(), Some("kick/subscriber/3"));
+                assert_eq!(m.user_id.as_deref(), Some("42"));
+                assert_eq!(m.msg_id.as_deref(), Some("5ac0820a"));
+            }
+            _ => panic!("expected a chat message"),
+        }
+        let del = json!({"event":"App\\Events\\MessageDeletedEvent","data":"{\"message\":{\"id\":\"abc\"}}"});
+        assert!(matches!(chat_event_from(&del), Some(KickEvent::Deleted(id)) if id == "abc"));
+    }
 
     #[test]
     fn flattens_tokens_to_id_name_markers() {
@@ -492,5 +775,27 @@ mod tests {
         assert_eq!(kick_badges_tag(&no_badges), None);
         let no_identity = serde_json::json!({ "sender": { "username": "x" } });
         assert_eq!(kick_badges_tag(&no_identity), None);
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn protocol_parsing_never_panics() {
+        for s in crate::fuzz_support::strings(7, 20_000, 16) {
+            let _ = super::classify_line(&s);
+            let wrapped = serde_json::json!({"push":{"pub":{"data":{"event":"App\\Events\\ChatMessageEvent","data":s}}}}).to_string();
+            if let (_, Some(env)) = super::classify_line(&wrapped) { let _ = super::chat_event_from(&env); }
+            let _ = super::ws_url_from(&serde_json::json!({"data":{"connections":[{"provider":"centrifugo","credentials":{"url":s}}]}}));
+        }
+    }
+
+    #[test]
+    fn emote_flattening_never_panics() {
+        for s in crate::fuzz_support::strings(2, 60_000, 24) {
+            let _ = super::flatten_emote_tokens(&s);
+            let _ = super::flatten_emote_tokens(&format!("[emote:{s}]"));
+            let _ = super::flatten_emote_tokens(&format!("[emote:123:{s}]x[emote:{s}:{s}]"));
+        }
     }
 }

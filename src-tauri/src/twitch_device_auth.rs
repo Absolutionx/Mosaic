@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 pub const ANDROID_CLIENT_ID: &str = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp";
 const TOKEN_FILE: &str = "twitch_device_token.json";
@@ -28,13 +28,9 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn token_path(app: &AppHandle) -> Option<std::path::PathBuf> {
-    app.path().app_local_data_dir().ok().map(|d| d.join(TOKEN_FILE))
-}
-
+// stored via secret_store: Windows Credential Manager on Windows, a file elsewhere
 fn load(app: &AppHandle) -> Option<StoredToken> {
-    let path = token_path(app)?;
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::secret_store::load(app, TOKEN_FILE)?;
     let t: StoredToken = serde_json::from_str(&raw).ok()?;
     if t.access_token.is_empty() {
         None
@@ -44,18 +40,12 @@ fn load(app: &AppHandle) -> Option<StoredToken> {
 }
 
 fn save(app: &AppHandle, token: &StoredToken) -> Result<(), String> {
-    let path = token_path(app).ok_or_else(|| "no data dir".to_string())?;
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
     let raw = serde_json::to_string(token).map_err(|e| e.to_string())?;
-    std::fs::write(path, raw).map_err(|e| e.to_string())
+    crate::secret_store::save(app, TOKEN_FILE, &raw)
 }
 
 fn delete(app: &AppHandle) {
-    if let Some(path) = token_path(app) {
-        let _ = std::fs::remove_file(path);
-    }
+    crate::secret_store::delete(app, TOKEN_FILE);
 }
 
 // Twitch's device + token endpoint response shapes (only the fields we use)

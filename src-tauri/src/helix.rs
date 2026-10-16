@@ -395,14 +395,15 @@ pub async fn get_vod_chat(
 fn parse_twitch_duration(d: &str) -> u64 {
     let (mut total, mut num) = (0u64, 0u64);
     for c in d.chars() {
+        // saturating: an absurd digit run (Twitch never sends one, the fuzz test does) can't overflow
         if let Some(v) = c.to_digit(10) {
-            num = num * 10 + v as u64;
+            num = num.saturating_mul(10).saturating_add(v as u64);
         } else {
-            total += num * match c { 'h' => 3600, 'm' => 60, _ => 1 };
+            total = total.saturating_add(num.saturating_mul(match c { 'h' => 3600, 'm' => 60, _ => 1 }));
             num = 0;
         }
     }
-    total + num
+    total.saturating_add(num)
 }
 
 // The most-viewed clips made from a Twitch VOD, with where each sits in the VOD, for the seek-bar clip
@@ -3124,4 +3125,15 @@ pub async fn share_resub(
         return Err("Twitch rejected the share.".into());
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    #[test]
+    fn duration_parsing_never_panics() {
+        for s in crate::fuzz_support::strings(8, 60_000, 12) {
+            let _ = super::parse_twitch_duration(&s);
+            let _ = super::valid_login(&s);
+        }
+    }
 }

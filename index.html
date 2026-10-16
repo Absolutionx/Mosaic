@@ -53,6 +53,7 @@
            Only visible/interactive in theater mode (see CSS). Dragging wired in titlebar.js. -->
       <div id="theater-drag-strip" data-tauri-drag-region></div>
       <header>
+        <h1 class="sr-only">Mosaic</h1>
         <div class="mosaic-brand" aria-label="Mosaic">
           <img class="mosaic-brand-mark" src="/mosaic-icon.png" alt="Mosaic" />
           <span class="mosaic-brand-name">mosaic</span>
@@ -136,7 +137,7 @@
         </div>
       </header>
 
-      <div id="channels-sidebar">
+      <div id="channels-sidebar" role="complementary" aria-label="Channels">
         <!-- Wrapped as one unit so Kick mode can hide the whole Twitch-
              auth-bound Followed section in one style flip (there's no
              Kick login in this app, so there's nothing equivalent to
@@ -164,7 +165,7 @@
         <div id="top-live-list"></div>
       </div>
 
-      <div id="video-column">
+      <div id="video-column" role="main">
         <div id="home-feed"></div>
         <div id="browse-page"></div>
         <div id="vods-page"></div>
@@ -380,7 +381,7 @@
       </div>
 
 
-      <div id="chat-pane">
+      <div id="chat-pane" role="complementary" aria-label="Chat">
         <!--
           Shown only while chat is collapsed (#chat-pane.collapsed - see
           toggleChatCollapse() in main.js). A separate element from

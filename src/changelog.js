@@ -3,6 +3,18 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.2",
+    items: [
+      { kind: "improved", title: "Safer sign-ins", desc: "On Windows, your Twitch and Kick logins are now kept in Windows Credential Manager instead of plain files. Existing logins move over by themselves." },
+      { kind: "improved", title: "Faster VODs and previews", desc: "VODs, Kick streams, clips and hover previews start playing as video arrives instead of waiting for each piece to finish downloading, so starts and seeks are quicker." },
+      { kind: "improved", title: "Lighter in the background", desc: "While Mosaic is minimized or in the tray, chat stops checking for pinned messages, hype trains and sub anniversaries, and catches up the moment you're back." },
+      { kind: "improved", title: "Readable chat names", desc: "Chatters whose name colour was too dark to read comfortably on the chat background are lightened a little more, and the chat status line is easier to read." },
+      { kind: "fixed", title: "Kick chat messages", desc: "Kick moved its chat to a new server, so Kick chat showed no messages. Mosaic now connects the way kick.com does." },
+      { kind: "fixed", title: "Login problems explained", desc: "If the Twitch or Kick login can't start or doesn't finish (another program using its port, say), Mosaic now says why instead of doing nothing." },
+      { kind: "fixed", title: "Security hardening", desc: "Updated the app's secure-connection libraries; link previews can't reach your own network or be slowed down by a hostile page; the login and video servers on your computer reject anything that isn't Mosaic; picture-in-picture windows get only the permissions they need." },
+    ],
+  },
+  {
     version: "1.5.1",
     items: [
       { kind: "new", title: "Video on hover", desc: "Rest the mouse on a live stream, on Home, in Browse or in the sidebar's preview card, and it plays right there, muted. VODs too, from where you left off. Settings › Home & MultiView › Video on hover." },
