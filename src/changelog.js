@@ -3,6 +3,14 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.1",
+    items: [
+      { kind: "new", title: "Video on hover", desc: "Rest the mouse on a live stream, on Home, in Browse or in the sidebar's preview card, and it plays right there, muted. VODs too, from where you left off. Settings › Home & MultiView › Video on hover." },
+      { kind: "improved", title: "Emotes in pinned messages", desc: "Pinned messages show their emotes, Twitch sub emotes from other channels included, and no longer wait for the channel's emotes to load first." },
+      { kind: "fixed", title: "Emote picker tabs", desc: "The last tab (emoji) was cut off. All the tabs fit now, and in a narrow chat the row scrolls." },
+    ],
+  },
+  {
     version: "1.5.0",
     items: [
       { kind: "new", title: "Amazon Luna benefits", desc: "A crown in the header with the games and in-game loot you can claim with Prime this month, as on twitch.tv. Loot codes are claimed right in Mosaic." },
