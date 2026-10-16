@@ -60,10 +60,31 @@ export class TwitchAuth {
   async _resolveDisplayName(login, userId) {
     try {
       const users = JSON.parse(await invoke("get_users_info", { userIds: [userId] }));
+      // the profile picture rides along: the account button shows it (_setAvatar)
+      this._avatarUrl = users?.[0]?.profile_image_url || null;
       return users?.[0]?.display_name || login;
     } catch {
+      this._avatarUrl = null;
       return login;
     }
+  }
+
+  // the account button is icon-only in the header: logged in, it shows your Twitch profile picture instead
+  // of the person icon (which comes back if the picture can't load, and when you sign out)
+  _setAvatar(url) {
+    const btn = this.loginBtn;
+    let img = btn.querySelector(".account-avatar");
+    if (!url) { img?.remove(); btn.classList.remove("has-avatar"); return; }
+    if (!img) {
+      img = document.createElement("img");
+      img.className = "account-avatar";
+      img.alt = "";
+      img.draggable = false;
+      img.addEventListener("error", () => { img.remove(); btn.classList.remove("has-avatar"); });
+      img.addEventListener("load", () => btn.classList.add("has-avatar"));
+      btn.prepend(img);
+    }
+    if (img.getAttribute("src") !== url) img.src = url;
   }
 
   // write to the label span, not the button, so the person icon survives
@@ -71,6 +92,9 @@ export class TwitchAuth {
     const label = this.loginBtn.querySelector(".login-label");
     if (label) label.textContent = text;
     else this.loginBtn.textContent = text;
+    // the header shows this button as an icon only: the label lives on in the tooltip
+    this.loginBtn.title = text;
+    this.loginBtn.setAttribute("aria-label", text);
   }
 
   async tryRestoreSession() {
@@ -85,6 +109,7 @@ export class TwitchAuth {
         this.login = login;
         const displayName = await this._resolveDisplayName(login, user_id);
         this._setLoginLabel(displayName);
+        this._setAvatar(this._avatarUrl);
         this.loginBtn.classList.add("logged-in");
         this.loginBtn.disabled = false;
         this.statusCallback(login, user_id, displayName);
@@ -123,6 +148,7 @@ export class TwitchAuth {
     }
     this.login = null;
     this._setLoginLabel("Log in with Twitch");
+    this._setAvatar(null);
     this.loginBtn.classList.remove("logged-in");
     this.loginBtn.disabled = false;
     this.statusCallback(null, null, null);
@@ -135,6 +161,7 @@ export class TwitchAuth {
       this.login = login;
       const displayName = await this._resolveDisplayName(login, user_id);
       this._setLoginLabel(displayName);
+      this._setAvatar(this._avatarUrl);
       this.loginBtn.classList.add("logged-in");
       this.loginBtn.disabled = false;
       this.statusCallback(login, user_id, displayName);

@@ -82,6 +82,17 @@ export function reconstructVodMessage(fragments) {
   return { body, emotesTag: emoteParts.length > 0 ? emoteParts.join("/") : null };
 }
 
+// a pinned message's IRC-style emotes tag, from the [{text, emote_id}] parts get_pinned_chat_messages
+// returns. null unless the parts add up to exactly the pin's text, so a shape we don't expect can never
+// put an emote at the wrong spot (the renderer then just matches emote names, as before)
+export function pinnedEmotesTag(text, fragments) {
+  if (!Array.isArray(fragments) || fragments.length === 0) return null;
+  const { body, emotesTag } = reconstructVodMessage(
+    fragments.map((f) => ({ text: f?.text || "", emote: f?.emote_id ? { emoteID: String(f.emote_id) } : null })),
+  );
+  return body === text ? emotesTag : null;
+}
+
 // third-party provider precedence, highest first. channel emotes beat globals, and within
 // a level the order mirrors mainstream clients (7TV > BTTV > FFZ). makes name collisions
 // deterministic instead of last-fetch-wins

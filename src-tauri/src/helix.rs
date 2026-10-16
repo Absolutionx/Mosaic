@@ -975,10 +975,77 @@ pub async fn get_pinned_chat_messages(
                 "sender_name": node.pointer("/pinnedMessage/sender/displayName").and_then(|v| v.as_str()).unwrap_or(""),
                 "sender_color": node.pointer("/pinnedMessage/sender/chatColor").and_then(|v| v.as_str()).unwrap_or(""),
                 "pinned_by": node.pointer("/pinnedBy/displayName").and_then(|v| v.as_str()).unwrap_or(""),
+                "fragments": pin_fragments(node.pointer("/pinnedMessage/content/fragments")),
             }));
         }
     }
     Ok(serde_json::json!(pins))
+}
+
+// the pin's parsed parts as [{text, emote_id}] (emote_id null for plain text and mentions), so the
+// frontend can draw Twitch emotes by id, like the IRC emotes tag. that includes a sender's sub emotes
+// from other channels, which a name lookup can't find. UNVERIFIED: the public schema dump predates
+// pinned chat, so this reads the usual Twitch fragment shape ({text, content: Emote{id|emoteID, token}})
+// and returns [] when it isn't there; the frontend then falls back to matching emote names
+fn pin_fragments(fragments: Option<&serde_json::Value>) -> serde_json::Value {
+    let Some(list) = fragments.and_then(|v| v.as_array()) else {
+        return serde_json::json!([]);
+    };
+    let mut out = Vec::with_capacity(list.len());
+    for f in list {
+        let text = f.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let content = f.get("content").filter(|c| c.is_object());
+        let is_emote = content.is_some_and(|c| {
+            match c.get("__typename").and_then(|v| v.as_str()) {
+                Some(t) => t == "Emote",
+                // no typename: only trust the emote-only field (a mention's User also has an id)
+                None => c.get("emoteID").is_some(),
+            }
+        });
+        let emote_id = if is_emote {
+            content
+                .and_then(|c| c.get("emoteID").or_else(|| c.get("id")))
+                .and_then(|v| v.as_str())
+                // some Twitch fragment ids are "id;from;to"; the CDN wants the bare id
+                .map(|id| id.split(';').next().unwrap_or("").to_string())
+                .filter(|id| !id.is_empty() && id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
+        } else {
+            None
+        };
+        out.push(serde_json::json!({ "text": text, "emote_id": emote_id }));
+    }
+    serde_json::json!(out)
+}
+
+#[cfg(test)]
+mod pin_fragment_tests {
+    use super::pin_fragments;
+    use serde_json::json;
+
+    #[test]
+    fn emotes_mentions_and_text() {
+        let f = json!([
+            { "text": "hi ", "content": null },
+            { "text": "@bob", "content": { "__typename": "User", "id": "123", "login": "bob" } },
+            { "text": " ", "content": null },
+            { "text": "Kappa", "content": { "__typename": "Emote", "id": "25", "token": "Kappa" } },
+            { "text": " ", "content": null },
+            { "text": "subHype", "content": { "emoteID": "emotesv2_abc123", "id": "emotesv2_abc123;9;15" } },
+        ]);
+        let out = pin_fragments(Some(&f));
+        let ids: Vec<_> = out.as_array().unwrap().iter().map(|x| x["emote_id"].clone()).collect();
+        assert_eq!(ids, vec![json!(null), json!(null), json!(null), json!("25"), json!(null), json!("emotesv2_abc123")]);
+        assert_eq!(out[3]["text"], "Kappa");
+    }
+
+    #[test]
+    fn missing_or_odd_shapes() {
+        assert_eq!(pin_fragments(None), json!([]));
+        assert_eq!(pin_fragments(Some(&json!("nope"))), json!([]));
+        // a bad id (path characters) is dropped, never put into a URL
+        let f = json!([{ "text": "x", "content": { "__typename": "Emote", "id": "../evil" } }]);
+        assert_eq!(pin_fragments(Some(&f))[0]["emote_id"], json!(null));
+    }
 }
 
 // live hype train for a channel via GQL (GetHypeTrainExecution). web client id, read-only (NO auth
@@ -2754,6 +2821,231 @@ fn my_subscriptions_list(json: &serde_json::Value) -> serde_json::Value {
         "user_id": json.pointer("/data/currentUser/id").and_then(|v| v.as_str()),
         "subs": subs,
     })
+}
+
+// Twitch's own notifications (the bell on twitch.tv): "emote unlocked", "your gift sub expired", stream
+// streaks, VOD uploads, drops... unofficial GraphQL with the device login, like the rest of these. the panel
+// is notifications-panel.js. Null = no device login (the panel offers to connect)
+const NOTIFICATIONS_QUERY: &str = "query MosaicNotifications($first: Int, $after: Cursor, $displayType: OnsiteNotificationDisplayType, $language: String) { currentUser { id notifications(first: $first, after: $after, displayType: $displayType, language: $language) { edges { cursor node { id body createdAt isRead thumbnailURL type category destinationType actions { id label type url } creators { login displayName } extra { __typename ... on User { login displayName } ... on Video { id lengthSeconds owner { login } } ... on Clip { slug url } ... on Game { name } ... on OnsiteNotificationExternalLink { url } } } } pageInfo { hasNextPage } summary { unseenCount viewerUnreadSummary { unreadCount } creatorUnreadSummary { unreadCount } } } } }";
+
+#[tauri::command]
+pub async fn get_onsite_notifications(
+    app: tauri::AppHandle,
+    display_type: Option<String>,
+    after: Option<String>,
+    first: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let kind = match display_type.as_deref() {
+        Some("CREATOR") => "CREATOR",
+        _ => "VIEWER",
+    };
+    let vars = serde_json::json!({
+        "first": first.unwrap_or(30).clamp(1, 50),
+        "after": after,
+        "displayType": kind,
+        "language": "en",
+    });
+    let Some(json) = device_gql(&app, "MosaicNotifications", NOTIFICATIONS_QUERY, vars).await? else {
+        return Ok(serde_json::Value::Null);
+    };
+    Ok(notifications_list(&json))
+}
+
+// { user_id, items: [{ id, body, created_at, read, thumbnail, type, category, cursor, actions: [{ label, url }],
+//   creator, target: { kind: "channel"|"vod"|"clip"|"game"|"link", ... } }], has_more, unseen, unread_viewer,
+//   unread_creator }
+fn notifications_list(json: &serde_json::Value) -> serde_json::Value {
+    let conn = json.pointer("/data/currentUser/notifications");
+    let s = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).map(str::to_owned);
+    let items: Vec<serde_json::Value> = conn
+        .and_then(|c| c.get("edges"))
+        .and_then(|e| e.as_array())
+        .map(|edges| {
+            edges
+                .iter()
+                .filter_map(|edge| {
+                    let n = edge.get("node").filter(|n| n.is_object())?;
+                    let id = s(n.get("id"))?;
+                    let extra = n.get("extra").filter(|x| x.is_object());
+                    let target = extra.and_then(|x| match x.get("__typename").and_then(|t| t.as_str()) {
+                        Some("User") => Some(serde_json::json!({ "kind": "channel", "login": s(x.get("login")), "name": s(x.get("displayName")) })),
+                        Some("Video") => Some(serde_json::json!({ "kind": "vod", "id": s(x.get("id")), "length": x.get("lengthSeconds").and_then(|v| v.as_i64()), "login": s(x.pointer("/owner/login")) })),
+                        Some("Clip") => Some(serde_json::json!({ "kind": "clip", "slug": s(x.get("slug")), "url": s(x.get("url")) })),
+                        Some("Game") => Some(serde_json::json!({ "kind": "game", "name": s(x.get("name")) })),
+                        Some("OnsiteNotificationExternalLink") => Some(serde_json::json!({ "kind": "link", "url": s(x.get("url")) })),
+                        _ => None,
+                    });
+                    let actions: Vec<serde_json::Value> = n
+                        .get("actions")
+                        .and_then(|a| a.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .map(|x| serde_json::json!({ "label": s(x.get("label")), "url": s(x.get("url")), "type": s(x.get("type")) }))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let creator = n
+                        .get("creators")
+                        .and_then(|c| c.as_array())
+                        .and_then(|c| c.iter().find(|u| u.is_object()))
+                        .map(|u| serde_json::json!({ "login": s(u.get("login")), "name": s(u.get("displayName")) }));
+                    Some(serde_json::json!({
+                        "id": id,
+                        "cursor": s(edge.get("cursor")),
+                        "body": s(n.get("body")).unwrap_or_default(),
+                        "created_at": s(n.get("createdAt")),
+                        "read": n.get("isRead").and_then(|v| v.as_bool()).unwrap_or(true),
+                        "thumbnail": s(n.get("thumbnailURL")),
+                        "type": s(n.get("type")),
+                        "category": s(n.get("category")),
+                        "actions": actions,
+                        "creator": creator,
+                        "target": target,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "user_id": json.pointer("/data/currentUser/id").and_then(|v| v.as_str()),
+        "items": items,
+        "has_more": conn.and_then(|c| c.pointer("/pageInfo/hasNextPage")).and_then(|v| v.as_bool()).unwrap_or(false),
+        "unseen": conn.and_then(|c| c.pointer("/summary/unseenCount")).and_then(|v| v.as_i64()).unwrap_or(0),
+        "unread_viewer": conn.and_then(|c| c.pointer("/summary/viewerUnreadSummary/unreadCount")).and_then(|v| v.as_i64()).unwrap_or(0),
+        "unread_creator": conn.and_then(|c| c.pointer("/summary/creatorUnreadSummary/unreadCount")).and_then(|v| v.as_i64()).unwrap_or(0),
+    })
+}
+
+// what the panel does to them: "seen" (opening the panel clears the count on the bell), read (one or more),
+// all read, delete. Ok(false) = no device login
+#[tauri::command]
+pub async fn notifications_action(
+    app: tauri::AppHandle,
+    action: String,
+    ids: Option<Vec<String>>,
+    user_id: Option<String>,
+) -> Result<bool, String> {
+    let ids: Vec<String> = ids.unwrap_or_default().into_iter().filter(|i| !i.is_empty()).take(100).collect();
+    let (op, query, vars) = match action.as_str() {
+        "seen" => ("MosaicNotificationsSeen", "mutation MosaicNotificationsSeen { viewedNotifications { user { id } } }", serde_json::json!({})),
+        "read" if !ids.is_empty() => (
+            "MosaicNotificationsRead",
+            "mutation MosaicNotificationsRead($ids: [ID!]!) { readNotifications(input: { ids: $ids }) { count } }",
+            serde_json::json!({ "ids": ids }),
+        ),
+        "read_all" => {
+            let uid = user_id.filter(|u| !u.is_empty() && u.chars().all(|c| c.is_ascii_digit())).ok_or("missing user id")?;
+            (
+                "MosaicNotificationsReadAll",
+                "mutation MosaicNotificationsReadAll($id: ID!) { markAllViewerNotificationsAsRead(input: { userID: $id }) { hasSucceeded } }",
+                serde_json::json!({ "id": uid }),
+            )
+        }
+        "delete" if ids.len() == 1 => (
+            "MosaicNotificationsDelete",
+            "mutation MosaicNotificationsDelete($id: ID!) { deleteNotification(input: { id: $id }) { notification { id } } }",
+            serde_json::json!({ "id": ids[0] }),
+        ),
+        _ => return Err(format!("unknown notifications action {action}")),
+    };
+    Ok(device_gql(&app, op, query, vars).await?.is_some())
+}
+
+// Amazon Luna benefits (the crown on twitch.tv, formerly Prime Gaming): this month's games and in-game
+// loot to claim with Prime. unofficial GraphQL with the device login; luna-panel.js shows them. asks for
+// the offers with your eligibility first and falls back to the plain list (no claimed/eligible info) if
+// Twitch refuses that. Null = no device login
+const PRIME_OFFERS_ELIGIBILITY: &str = "query MosaicPrimeOffers { primeOffersWithEligibility { id catalogOfferID title description imageURL priority deliveryMethod claimInstructions tags content { publisher externalURL categories game { name displayName } } offerEligibility { canClaim isClaimed isPrimeGaming hasRequiredAccount offerState status } } }";
+const PRIME_OFFERS_PLAIN: &str = "query MosaicPrimeOffersPlain { primeOffers { id catalogOfferID title description imageURL priority deliveryMethod claimInstructions tags claimHint content { publisher externalURL categories game { name displayName } } self { hasEntitlement status claimData } } }";
+
+#[tauri::command]
+pub async fn get_prime_offers(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let first = device_gql(&app, "MosaicPrimeOffers", PRIME_OFFERS_ELIGIBILITY, serde_json::json!({})).await;
+    match first {
+        Ok(None) => Ok(serde_json::Value::Null),
+        Ok(Some(json)) => Ok(prime_offers_list(&json, true)),
+        Err(e1) => match device_gql(&app, "MosaicPrimeOffersPlain", PRIME_OFFERS_PLAIN, serde_json::json!({})).await {
+            Ok(None) => Ok(serde_json::Value::Null),
+            Ok(Some(json)) => Ok(prime_offers_list(&json, false)),
+            Err(e2) => Err(format!("{e1} | {e2}")),
+        },
+    }
+}
+
+// { eligibility: bool (whether claimed/eligible are known), offers: [{ id, title, description, image, priority,
+//   delivery, instructions, tags, publisher, url, game, claimed, can_claim, prime, state, status, claim_data }] }
+// sorted by Twitch's priority, expired ones left out
+fn prime_offers_list(json: &serde_json::Value, eligibility: bool) -> serde_json::Value {
+    let key = if eligibility { "primeOffersWithEligibility" } else { "primeOffers" };
+    let s = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_str()).map(str::to_owned);
+    let b = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_bool());
+    let mut offers: Vec<serde_json::Value> = json
+        .pointer(&format!("/data/{key}"))
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|o| {
+                    let id = s(o.get("id"))?;
+                    let el = o.get("offerEligibility").filter(|e| e.is_object());
+                    let state = el.and_then(|e| s(e.get("offerState")));
+                    if state.as_deref() == Some("EXPIRED") {
+                        return None;
+                    }
+                    let claimed = if eligibility {
+                        el.and_then(|e| b(e.get("isClaimed")))
+                    } else {
+                        b(o.pointer("/self/hasEntitlement")).or_else(|| {
+                            s(o.get("claimHint")).map(|h| h.starts_with("CLAIMED"))
+                        })
+                    };
+                    Some(serde_json::json!({
+                        "id": id,
+                        "catalog_id": s(o.get("catalogOfferID")),
+                        "title": s(o.get("title")).unwrap_or_default(),
+                        "description": s(o.get("description")).unwrap_or_default(),
+                        "image": s(o.get("imageURL")),
+                        "priority": o.get("priority").and_then(|v| v.as_i64()).unwrap_or(99),
+                        "delivery": s(o.get("deliveryMethod")),
+                        "instructions": s(o.get("claimInstructions")).unwrap_or_default(),
+                        "tags": o.get("tags").cloned().unwrap_or_else(|| serde_json::json!([])),
+                        "publisher": s(o.pointer("/content/publisher")),
+                        "url": s(o.pointer("/content/externalURL")),
+                        "game": s(o.pointer("/content/game/displayName")).or_else(|| s(o.pointer("/content/game/name"))),
+                        "claimed": claimed,
+                        "can_claim": el.and_then(|e| b(e.get("canClaim"))),
+                        "prime": el.and_then(|e| b(e.get("isPrimeGaming"))),
+                        "state": state,
+                        "status": el.and_then(|e| s(e.get("status"))).or_else(|| s(o.pointer("/self/status"))),
+                        "claim_data": s(o.pointer("/self/claimData")).filter(|c| !c.is_empty()),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    offers.sort_by_key(|o| o["priority"].as_i64().unwrap_or(99));
+    serde_json::json!({ "eligibility": eligibility, "offers": offers })
+}
+
+// claim one offer in the app (Twitch's claim for loot and codes). { ok, claimed, claim_data, error }.
+// a game delivered elsewhere (EXTERNAL_OFFER) isn't claimed here: the panel opens its page instead
+#[tauri::command]
+pub async fn claim_prime_offer(app: tauri::AppHandle, offer_id: String) -> Result<serde_json::Value, String> {
+    if offer_id.is_empty() || offer_id.len() > 128 {
+        return Err("bad offer id".into());
+    }
+    const QUERY: &str = "mutation MosaicClaimPrimeOffer($id: ID!) { claimPrimeOffer(input: { offerID: $id }) { error { code } self { hasEntitlement status claimData } } }";
+    let Some(json) = device_gql(&app, "MosaicClaimPrimeOffer", QUERY, serde_json::json!({ "id": offer_id })).await? else {
+        return Ok(serde_json::Value::Null);
+    };
+    let p = json.pointer("/data/claimPrimeOffer");
+    let code = p.and_then(|x| x.pointer("/error/code")).and_then(|v| v.as_str());
+    let has = p.and_then(|x| x.pointer("/self/hasEntitlement")).and_then(|v| v.as_bool()).unwrap_or(false);
+    Ok(serde_json::json!({
+        "ok": code.is_none() && has,
+        "claimed": has || code == Some("OFFER_ALREADY_CLAIMED"),
+        "claim_data": p.and_then(|x| x.pointer("/self/claimData")).and_then(|v| v.as_str()).filter(|c| !c.is_empty()),
+        "error": code,
+    }))
 }
 
 // Sub-anniversary ("resub") share: detect a pending anniversary the user can share in chat, and share it.

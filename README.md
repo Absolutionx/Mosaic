@@ -147,7 +147,18 @@ in-app the first time you use them).
   subscription that won't renew runs out (gifted, Prime or cancelled): once a
   chosen number of days ahead and once on the last day, for any channel, not just
   the one you're watching. The panel shows the end date and days left, and the
-  Subscribe button gets a dot when the end is near.
+  Subscribe button gets a dot when the end is near. Within 3 days, the button on
+  that channel reads "Subscribed · 2 days left", and one line in chat says so.
+- **Amazon Luna benefits** in the header (the crown): this month's games and
+  in-game loot to claim with Prime. Loot is claimed in Mosaic; games open their
+  claim page on Luna.
+- **Notifications** in the header, Twitch's own (the bell on twitch.tv): emote
+  unlocks, gift subs, stream streaks, new VODs and more, with My Twitch / My
+  Channel tabs. Channels and VODs open in Mosaic. Needs the Twitch connection used
+  for drops and points.
+- **What's new** after each update: what changed, in a window laid out like
+  Settings (versions down the left). Entries live in `src/changelog.js`; add
+  one when bumping the version. Settings › App to turn it off or reopen it.
 - **Watch stats**, time watched by day, week and month, top channels, live vs VOD
   and your streak. Stored locally.
 - **Start with your computer**, optionally minimized to the tray.
@@ -370,6 +381,10 @@ src/                    Frontend (vanilla JS, no framework)
   drops-autoclaim.js    Automatic drop claiming
   rewards.js            Channel points / drops / watch-streak panel + redeeming
   watch-stats.js        Local watch-time tracking + stats view
+  whats-new.js          What's new window after an update
+  notifications-panel.js  Twitch notifications (the bell in the header)
+  luna-panel.js         Amazon Luna benefits (the crown in the header)
+  changelog.js          Its entries, one per version (newest first)
   mod-log.js            Mod action log + Mod Chat tab
   mod-menu.js           Moderator room-control (shield) menu
   track-id.js           Song ID capture + result UI

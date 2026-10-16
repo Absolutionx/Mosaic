@@ -72,6 +72,10 @@ export const DEFAULTS = {
   notifyWhispers: true,      // desktop notification for a whisper while Mosaic isn't focused
   notifySubExpiry: true,     // reminder before a Twitch subscription that won't renew runs out (sub-expiry.js)
   subExpiryDays: 3,          // how many days ahead the first reminder comes
+  showWhatsNew: true,
+  lunaButton: true,          // the crown in the header: Amazon Luna benefits to claim with Prime (luna-panel.js)
+  notificationsButton: true, // the bell in the header: your Twitch notifications (notifications-panel.js)        // the What's new window after an update (whats-new.js)
+  subEndingNotice: true,     // on the channel: a "Sub ends in 2 days" chip by Subscribe + one line in chat (channel-you.js)
   notifySound: true,
   notifyVolume: 100,         // Mosaic's chime volume, % of the original (0-200): notifications + chat highlight sound
   quietHours: false,

@@ -168,6 +168,29 @@ export const chatEmotePickerMixin = {
       tabs.appendChild(btn);
     }
 
+    // when the chat is too narrow for every tab (small MultiView tiles), the row scrolls sideways: a normal
+    // mouse wheel scrolls it too (its scrollbar is hidden), and the chosen tab is kept in view
+    tabs.addEventListener("wheel", (e) => {
+      if (tabs.scrollWidth <= tabs.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      tabs.scrollLeft += e.deltaY;
+    }, { passive: false });
+    const markEdges = () => {
+      const max = tabs.scrollWidth - tabs.clientWidth;
+      tabs.classList.toggle("more-left", max > 1 && tabs.scrollLeft > 1);
+      tabs.classList.toggle("more-right", max > 1 && tabs.scrollLeft < max - 1);
+    };
+    tabs.addEventListener("scroll", markEdges, { passive: true });
+    this._emotePickerTabsRO?.disconnect();
+    if (typeof ResizeObserver === "function") {
+      this._emotePickerTabsRO = new ResizeObserver(markEdges);
+      this._emotePickerTabsRO.observe(tabs);
+    }
+    requestAnimationFrame(() => {
+      tabs.querySelector(".emote-picker-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      markEdges();
+    });
+
     const searchWrap = document.createElement("div");
     searchWrap.className = "emote-picker-search-wrap";
     const search = document.createElement("input");

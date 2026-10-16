@@ -1644,10 +1644,13 @@ export class TwitchChat {
       if (this.channel !== login) return;
       const el = document.getElementById("resub-banner");
       if (!el) return;
+      // the share card is open (you may be typing): the 5-minute re-check leaves it alone
+      if (el.classList.contains("resub-share")) return;
       const months = info ? (info.cumulative_months || info.months || 0) : 0;
       if (!info || months <= 0) { el.style.display = "none"; return; }
       this._renderResubBanner(el, info, login, months);
     };
+    this._resubCheck = check;
     check();
     this._resubTimer = setInterval(check, 5 * 60 * 1000); // anniversaries don't appear often
   }
@@ -1655,11 +1658,12 @@ export class TwitchChat {
   _stopResubPoll() {
     if (this._resubTimer) { clearInterval(this._resubTimer); this._resubTimer = null; }
     const el = document.getElementById("resub-banner");
-    if (el) { el.style.display = "none"; el.innerHTML = ""; }
+    if (el) { el.style.display = "none"; el.innerHTML = ""; el.classList.remove("resub-share"); }
   }
 
   _renderResubBanner(el, info, login, months) {
     el.innerHTML = "";
+    el.classList.remove("resub-share");
     const text = document.createElement("span");
     text.className = "resub-banner-text";
     text.textContent = `It's your ${months} month sub anniversary!`;
@@ -1672,52 +1676,96 @@ export class TwitchChat {
     dismiss.title = "Dismiss";
     dismiss.addEventListener("click", () => { el.style.display = "none"; });
 
-    const doShare = async (message, btn) => {
-      btn.disabled = true;
-      btn.textContent = "Sharing\u2026";
-      try {
-        await invoke("share_resub", {
-          channelLogin: login,
-          message: (message && message.trim()) ? message.trim() : null,
-          includeStreak: (info.streak_months || 0) > 1,
-        });
-        el.style.display = "none";
-        el.innerHTML = "";
-      } catch (e) {
-        btn.disabled = false;
-        btn.textContent = "Retry";
-        btn.title = typeof e === "string" ? e : "Failed";
-      }
-    };
-
-    // clicking Share swaps in a message box (like twitch.tv), so the anniversary can carry a message
-    share.addEventListener("click", () => {
-      text.style.display = "none";
-      share.style.display = "none";
-      const wrap = document.createElement("span");
-      wrap.className = "resub-banner-inputwrap";
-      const input = document.createElement("input");
-      input.type = "text";
-      input.className = "resub-banner-input";
-      input.placeholder = "Add a message (optional)";
-      input.maxLength = 500;
-      const send = document.createElement("button");
-      send.className = "resub-banner-share";
-      send.textContent = "Send";
-      wrap.appendChild(input);
-      wrap.appendChild(send);
-      el.insertBefore(wrap, dismiss);
-      input.focus();
-      send.addEventListener("click", () => doShare(input.value, send));
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter") doShare(input.value, send); });
-    });
-
+    // Share opens a card like twitch.tv's: "Share your Sub anniversary in chat!", who and how long, the
+    // streak as an option, a message box and a Share button. it used to swap the banner's text for a
+    // bare white input on the purple strip
+    share.addEventListener("click", () => this._openResubShare(el, info, login, months));
     el.appendChild(text);
     el.appendChild(share);
     el.appendChild(dismiss);
     el.style.display = "";
   }
 
+
+  _openResubShare(el, info, login, months) {
+    const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+    el.innerHTML = "";
+    el.classList.add("resub-share");
+    // the channel's name as shown under the player, when that's this channel
+    const shown = document.getElementById("channel-info-name")?.textContent?.trim();
+    const channelName = shown && shown.toLowerCase() === String(login).toLowerCase() ? shown : login;
+    const streak = info.streak_months || 0;
+
+    const head = mk("div", "resub-share-head");
+    const title = mk("div", "resub-share-title", "Share your Sub anniversary in chat!");
+    const close = mk("button", "resub-share-close");
+    close.type = "button"; close.title = "Close"; close.setAttribute("aria-label", "Close");
+    close.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    head.append(title, close);
+
+    const lead = mk("div", "resub-share-lead");
+    lead.append("Let ", mk("strong", null, channelName), " know you've been subbed for ", mk("strong", null, `${months} month${months === 1 ? "" : "s"}`), ".");
+
+    // the streak line goes in the message only if you tick it (twitch.tv asks the same way)
+    let streakBox = null;
+    const parts = [head, lead];
+    if (streak > 1) {
+      const label = mk("label", "resub-share-check");
+      streakBox = mk("input");
+      streakBox.type = "checkbox";
+      const box = mk("span", "resub-share-box");
+      box.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+      label.append(streakBox, box, mk("span", null, `Show my ${streak} month streak in the chat message.`));
+      parts.push(label);
+    }
+
+    const row = mk("div", "resub-share-row");
+    const input = mk("input", "resub-share-input");
+    input.type = "text";
+    input.placeholder = "Send a message (optional)";
+    input.maxLength = 500;
+    input.spellcheck = true;
+    const send = mk("button", "resub-share-send", "Share");
+    send.type = "button";
+    row.append(input, send);
+    const err = mk("div", "resub-share-error");
+    err.hidden = true;
+    parts.push(row, err);
+    el.append(...parts);
+    el.style.display = "";
+
+    const back = () => this._renderResubBanner(el, info, login, months);
+    close.addEventListener("click", back);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); doShare(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); back(); }
+    });
+    const doShare = async () => {
+      if (send.disabled) return;
+      send.disabled = true; input.disabled = true;
+      send.textContent = "Sharing\u2026";
+      err.hidden = true;
+      try {
+        await invoke("share_resub", {
+          channelLogin: login,
+          message: input.value.trim() ? input.value.trim() : null,
+          includeStreak: !!(streakBox && streakBox.checked),
+        });
+        el.style.display = "none";
+        el.innerHTML = "";
+        el.classList.remove("resub-share");
+      } catch (e) {
+        send.disabled = false; input.disabled = false;
+        send.textContent = "Share";
+        err.textContent = `Couldn't share: ${typeof e === "string" ? e : (e && e.message) || "try again"}`;
+        err.hidden = false;
+      }
+    };
+    send.addEventListener("click", doShare);
+    // ticking the streak box keeps you typing in the message box
+    streakBox?.addEventListener("change", () => input.focus());
+    setTimeout(() => input.focus(), 0);
+  }
 
   _startPinPoll(channelId) {
     this._stopPinPoll();
@@ -1770,7 +1818,9 @@ export class TwitchChat {
     userEl.textContent = pin.sender_name || "";
     if (pin.sender_color && /^#[0-9a-fA-F]{6}$/.test(pin.sender_color)) userEl.style.color = pin.sender_color;
     try {
-      textEl.appendChild(this.renderMessageBody(pin.text, null, this._stripEmotesFor(pin.sender_name)));
+      // Twitch emotes by id from the pin's parts (incl. sub emotes from other channels); 7TV/BTTV/FFZ by name
+      const emotesTag = this.pinnedEmotesTag(pin.text, pin.fragments);
+      textEl.appendChild(this.renderMessageBody(pin.text, emotesTag, this._stripEmotesFor(pin.sender_name)));
     } catch {
       textEl.textContent = pin.text; // renderer unavailable for some reason: plain text beats no pin
     }

@@ -19,6 +19,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { pushEscape } from "./escape-stack.js";
 import { fmtDateMDY } from "./format.js";
+import { getSetting, onSettingChange } from "./settings.js";
 import { channelWatchTime, fmtHours } from "./watch-stats.js";
 import { noteSubscription, expiryState, leftText } from "./sub-expiry.js";
 
@@ -160,14 +161,24 @@ const coreCache = new Map();         // login -> { at, info }   (get_subscriptio
 const detailCache = new Map();       // login -> { at, sub, follow, points, streak, resub }
 
 let button = null;
-let deps = { loggedIn: () => false, connectTwitch: () => {} };
+let deps = { loggedIn: () => false, connectTwitch: () => {}, chatChannel: () => null, chatNotice: () => {} };
 let target = null;   // { login, name }: the Twitch channel the button belongs to right now; null = Kick / nothing
+// "Subscribed · 2 days left" on the button, and one line in chat, while you watch a channel whose
+// subscription won't renew and ends within NOTICE_DAYS (Settings > Notifications > Show it on the channel)
+const NOTICE_DAYS = 3;
+const joined = new Set();     // channels whose chat has said hello (USERSTATE) since you opened them
+const chatNoticed = new Set(); // "<login>|<endsAt>": the chat line went out (once per app run)
 let panel = null, refs = null, view = null, popEscape = null, openSeq = 0, watcher = null;
 
 // call once at startup. button: the info bar's Subscribe button. loggedIn(): is a Twitch account logged in.
 // connectTwitch(done): opens the device-login prompt
 export function initChannelYou(options) {
   button = options.button;
+  // the switch in Settings, and the days ticking by while a channel stays open
+  onSettingChange((id) => { if (id === "subEndingNotice") syncButton(); });
+  setInterval(() => { if (target) syncButton(); }, 15 * 60 * 1000);
+  if (options.chatChannel) deps.chatChannel = options.chatChannel;
+  if (options.chatNotice) deps.chatNotice = options.chatNotice;
   if (options.loggedIn) deps.loggedIn = options.loggedIn;
   if (options.connectTwitch) deps.connectTwitch = options.connectTwitch;
 }
@@ -187,6 +198,7 @@ export function noteOwnChatState(channel, badges, badgeInfo) {
   const login = String(channel || "").toLowerCase();
   if (!login) return;
   chatStates.set(login, parseBadgeState(badges, badgeInfo));
+  joined.add(login);
   if (target && target.login === login) syncButton();
   if (panel && view && view.login === login) update();
 }
@@ -200,6 +212,7 @@ export function setChannelYouTarget(login, name) {
     return;
   }
   closeChannelYou();
+  joined.clear(); // a line in chat waits for this channel's chat to be joined, not the last one's
   target = l ? { login: l, name: name || login } : null;
   syncButton();
   if (target) refreshCore(target.login, false);
@@ -247,6 +260,53 @@ function syncButton() {
     : "Your subscription, follow and stats for this channel";
   if (target) button.setAttribute("aria-haspopup", "dialog");
   else button.removeAttribute("aria-haspopup");
+  syncEndingNotice(subscribed ? model : null);
+}
+
+// calendar days from today to the day it ends, in local time: 0 = today, 1 = tomorrow. null = no date
+export function calendarDaysUntil(endsAt, now = new Date()) {
+  const t = Date.parse(endsAt);
+  if (Number.isNaN(t)) return null;
+  const end = new Date(t);
+  const a = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  const b = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((b - a) / 86400000);
+}
+
+// what the button adds after "Subscribed": "2 days left" / "ends tomorrow" / "ends today" (calendar days)
+export function endingNoticeText(days) {
+  if (days == null || days < 0) return "";
+  if (days === 0) return "ends today";
+  return days === 1 ? "ends tomorrow" : `${days} days left`;
+}
+
+function syncEndingNotice(model) {
+  // won't renew, hasn't ended, and ends today or within NOTICE_DAYS calendar days
+  const st = model && getSetting("subEndingNotice") ? expiryState(model.endsAt, model.renewsAt) : null;
+  const days = st && !st.over ? calendarDaysUntil(st.endsAt) : null;
+  const show = !!(target && days != null && days >= 0 && days <= NOTICE_DAYS);
+  let left = button.querySelector(".sub-left");
+  if (!show) { left?.remove(); return; }
+  // the button says it in words: the dot would only repeat it (it stays for a sub further out, inside the
+  // "Remind me" window)
+  button.classList.remove("sub-ending");
+  if (!left) {
+    left = document.createElement("span");
+    left.className = "sub-left";
+    button.appendChild(left);
+  }
+  left.textContent = endingNoticeText(days);
+  const kind = model.prime ? "Prime subscription" : model.gift ? "gifted subscription" : "subscription";
+  button.title = `Your ${kind} ${days === 0 ? "ends today" : `ends ${fmtDateMDY(st.endsAt)}`} and won't renew`;
+  // once per subscription end, when this channel's chat is open: chat is where you're looking in theater
+  // mode, where the info bar (and the button) is hidden
+  const key = `${target.login}|${st.endsAt}`;
+  if (!chatNoticed.has(key) && joined.has(target.login) && deps.chatChannel() === target.login) {
+    chatNoticed.add(key);
+    const date = fmtDateMDY(st.endsAt).replace(/-/g, "\u2011"); // non-breaking hyphens: the date doesn't split across lines
+    const when = days === 0 ? "ends today" : days === 1 ? `ends tomorrow (${date})` : `ends in ${days} days (${date})`;
+    deps.chatNotice(`Your ${kind} to ${target.name || target.login} ${when} and won't renew.`);
+  }
 }
 
 // one small request per channel, so the button can say "Subscribed" without the panel being opened

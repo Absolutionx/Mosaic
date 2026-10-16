@@ -7,6 +7,7 @@ import {
   parseCheermoteWord,
   parseKickEmoteMarker,
   pickEmoteUrl,
+  pinnedEmotesTag,
   EMOTE_PROVIDER_PRIORITY,
   isChannelProvider,
 } from "./emote-parsing.js";
@@ -50,6 +51,21 @@ export const chatEmotesMixin = {
     return parseTwitchEmotesTag(message, emotesTag);
   },
 
+  pinnedEmotesTag(text, fragments) {
+    return pinnedEmotesTag(text, fragments);
+  },
+
+  // an emote set finished (or partly) loading: redraw what was drawn before it arrived. today that's the
+  // pinned message, whose first fetch races the channel's 7TV/BTTV/FFZ load and would otherwise show emote
+  // names as text until the next 30s poll. batched, since a set arrives one _setEmote at a time
+  _emotesChanged() {
+    if (this._emotesChangedTimer) return;
+    this._emotesChangedTimer = setTimeout(() => {
+      this._emotesChangedTimer = null;
+      if (this._lastPins && this._lastPins.length && this._renderPin) this._renderPin(this._lastPins);
+    }, 150);
+  },
+
   parseCheermote(word) {
     return parseCheermoteWord(word, this.cheermoteMap);
   },
@@ -72,6 +88,7 @@ export const chatEmotesMixin = {
       return; // a higher-priority provider already owns this name
     }
     this.sevenTvEmotes.set(name, { ...entry, provider });
+    this._emotesChanged();
   },
 
   // remove channel-level emotes, keep globals. connect() clears everything on a live switch,
@@ -310,6 +327,7 @@ export const chatEmotesMixin = {
         this.twitchNativeEmotes.set(emote.name, { id: emote.id, url });
         count++;
       }
+      if (count) this._emotesChanged();
       console.log(`Loaded ${count} Twitch global emotes.`);
     } catch (err) {
       console.warn("Failed to load Twitch global emotes:", err);
@@ -335,6 +353,7 @@ export const chatEmotesMixin = {
         });
         count++;
       }
+      if (count) this._emotesChanged();
       console.log(`Available Twitch emotes for #${this.channel}: ${list.length} returned, ${count} added.`);
     } catch (err) {
       console.warn("Failed to load available Twitch emotes:", err);

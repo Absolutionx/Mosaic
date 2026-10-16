@@ -6,7 +6,8 @@ dist-ssr/
 
 # --- Rust / Tauri --------------------------------------------------------
 src-tauri/target/
-src-tauri/Cargo.lock
+# Cargo.lock IS committed: it pins Tauri 2.11.5 (matching @tauri-apps/api 2.11.x) and autostart 2.5.1,
+# so release builds use the exact versions that were tested
 
 # --- Local runtime data (never commit real credentials/tokens) -----------
 # oauth_token.json is written at runtime into the OS-specific app-local

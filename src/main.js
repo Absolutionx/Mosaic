@@ -21,6 +21,9 @@ import { initChatOverlay } from "./chat-overlay.js";
 import { openDownloadDialog } from "./vod-downloads.js";
 import { initEmoteCards } from "./emote-card.js";
 import { startWatchTracking, openWatchStats } from "./watch-stats.js";
+import { maybeShowWhatsNew, openWhatsNew } from "./whats-new.js";
+import { initNotificationsPanel } from "./notifications-panel.js";
+import { initLunaPanel } from "./luna-panel.js";
 import { openDropsHub, configureDropsHub } from "./drops-hub.js";
 import { initPlayerMenu } from "./player-stats.js";
 import { initAudioNormalizer, normalizerReduction } from "./audio-normalizer.js";
@@ -652,7 +655,11 @@ appWindow.onFocusChanged(async ({ payload: focused }) => {
 
 // show the app version in the window title so the live build is visible at a glance (handy for verifying an update applied). getVersion() reads the version from tauri.conf.json
 getVersion()
-  .then((v) => appWindow.setTitle(`Mosaic v${v}`))
+  .then((v) => {
+    appWindow.setTitle(`Mosaic v${v}`);
+    // the first start after an update: what changed (whats-new.js). a moment after boot, once the app has painted
+    setTimeout(() => { maybeShowWhatsNew({ version: v }).catch(() => {}); }, 1500);
+  })
   .catch(() => {}); // non-fatal: title just stays the static default
 setInterval(maybeSaveVodProgress, 15_000);
 
@@ -801,6 +808,7 @@ function paletteActions() {
   add("Drops", "Navigation", () => openDropsHub(), { nav: true });
   add("VOD bookmarks", "Navigation", () => openBookmarksList(), { nav: true });
   add("Check for updates", "App", () => checkForUpdatesNow().then((m) => setStatus(m)).catch(() => {}));
+  add("What's new", "App", () => openWhatsNew());
   return out;
 }
 initCommandPalette({
@@ -1039,10 +1047,21 @@ applyZoom();
     if (getSetting("startMinimized") && await invoke("launched_at_startup")) await getCurrentWindow().hide();
   } catch (err) { console.warn("[settings] start minimized:", err); }
 })();
+// the bell in the header: Twitch's own notifications (notifications-panel.js)
+initNotificationsPanel({
+  watchChannel: (login) => { channelInput.value = login; if (isKick()) setPlatform("twitch"); watchChannel(login); },
+  openVod: (id, length, login) => openVod(id, length || 0, login || ""),
+  connectTwitch: (done) => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); done?.(); }),
+});
+// the crown in the header: Amazon Luna benefits (luna-panel.js)
+initLunaPanel({
+  connectTwitch: (done) => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); done?.(); }),
+});
 // the panel links to the editors that already exist rather than duplicating them
 configureSettingsPanel({
   exportBackup, importBackup, checkForUpdatesNow,
   openWatchStats: () => showWatchStats(),
+  openWhatsNew: () => openWhatsNew(),
   openChatFilter: () => openChatFilterModal(() => chat.reloadChatFilter()),
   openHiddenChannels: () => openHiddenChannelsModal(),
   openTwitchConnection: () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); }),
@@ -1068,6 +1087,9 @@ initChannelYou({
   button: document.getElementById("channel-info-subscribe-btn"),
   loggedIn: () => !!(currentLogin && currentLogin.login),
   connectTwitch: (done) => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); done?.(); }),
+  // "your sub ends in 2 days": one line in the channel's chat (channel-you.js)
+  chatChannel: () => (chat.channel ? String(chat.channel).toLowerCase() : null),
+  chatNotice: (text) => chat.systemLine(text),
 });
 
 vodsPage.hide();
@@ -2138,6 +2160,9 @@ function applyPlatformUi() {
   if (platformLabel) platformLabel.textContent = kick ? "Kick" : "Twitch";
   else platformToggleBtn.textContent = kick ? "Kick" : "Twitch";
   platformToggleBtn.classList.toggle("platform-kick", kick);
+  // icon only in the header: which platform, and what a click does, in the tooltip
+  platformToggleBtn.title = kick ? "Kick (click to switch to Twitch)" : "Twitch (click to switch to Kick)";
+  platformToggleBtn.setAttribute("aria-label", platformToggleBtn.title);
   platformToggleBtn.classList.toggle("platform-twitch", !kick);
   channelInput.placeholder = kick ? "Kick channel name" : "Twitch channel name";
   // section titles per platform: Kick says "Following", Twitch "Followed Channels". the Twitch login prompt inside applies only to Twitch mode (Kick's local follows need no login)
@@ -2176,8 +2201,10 @@ function setKickLoggedInUi(login) {
   kickLogin = login || null;
   const loggedIn = Boolean(kickLogin);
   kickLoginBtn.classList.toggle("logged-in", loggedIn);
+  // icon only in the header (styles.css): the name or "Log in" is the tooltip
   kickLoginBtn.textContent = loggedIn ? kickLogin : "Log in with Kick";
-  kickLoginBtn.title = loggedIn ? "Account" : "Log in with Kick";
+  kickLoginBtn.title = loggedIn ? `${kickLogin} (Kick account)` : "Log in with Kick";
+  kickLoginBtn.setAttribute("aria-label", kickLoginBtn.title);
   // the chat pane decides sendability from this plus the broadcaster id
   chat.setKickLoggedIn(loggedIn, kickLogin);
 }
