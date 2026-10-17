@@ -36,6 +36,7 @@ mod song_id;
 mod track_id;
 mod user_notes;
 mod tray;
+mod icon_refresh;
 mod twitch_device_auth;
 mod vod_progress;
 mod watch_heartbeat;
@@ -177,6 +178,9 @@ fn main() {
         .on_page_load(|webview, _payload| app_extras::apply_devtools_policy(webview))
         .setup(|app| {
             tray::setup_tray(app).map_err(|e| e.to_string())?;
+
+            // a pinned taskbar button can keep the previous version's icon after an update (icon_refresh.rs)
+            icon_refresh::refresh_after_update(app.handle());
 
             // which streamlink is installed decides whether it still needs --twitch-disable-ads (stream_relay.rs)
             tauri::async_runtime::spawn(stream_relay::probe_streamlink_version());

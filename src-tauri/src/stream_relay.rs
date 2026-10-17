@@ -833,19 +833,6 @@ async fn wait_for_first_chunk_or_exit(
     }
 }
 
-// starts (or restarts) the relay for target_url, returning the local HTTP URL the frontend should
-// point its <video>/MSE feeder at. idempotent with respect to the HTTP server: the first call binds a
-// fresh ephemeral port and spawns the accept-loop task; subsequent calls (channel switches) reuse that
-// same port/server and just swap which streamlink process + broadcast channel is currently "live", bumping generation so old connections know to stop
-pub async fn start_relay(
-    state: Arc<StreamRelayState>,
-    target_url: String,
-    quality: String,
-    extra_args: Vec<String>,
-) -> Result<String, String> {
-    start_relay_with(state, target_url, quality, extra_args, None).await
-}
-
 // a pipeline that is producing: its first bytes (already read, never to be dropped), the rest of its fMP4
 // output, and the processes behind it
 type ReadyPipeline = (Vec<u8>, Box<dyn AsyncRead + Unpin + Send + 'static>, Vec<Child>);
@@ -876,8 +863,12 @@ async fn launch_pipeline(target_url: &str, quality: &str, extra_args: &[String])
     }
 }
 
-// start_relay, optionally with a pipeline that's already producing (a preloaded favorite, see take_warm):
-// then there's nothing to launch and the handover happens right away
+// starts (or restarts) the relay for target_url, returning the local HTTP URL the frontend should
+// point its <video>/MSE feeder at. idempotent with respect to the HTTP server: the first call binds a
+// fresh ephemeral port and spawns the accept-loop task; subsequent calls (channel switches) reuse that
+// same port/server and just swap which streamlink process + broadcast channel is currently "live", bumping generation so old connections know to stop.
+// ready: a pipeline that's already producing (a preloaded favorite, see take_warm), so there's nothing to
+// launch and the handover happens right away; None launches one
 async fn start_relay_with(
     state: Arc<StreamRelayState>,
     target_url: String,

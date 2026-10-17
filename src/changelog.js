@@ -3,6 +3,19 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.9",
+    items: [
+      { kind: "fixed", title: "Taskbar icon", desc: "If your taskbar kept showing Mosaic's old icon after updating, Windows now switches it to the new one." },
+      { kind: "new", title: "Preload favorites", desc: "Mosaic can keep your live favorites loading in the background so they start instantly when you open them. Turn it on in Settings > Player > Preload favorites, and choose how many and which ones. Each preloaded channel uses about as much data as watching it." },
+      { kind: "new", title: "Search your drops", desc: "The Drops hub has a search box that finds games, campaigns and rewards." },
+      { kind: "improved", title: "Drops you're earning come first", desc: "The campaign the stream you're watching is earning moves to the top of In progress, marked Earning now. Campaigns that have ended no longer show unless a reward is still waiting to be claimed." },
+      { kind: "new", title: "Know when drops aren't counting", desc: "If drops stop counting, Mosaic first tries to fix it on its own. If it can't, a bar above the video tells you why and lets you reconnect Twitch in one click." },
+      { kind: "fixed", title: "Staying connected to Twitch", desc: "Your Twitch connection could be removed when Twitch refused to renew it, even though it still worked, which quietly stopped drops and channel points. Mosaic now keeps it until Twitch actually stops accepting it." },
+      { kind: "improved", title: "A new icon", desc: "Mosaic has a new icon, sharp at every taskbar size and without the dark tile around it." },
+      { kind: "fixed", title: "Notification bell", desc: "Clicking a channel's bell again now closes its menu instead of reopening it." },
+    ],
+  },
+  {
     version: "1.5.8",
     items: [
       { kind: "new", title: "Preload favorites", desc: "Mosaic can keep your live favorites loading in the background so they start instantly when you open them. Turn it on in Settings > Player > Preload favorites, and choose how many and which ones. Each preloaded channel uses about as much data as watching it." },
