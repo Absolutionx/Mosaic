@@ -1,6 +1,8 @@
-// One-time Twitch device-login so pinned messages work. The main web login's token is rejected by the
-// pinned-message GQL op (integrity gating), so this authorizes the app's Android client id on the same
-// account via Twitch's device-code flow. See twitch_device_auth.rs.
+// The Twitch connection: a one-time Twitch device-login that drops, channel points, pinned messages,
+// predictions and polls use. The main web login's token is rejected by those GQL ops (integrity gating), so
+// this authorizes the app's Android client id on the same account via Twitch's device-code flow. See
+// twitch_device_auth.rs. opts.reconnect (from the "Drops aren't counting" bar) skips straight to a fresh
+// authorization, since Twitch has stopped accepting the saved one.
 
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -15,7 +17,7 @@ function close() {
 }
 
 // onConnected() is called after a successful authorization so the caller can kick off a pin fetch
-export async function openPinAuthModal(onConnected) {
+export async function openPinAuthModal(onConnected, opts = {}) {
   if (overlay) close();
 
   overlay = document.createElement("div");
@@ -42,7 +44,9 @@ export async function openPinAuthModal(onConnected) {
     connected = await invoke("twitch_device_connected");
   } catch {}
 
-  if (connected) {
+  if (opts.reconnect) {
+    renderReconnect(modal, onConnected);
+  } else if (connected) {
     renderConnected(modal, onConnected);
   } else {
     renderIntro(modal, onConnected);
@@ -63,10 +67,10 @@ function header(modal, title) {
 
 function renderConnected(modal, onConnected) {
   modal.replaceChildren();
-  header(modal, "Pinned Messages");
+  header(modal, "Twitch connection");
   const p = document.createElement("div");
   p.className = "chat-filter-intro";
-  p.textContent = "Connected. Pinned messages will show at the top of chat.";
+  p.textContent = "Connected. Drops, channel points, pinned messages, predictions and polls use this connection.";
   modal.appendChild(p);
 
   const row = document.createElement("div");
@@ -84,13 +88,31 @@ function renderConnected(modal, onConnected) {
   modal.appendChild(row);
 }
 
-function renderIntro(modal, onConnected) {
+function renderReconnect(modal, onConnected) {
   modal.replaceChildren();
-  header(modal, "Enable Pinned Messages");
+  header(modal, "Reconnect Twitch");
   const p = document.createElement("div");
   p.className = "chat-filter-intro";
   p.textContent =
-    "Twitch doesn't let a normal login read pinned messages, so this needs a one-time extra authorization on your same Twitch account. You'll get a code to enter at twitch.tv/activate.";
+    "Twitch stopped accepting Mosaic's Twitch connection, so drops and channel points aren't counting. Reconnect with a one-time code at twitch.tv/activate, on the same Twitch account.";
+  modal.appendChild(p);
+  const row = document.createElement("div");
+  row.className = "pin-auth-actions";
+  const connect = document.createElement("button");
+  connect.className = "pin-auth-btn primary";
+  connect.textContent = "Reconnect";
+  connect.addEventListener("click", () => startFlow(modal, onConnected));
+  row.appendChild(connect);
+  modal.appendChild(row);
+}
+
+function renderIntro(modal, onConnected) {
+  modal.replaceChildren();
+  header(modal, "Twitch connection");
+  const p = document.createElement("div");
+  p.className = "chat-filter-intro";
+  p.textContent =
+    "Drops, channel points, pinned messages, predictions and polls need a one-time extra authorization on your same Twitch account, because Twitch doesn't accept a normal login for them. You'll get a code to enter at twitch.tv/activate.";
   modal.appendChild(p);
 
   const row = document.createElement("div");
@@ -105,7 +127,7 @@ function renderIntro(modal, onConnected) {
 
 async function startFlow(modal, onConnected) {
   modal.replaceChildren();
-  header(modal, "Enable Pinned Messages");
+  header(modal, "Twitch connection");
   const status = document.createElement("div");
   status.className = "chat-filter-intro";
   status.textContent = "Starting\u2026";
@@ -121,7 +143,7 @@ async function startFlow(modal, onConnected) {
 
   // show the code + activation link
   modal.replaceChildren();
-  header(modal, "Enable Pinned Messages");
+  header(modal, "Twitch connection");
   const steps = document.createElement("div");
   steps.className = "pin-auth-steps";
   steps.innerHTML = `
@@ -164,10 +186,10 @@ async function startFlow(modal, onConnected) {
 function renderSuccess(modal) {
   if (!overlay) return;
   modal.replaceChildren();
-  header(modal, "Pinned Messages");
+  header(modal, "Twitch connection");
   const p = document.createElement("div");
   p.className = "chat-filter-intro";
-  p.textContent = "Connected! Pinned messages will now appear at the top of chat.";
+  p.textContent = "Connected! Drops and channel points count again, and pinned messages show at the top of chat.";
   modal.appendChild(p);
   const row = document.createElement("div");
   row.className = "pin-auth-actions";

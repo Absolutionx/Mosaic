@@ -1,5 +1,7 @@
 // Drops hub: everything about Twitch Drops in one place.
-//   In progress: campaigns you're earning (inventory), each drop's progress, time left, Claim.
+//   In progress: campaigns you're earning (inventory), each drop's progress, time left, Claim. The campaign
+//   the stream you're watching is earning comes first; ended campaigns are left out unless a reward is
+//   still waiting to be claimed.
 //   Available: every drop campaign on Twitch right now, with "Find streams" (opens the game in Browse) and
 //   "Link account" when the game account isn't connected yet.
 // Both use the Twitch connection (Settings > Twitch account). If Twitch rejects the "all campaigns" query,
@@ -9,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { pushEscape } from "./escape-stack.js";
 
 let viewEl = null, popEscape = null, opts = {};
+// the last load, kept so the search box can re-filter without asking Twitch again
+let data = null, query = "";
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 export function fmtLeft(minutes) {
@@ -39,20 +43,29 @@ export function configureDropsHub(o) { configured = { ...configured, ...o }; }
 export function openDropsHub(o = {}) {
   opts = { ...configured, ...o };
   closeDropsHub();
+  data = null; query = "";
   const backdrop = el("div", "hub-backdrop");
   const panel = el("div", "hub-panel drops-panel");
   backdrop.appendChild(panel);
   const head = el("div", "hub-head");
   head.appendChild(el("div", "hub-title", "Drops"));
+  const search = el("label", "hub-search");
+  search.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const input = el("input");
+  input.type = "text"; input.placeholder = "Search games and rewards"; input.spellcheck = false;
+  input.setAttribute("aria-label", "Search drops");
+  input.value = query;
+  search.appendChild(input);
   const refresh = el("button", "hub-refresh", "Refresh");
   refresh.type = "button";
   const close = el("button", "hub-close");
   close.type = "button"; close.title = "Close (Esc)";
   close.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
   close.addEventListener("click", closeDropsHub);
-  head.append(el("div", "hub-spacer"), refresh, close);
+  head.append(search, el("div", "hub-spacer"), refresh, close);
   const body = el("div", "hub-body");
   panel.append(head, body);
+  input.addEventListener("input", () => { query = input.value; if (data) render(body); });
   refresh.addEventListener("click", () => load(body));
   backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) closeDropsHub(); });
   document.body.appendChild(backdrop);
@@ -75,27 +88,67 @@ async function load(body) {
     body.replaceChildren(el("div", "hub-empty", "Drops need the Twitch connection. Set it up under Settings › Twitch account."));
     return;
   }
-  const [inv, all] = await Promise.allSettled([invoke("get_drops_inventory"), invoke("get_drop_campaigns")]);
+  const [inv, all, watching] = await Promise.allSettled([
+    invoke("get_drops_inventory"), invoke("get_drop_campaigns"), invoke("heartbeat_watching"),
+  ]);
   if (!viewEl || !body.isConnected) return;
-  body.replaceChildren();
-  const inProgress = inv.status === "fulfilled" && Array.isArray(inv.value) ? inv.value : [];
-  renderInProgress(body, inProgress, inv.status === "rejected" ? inv.reason : null);
-  const mine = new Set(inProgress.map((c) => c.id));
-  const campaigns = all.status === "fulfilled" && Array.isArray(all.value) ? all.value : null;
-  renderAvailable(body, campaigns ? campaigns.filter((c) => !mine.has(c.id)) : null, all.status === "rejected" ? all.reason : null);
+  data = {
+    inProgress: inv.status === "fulfilled" && Array.isArray(inv.value) ? inv.value : [],
+    invError: inv.status === "rejected" ? inv.reason : null,
+    campaigns: all.status === "fulfilled" && Array.isArray(all.value) ? all.value : null,
+    allError: all.status === "rejected" ? all.reason : null,
+    watching: watching.status === "fulfilled" ? watching.value : null,
+  };
+  render(body);
 }
 
-function renderInProgress(body, campaigns, error) {
+// lower-cased words of the search box; a campaign matches when every word appears in its game, its name or
+// one of its rewards
+const words = () => query.toLowerCase().split(/\s+/).filter(Boolean);
+const matches = (texts, ws) => {
+  if (!ws.length) return true;
+  const hay = texts.filter(Boolean).join(" ").toLowerCase();
+  return ws.every((w) => hay.includes(w));
+};
+const ended = (c, now) => { const t = Date.parse(c.end || ""); return Number.isFinite(t) && t <= now; };
+
+function render(body) {
+  const { inProgress, invError, campaigns, allError, watching } = data;
+  const ws = words(), now = Date.now();
+  body.replaceChildren();
+  renderInProgress(body, inProgress, invError, watching, ws, now);
+  const mine = new Set(inProgress.map((c) => c.id));
+  renderAvailable(body, campaigns ? campaigns.filter((c) => !mine.has(c.id)) : null, allError, ws);
+}
+
+// the campaign the stream on screen is earning: same game, still running, with a reward left to earn
+function isEarning(c, watching, now) {
+  if (!watching?.playing || ended(c, now)) return false;
+  const sameGame = (watching.game_id && c.game_id && watching.game_id === c.game_id)
+    || (watching.game_name && c.game && watching.game_name.toLowerCase() === c.game.toLowerCase());
+  return !!sameGame && (c.drops || []).some((d) => !d.claimed && !d.claimable);
+}
+
+function renderInProgress(body, all, error, watching, ws, now) {
   body.appendChild(el("div", "hub-section", "In progress"));
   if (error) { body.appendChild(el("div", "hub-note error", `Couldn't load your drops (${String(error)}).`)); return; }
-  if (!campaigns.length) { body.appendChild(el("div", "hub-note", "You aren't earning any drops right now. Watch a stream with drops enabled to start.")); return; }
-  for (const c of campaigns) {
-    const card = el("div", "drops-campaign");
+  // an ended campaign stays only while one of its rewards is still waiting to be claimed
+  const live = all.filter((c) => !ended(c, now) || (c.drops || []).some((d) => d.claimable && !d.claimed));
+  if (!live.length) { body.appendChild(el("div", "hub-note", "You aren't earning any drops right now. Watch a stream with drops enabled to start.")); return; }
+  const campaigns = live
+    .filter((c) => matches([c.game, c.campaign, ...(c.drops || []).map((d) => d.name)], ws))
+    .map((c) => ({ c, earning: isEarning(c, watching, now) }))
+    .sort((a, b) => (b.earning - a.earning) || ((Date.parse(a.c.end) || Infinity) - (Date.parse(b.c.end) || Infinity)))
+    ;
+  if (!campaigns.length) { body.appendChild(el("div", "hub-note", `None of your drops match "${query.trim()}".`)); return; }
+  for (const { c, earning } of campaigns) {
+    const card = el("div", "drops-campaign" + (earning ? " earning" : ""));
     const art = el("img", "drops-art"); art.alt = ""; art.loading = "lazy";
     if (c.box_art) art.src = boxArt(c.box_art);
     const main = el("div", "drops-main");
     const title = el("div", "drops-game", c.game || "Drops");
     const sub = el("div", "drops-campaign-name", [c.campaign, fmtEnds(c.end)].filter(Boolean).join(" · "));
+    if (earning) title.appendChild(el("span", "drops-earning", watching.login ? `Earning now · ${watching.login}` : "Earning now"));
     main.append(title, sub);
     for (const d of c.drops || []) {
       const row = el("div", "drops-reward" + (d.claimed ? " claimed" : ""));
@@ -138,7 +191,7 @@ function renderInProgress(body, campaigns, error) {
   }
 }
 
-function renderAvailable(body, campaigns, error) {
+function renderAvailable(body, campaigns, error, ws) {
   body.appendChild(el("div", "hub-section", "Available on Twitch"));
   if (error || !campaigns) { body.appendChild(el("div", "hub-note error", `Couldn't load the campaign list${error ? ` (${String(error)})` : ""}.`)); return; }
   const now = Date.now();
@@ -146,8 +199,10 @@ function renderAvailable(body, campaigns, error) {
     .filter((c) => (c.status || "ACTIVE") === "ACTIVE" && (!c.end || Date.parse(c.end) > now))
     .sort((a, b) => (Date.parse(a.end) || Infinity) - (Date.parse(b.end) || Infinity));
   if (!active.length) { body.appendChild(el("div", "hub-note", "No drop campaigns are running right now.")); return; }
+  const shown = active.filter((c) => matches([c.game, c.name], ws));
+  if (!shown.length) { body.appendChild(el("div", "hub-note", `No campaigns match "${query.trim()}".`)); return; }
   const grid = el("div", "drops-grid");
-  for (const c of active) {
+  for (const c of shown) {
     const card = el("div", "drops-tile");
     const art = el("img", "drops-art small"); art.alt = ""; art.loading = "lazy";
     if (c.box_art) art.src = boxArt(c.box_art);

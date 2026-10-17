@@ -1,44 +1,97 @@
-// "this channel has Drops enabled" bar above the video. relay playback never counts
-// toward Drops (see drops.js), so a drops-enabled channel needs a route to where it does
+// "Drops aren't counting" bar above the video, on a Drops-enabled Twitch channel. When the watch heartbeat
+// (watch_heartbeat.rs) says watching can't count, Mosaic first fixes it itself, the way logging out and back
+// in would (heartbeat_repair: a fresh Twitch connection token, the stream looked up again, a minute reported
+// right away). Only if that doesn't work does the bar show, with the button to connect again (main.js wires
+// it to the Twitch connection editor through configureDropsBanner). It also quietly fixes the heartbeat
+// thinking the video is paused while it plays. Hidden again as soon as watching counts.
 
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import { streamHasDropsEnabled } from "./drops.js";
-import { formatViewerCount } from "./format.js";
 
 const dropsBanner = document.getElementById("drops-banner");
+const dropsBannerMessage = document.getElementById("drops-banner-message");
 const dropsBannerLink = document.getElementById("drops-banner-link");
-const dropsBannerViewers = document.getElementById("drops-banner-viewers");
 const dropsBannerDismiss = document.getElementById("drops-banner-dismiss");
-const channelInput = document.getElementById("channel-input");
 
-// the login we dismissed the banner for, so re-renders don't reopen it but a
-// different channel re-evaluates fresh
-let manuallyDismissedFor = null;
+const MESSAGES = {
+  no_login: ["Drops need the Twitch connection to count here.", "Connect Twitch"],
+  rejected: ["Drops aren't counting: Twitch won't accept your Twitch connection, even after Mosaic logged in again.", "Reconnect Twitch"],
+};
+
+let onReconnect = null;
+let watchedChannel = null; // the drops-enabled channel being checked, if any
+let dismissedFor = null; // the channel the bar was closed for, so it stays closed there
+let timer = null;
+let quietUntil = 0; // just reconnected: the heartbeat needs a minute to see the new connection work
+let repairedAt = 0, repairedFor = null; // the automatic fix runs once per channel, at most every 10 minutes
+
+const videoPlaying = () => {
+  const v = document.getElementById("video-element");
+  return !!v && !v.paused && !v.ended;
+};
+
+export function configureDropsBanner(o) { onReconnect = o.openTwitchConnection || null; }
+
+function stopChecking() {
+  clearTimeout(timer);
+  timer = null;
+}
+
+async function check() {
+  timer = null;
+  if (!watchedChannel) return;
+  const channel = watchedChannel;
+  const w = await invoke("heartbeat_watching").catch(() => null);
+  if (watchedChannel !== channel) return;
+  const mine = w && w.login?.toLowerCase() === channel;
+  // the video plays but the heartbeat missed it (a pause it never heard the end of): nothing would count
+  if (mine && !w.playing && videoPlaying()) invoke("heartbeat_set_playing", { playing: true }).catch(() => {});
+  let health = mine ? w.health : "ok";
+  if (MESSAGES[health] && (repairedFor !== channel || Date.now() - repairedAt > 600000)) {
+    repairedFor = channel; repairedAt = Date.now();
+    health = await invoke("heartbeat_repair", { playing: videoPlaying() }).catch(() => health);
+    if (watchedChannel !== channel) return;
+  }
+  const msg = MESSAGES[health];
+  if (msg && dismissedFor !== watchedChannel && Date.now() > quietUntil) {
+    dropsBannerMessage.textContent = msg[0];
+    dropsBannerLink.textContent = msg[1];
+    dropsBannerLink.dataset.mode = health;
+    dropsBanner.style.display = "";
+  } else {
+    dropsBanner.style.display = "none";
+  }
+  // the heartbeat learns the answer within its first minute; after that, keep an eye out for changes
+  timer = setTimeout(check, 20000);
+}
 
 export function updateDropsBanner(channel, stream) {
-  // Drops now accrue in-app via the watch heartbeat, so the old "can't be earned here, watch on
-  // Twitch" banner is obsolete and always hidden. Progress/claim live in the Points & Drops panel.
+  stopChecking();
   dropsBanner.style.display = "none";
+  watchedChannel = streamHasDropsEnabled(stream) ? String(channel || "").toLowerCase() : null;
+  if (watchedChannel) timer = setTimeout(check, 5000);
 }
 
 export function resetDropsDismissal() {
-  manuallyDismissedFor = null;
+  dismissedFor = null;
 }
 
 export function hideDropsBanner() {
+  stopChecking();
+  watchedChannel = null;
   dropsBanner.style.display = "none";
 }
 
-// target="_blank" does nothing in a Tauri webview, so intercept the click and hand
-// the url to openUrl(). href stays set so it's right-click-copyable
 dropsBannerLink.addEventListener("click", (e) => {
   e.preventDefault();
-  openUrl(dropsBannerLink.href).catch((err) => {
-    console.error("Failed to open Twitch link in browser:", err);
+  const reconnect = dropsBannerLink.dataset.mode === "rejected";
+  onReconnect?.({ reconnect }, () => {
+    quietUntil = Date.now() + 90000;
+    dropsBanner.style.display = "none";
   });
 });
 
 dropsBannerDismiss.addEventListener("click", () => {
-  manuallyDismissedFor = channelInput.value.trim().toLowerCase() || null;
-  hideDropsBanner();
+  dismissedFor = watchedChannel;
+  dropsBanner.style.display = "none";
 });

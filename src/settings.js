@@ -46,6 +46,9 @@ export const DEFAULTS = {
   // player
   defaultQuality: "best",    // streamlink spec (with fallbacks)
   lowLatency: false,
+  preloadFavorites: false,   // keep live favorites loading in the background so they open instantly (preload.js)
+  preloadCount: 1,           // how many at once (1-4)
+  preloadChannels: [],       // which favorites (lowercase logins); empty = any favorite, in sidebar order
   catchUpToLive: true,
   autoPipOnBlur: false,
   autoTheater: true,

@@ -55,8 +55,8 @@
       <header>
         <h1 class="sr-only">Mosaic</h1>
         <div class="mosaic-brand" aria-label="Mosaic">
-          <img class="mosaic-brand-mark" src="/mosaic-icon.png" alt="Mosaic" />
-          <span class="mosaic-brand-name">mosaic</span>
+          <img class="mosaic-brand-mark" src="/mosaic-icon.svg" alt="Mosaic" />
+          <span class="mosaic-brand-name">Mosaic</span>
         </div>
         <div class="nav-tabs">
           <button id="home-tab" class="nav-tab nav-tab-active">Home</button>
@@ -173,22 +173,16 @@
         <div id="vods-page"></div>
         <div id="video-frame">
           <!--
-            Its own space above #video-region, not an overlay on top of it -
-            this one genuinely needs to be (the video itself hasn't started
-            yet/is a different stream than what Drops applies to, so it
-            can't simply sit on top of the video the way the controls bar
-            below now can). Hidden by default; main.js shows/hides it
-            per-channel based on whether that stream currently has Drops
-            enabled (playback here goes through the local streamlink
-            relay, not Twitch's own client, so watch-time never counts
-            toward Drops - see drops.js).
+            "Drops aren't counting" bar: its own space above #video-region,
+            not an overlay. Hidden by default; drops-banner.js shows it on a
+            Drops-enabled channel only when the watch heartbeat says watching
+            can't count (no Twitch connection, or Twitch refusing its token).
           -->
           <div id="drops-banner" class="drops-banner" style="display:none">
             <svg viewBox="0 0 24 24" width="18" height="18" class="drops-banner-icon"><path d="M12 2c-.3 3.5-4 6.4-4 10.5A4 4 0 0 0 12 17a4 4 0 0 0 4-4.5C16 8.4 12.3 5.5 12 2z" fill="currentColor"/></svg>
             <span class="drops-banner-text">
-              This channel has Drops enabled, but drops can't be earned while watching here.
-              <a id="drops-banner-link" href="#" target="_blank" rel="noopener noreferrer">Watch on Twitch to earn it</a>
-              <span id="drops-banner-viewers" class="drops-banner-viewers"></span>
+              <span id="drops-banner-message"></span>
+              <a id="drops-banner-link" href="#">Reconnect Twitch</a>
             </span>
             <button id="drops-banner-dismiss" class="drops-banner-dismiss" title="Dismiss" aria-label="Dismiss">
               <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>

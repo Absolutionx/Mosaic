@@ -5434,7 +5434,6 @@ header {
 .mosaic-brand-mark {
   width: 24px;
   height: 24px;
-  border-radius: 5px;
   object-fit: contain;
   flex-shrink: 0;
 }
@@ -5686,15 +5685,18 @@ header #kick-login-btn {
   color: var(--m-faint);
   font-size: 13px;
 }
+/* "Drops aren't counting" (drops-banner.js): a warning, so amber rather than the accent */
 .drops-banner {
-  border: 1px solid rgba(145,71,255,.22);
+  border: 1px solid rgba(255,184,77,.3);
   border-radius: 10px;
   margin-bottom: 8px;
-  background: rgba(145,71,255,.08);
+  padding: 7px 12px;
+  background: rgba(255,184,77,.08);
   color: var(--m-text);
+  font-size: 12.5px;
 }
-.drops-banner-icon { color: var(--m-accent); }
-.drops-banner-text a { color: var(--m-accent); }
+.drops-banner-icon { color: #ffb84d; }
+.drops-banner-text a { color: #ffcf85; }
 
 .center-play-btn {
   width: 66px;
@@ -6050,6 +6052,20 @@ button:active { transform: translateY(1px); }
 .pinned-message .pinned-dismiss:hover {
   color: var(--m-text, #e7ebf2);
 }
+
+/* Settings > Player > Channels to preload (preload.js; reuses the .chat-filter-overlay/.chat-filter-modal shell) */
+.preload-picker { width: 400px; }
+.preload-picker-list { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; max-height: 360px; overflow-y: auto; }
+.preload-picker-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--m-text, #e7ebf2);
+}
+.preload-picker-row:hover { background: var(--m-surface-2, #1c222c); }
+.preload-picker-row input { accent-color: var(--m-accent, #9147ff); width: 15px; height: 15px; margin: 0; cursor: pointer; }
+.preload-picker-avatar { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: var(--m-raised, #232b36); }
+.preload-picker-name { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preload-picker-live { font-size: 11px; color: var(--m-faint, #697386); }
+.preload-picker-live.on { color: #ff6b6b; font-weight: 700; }
 
 /* Pinned-messages device-login modal (reuses .chat-filter-overlay/.chat-filter-modal shell) */
 .pin-auth-modal { width: 400px; }
@@ -9112,6 +9128,17 @@ body.chat-overlay-active #chat-overlay { display: flex; }
 .hub-head { display: flex; align-items: center; gap: 16px; padding: 14px 14px 12px 22px; border-bottom: 1px solid var(--m-border-soft, #212832); }
 .hub-title { font-size: 18px; font-weight: 850; }
 .hub-spacer { flex: 1; }
+.hub-search {
+  display: flex; align-items: center; gap: 7px; width: min(300px, 40%); padding: 0 10px; height: 32px;
+  background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d); border-radius: 9px;
+  color: var(--m-faint, #697386); cursor: text;
+}
+.hub-search:focus-within { border-color: var(--m-accent, #9147ff); }
+.hub-search input {
+  flex: 1; min-width: 0; background: none; border: none; outline: none;
+  font-family: inherit; font-size: 12.5px; color: var(--m-text, #e7ebf2);
+}
+.hub-search input::placeholder { color: var(--m-faint, #697386); }
 .hub-tabs { flex: 1; display: flex; gap: 4px; }
 .hub-tab { padding: 6px 10px 8px; border: none; background: none; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--m-muted, #9aa5b4); border-bottom: 2px solid transparent; }
 .hub-tab:hover { color: var(--m-text, #e7ebf2); }
@@ -9154,6 +9181,12 @@ body.chat-overlay-active #chat-overlay { display: flex; }
 /* drops */
 .drops-campaign, .drops-tile { display: flex; gap: 14px; padding: 12px; border-radius: 12px; background: var(--m-bg, #0e1116); border: 1px solid var(--m-border-soft, #212832); }
 .drops-campaign + .drops-campaign { margin-top: 10px; }
+.drops-campaign.earning { border-color: color-mix(in srgb, var(--m-accent, #9147ff) 55%, transparent); }
+.drops-earning {
+  margin-left: 8px; padding: 2px 7px; border-radius: 999px; vertical-align: 1px;
+  font-size: 10.5px; font-weight: 800; color: var(--m-text, #e7ebf2);
+  background: color-mix(in srgb, var(--m-accent, #9147ff) 30%, transparent);
+}
 .drops-art { flex: 0 0 auto; width: 72px; height: 96px; object-fit: cover; border-radius: 7px; background: var(--m-raised, #232b36); }
 .drops-art.small { width: 54px; height: 72px; }
 .drops-main { flex: 1; min-width: 0; }

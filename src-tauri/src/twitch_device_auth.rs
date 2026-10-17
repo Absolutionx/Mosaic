@@ -2,8 +2,9 @@
 // integrity-free GQL ops (currently just GetPinnedChat, for pinned messages) will accept. the regular
 // web-login token is minted for a different client id and Twitch rejects it with these ops (HTTP 401),
 // so pins need their own token. mirrors the StreamNook project's approach: no scopes, device-code grant,
-// file-persisted token with refresh. this is a SEPARATE one-time authorization from the main Twitch
-// login (same account); the token is stored in app_local_data_dir and refreshed on demand.
+// saved token. this is a SEPARATE one-time authorization from the main Twitch login (same account); the token
+// is kept in secret_store and used until Twitch rejects it (Twitch won't refresh it for us, see refresh).
+// It's now used for drops, channel points, predictions and polls too, not just pins.
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -161,6 +162,7 @@ pub async fn twitch_device_poll(
 
         if resp.status().is_success() {
             let t: TokenResponse = resp.json().await.map_err(|e| e.to_string())?;
+            eprintln!("[twitch-device] connected; Twitch lists the token as lasting {:?} s", t.expires_in);
             let stored = StoredToken {
                 access_token: t.access_token,
                 refresh_token: t.refresh_token.unwrap_or_default(),
@@ -190,7 +192,17 @@ pub async fn twitch_device_poll(
     }
 }
 
+// Twitch refreshes tokens for the Android and TV client ids only with that app's client secret, which Mosaic
+// doesn't have: every refresh is answered 400 "missing client secret" (checked 10-17-26, both ids). Mosaic used
+// to take any refused refresh as "the connection is dead" and forget it, which threw away tokens that still
+// worked the moment they reached their listed expiry. Now a refused refresh changes nothing: the token is used
+// until Twitch actually rejects it, and the "Drops aren't counting" bar (drops-banner.js) offers a reconnect
+// then. The refresh is still tried, in case Twitch ever accepts it again
 async fn refresh(app: &AppHandle, old: &StoredToken) -> Option<StoredToken> {
+    refresh_with(app, old).await
+}
+
+async fn refresh_with(app: &AppHandle, old: &StoredToken) -> Option<StoredToken> {
     if old.refresh_token.is_empty() {
         return None;
     }
@@ -203,12 +215,13 @@ async fn refresh(app: &AppHandle, old: &StoredToken) -> Option<StoredToken> {
     ];
     let resp = client.post(TOKEN_URL).form(&params).send().await.ok()?;
     if !resp.status().is_success() {
-        // Twitch refused the refresh itself (revoked, or a client id it no longer accepts): forget the token so
-        // the app shows "Enable" again, instead of looking connected while every request quietly fails. a
-        // network error (above) keeps it for the next try
-        if resp.status() == reqwest::StatusCode::BAD_REQUEST || resp.status() == reqwest::StatusCode::UNAUTHORIZED {
-            delete(app);
-        }
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        eprintln!("[twitch-device] refresh refused: {status} {}", body.chars().take(120).collect::<String>());
+        // stop asking before every request: keep the token as it is, with no expiry, so it's used until Twitch
+        // rejects it (see above)
+        let kept = StoredToken { expires_at: 0, ..old.clone() };
+        let _ = save(app, &kept);
         return None;
     }
     let t: TokenResponse = resp.json().await.ok()?;
@@ -232,10 +245,31 @@ async fn refresh(app: &AppHandle, old: &StoredToken) -> Option<StoredToken> {
 pub async fn get_device_token(app: &AppHandle) -> Option<String> {
     let t = load(app)?;
     set_active(&t);
+    // once per run: how long the saved token is listed to last (numbers only, never the token), to learn how
+    // often Twitch makes people reconnect now that refreshes are refused
+    static LOGGED: std::sync::Once = std::sync::Once::new();
+    LOGGED.call_once(|| {
+        let client = if client_of(&t) == TV_CLIENT_ID { "TV" } else { "Android" };
+        if t.expires_at > 0 {
+            eprintln!("[twitch-device] {client} token, listed as expiring in {} s", t.expires_at - now_secs());
+        } else {
+            eprintln!("[twitch-device] {client} token, no expiry listed");
+        }
+    });
     if t.expires_at > 0 && now_secs() >= t.expires_at - 60 {
-        return refresh(app, &t).await.map(|nt| nt.access_token);
+        // a refused refresh keeps the old token (see refresh), which is worth trying until Twitch says no
+        return Some(refresh(app, &t).await.map(|nt| nt.access_token).unwrap_or(t.access_token));
     }
     Some(t.access_token)
+}
+
+// a fresh access token from the saved refresh token, even if the current one hasn't expired: the automatic
+// "log in again" the watch heartbeat tries when Twitch starts refusing the token (heartbeat_repair). false
+// if there's no connection or Twitch refused (it always does today, see refresh). Never forgets the connection
+pub async fn force_refresh(app: &AppHandle) -> bool {
+    let Some(t) = load(app) else { return false };
+    set_active(&t);
+    refresh_with(app, &t).await.is_some()
 }
 
 #[tauri::command]

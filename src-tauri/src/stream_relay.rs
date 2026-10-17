@@ -199,6 +199,11 @@ pub struct StreamRelayState {
     start_lock: Mutex<()>,
     // incremented the instant a start_relay call begins (before it takes start_lock). a call captures this as its ticket; if a NEWER start has bumped it by the time this call finishes spawning, this call is stale and aborts, killing only its OWN just-spawned pipeline rather than storing it over the newer one's
     start_requests: std::sync::atomic::AtomicU64,
+    // Settings > Player > Preload favorites: pipelines already running for favorites you might open next,
+    // keyed by lowercase login (see the "Preloading" section below)
+    warm: std::sync::Mutex<std::collections::HashMap<String, WarmEntry>>,
+    // the live channel playing (or starting) in the main player, never preloaded alongside itself
+    current_login: std::sync::Mutex<Option<String>>,
 }
 
 impl Default for StreamRelayState {
@@ -211,6 +216,8 @@ impl Default for StreamRelayState {
             generation: std::sync::atomic::AtomicU64::new(0),
             start_lock: Mutex::new(()),
             start_requests: std::sync::atomic::AtomicU64::new(0),
+            warm: std::sync::Mutex::new(std::collections::HashMap::new()),
+            current_login: std::sync::Mutex::new(None),
         }
     }
 }
@@ -836,6 +843,48 @@ pub async fn start_relay(
     quality: String,
     extra_args: Vec<String>,
 ) -> Result<String, String> {
+    start_relay_with(state, target_url, quality, extra_args, None).await
+}
+
+// a pipeline that is producing: its first bytes (already read, never to be dropped), the rest of its fMP4
+// output, and the processes behind it
+type ReadyPipeline = (Vec<u8>, Box<dyn AsyncRead + Unpin + Send + 'static>, Vec<Child>);
+
+// spawns streamlink (+ ffmpeg when needed) and waits for the first fMP4 bytes. used for every live start and
+// for preloading
+async fn launch_pipeline(target_url: &str, quality: &str, extra_args: &[String]) -> Result<ReadyPipeline, String> {
+    let pipeline = spawn_pipeline(target_url, quality, extra_args)
+        .await
+        .map_err(|e| format!("Failed to launch stream pipeline: {e}"))?;
+    match pipeline {
+        PipelineResult::Passthrough { first_chunk, rest, sl_child } => {
+            let stream: Box<dyn AsyncRead + Unpin + Send + 'static> = Box::new(rest);
+            Ok((first_chunk, stream, vec![sl_child]))
+        }
+        PipelineResult::FfmpegMediated { mut ff_child, ff_stdout, ff_stderr, sl_child } => {
+            match wait_for_first_chunk_or_exit(&mut ff_child, ff_stdout, ff_stderr).await {
+                Ok((first_chunk, rest_stdout)) => {
+                    let stream: Box<dyn AsyncRead + Unpin + Send + 'static> = Box::new(rest_stdout);
+                    Ok((first_chunk, stream, vec![ff_child, sl_child]))
+                }
+                Err(e) => {
+                    let _ = ff_child.kill().await;
+                    Err(e)
+                }
+            }
+        }
+    }
+}
+
+// start_relay, optionally with a pipeline that's already producing (a preloaded favorite, see take_warm):
+// then there's nothing to launch and the handover happens right away
+async fn start_relay_with(
+    state: Arc<StreamRelayState>,
+    target_url: String,
+    quality: String,
+    extra_args: Vec<String>,
+    ready: Option<ReadyPipeline>,
+) -> Result<String, String> {
     // claim a ticket the instant we're called, BEFORE contending for the lock. if another start_relay is claimed after this, our ticket is no longer the newest and we're stale, checked after spawning below
     let my_ticket = state.start_requests.fetch_add(1, Ordering::SeqCst) + 1;
 
@@ -851,33 +900,17 @@ pub async fn start_relay(
     // remux, first chunk: a few seconds). it used to be killed right here, before spawning, which left the
     // viewer frozen or silent for that whole startup on every quality switch / channel change. now it's
     // stopped at the handover below (or on any failure, so a failed switch can't leave it playing)
-    let pipeline = match spawn_pipeline(&target_url, &quality, &extra_args).await {
-        Ok(p) => p,
-        Err(e) => {
-            stop_current_stream(&state).await;
-            return Err(format!("Failed to launch stream pipeline: {e}"));
-        }
-    };
-
-    // resolve the pipeline into (first_chunk, fmp4_stream, children). for native fMP4 (Passthrough), the probe bytes are already the first chunk and we skip the wait step. for MPEG-TS (FfmpegMediated), we race a read of ffmpeg's stdout against ffmpeg exiting to detect startup failures early
-    let (mut first_chunk, mut fmp4_stream, mut pipeline_children) = match pipeline {
-        PipelineResult::Passthrough { first_chunk, rest, sl_child } => {
-            let stream: Box<dyn AsyncRead + Unpin + Send + 'static> = Box::new(rest);
-            (first_chunk, stream, vec![sl_child])
-        }
-        PipelineResult::FfmpegMediated { mut ff_child, ff_stdout, ff_stderr, sl_child } => {
-            let (first_chunk, rest_stdout) =
-                match wait_for_first_chunk_or_exit(&mut ff_child, ff_stdout, ff_stderr).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        let _ = ff_child.kill().await;
-                        stop_current_stream(&state).await; // failed switch: don't leave the old stream playing
-                        return Err(e);
-                    }
-                };
-            let stream: Box<dyn AsyncRead + Unpin + Send + 'static> = Box::new(rest_stdout);
-            (first_chunk, stream, vec![ff_child, sl_child])
-        }
+    // resolve the pipeline into (first_chunk, fmp4_stream, children). for native fMP4 (Passthrough), the probe bytes are already the first chunk and we skip the wait step. for MPEG-TS (FfmpegMediated), we race a read of ffmpeg's stdout against ffmpeg exiting to detect startup failures early (launch_pipeline)
+    let preloaded = ready.is_some();
+    let (mut first_chunk, mut fmp4_stream, mut pipeline_children) = match ready {
+        Some(p) => p,
+        None => match launch_pipeline(&target_url, &quality, &extra_args).await {
+            Ok(p) => p,
+            Err(e) => {
+                stop_current_stream(&state).await; // failed switch: don't leave the old stream playing
+                return Err(e);
+            }
+        },
     };
 
     // Audio-only: bank ~2s of audio before the handover. the handover used to happen at the very first chunk,
@@ -885,7 +918,7 @@ pub async fn start_relay(
     // silence waiting for more. the previous stream keeps playing while this banks, so the listener hears no
     // gap, and the player can start the moment it attaches. bounded by a deadline so a trickle can't hang the
     // switch; the banked bytes stay contiguous with what the pump reads next (it resumes after them)
-    if quality == "audio_only" {
+    if quality == "audio_only" && !preloaded {
         const AUDIO_PREROLL_BYTES: usize = 40 * 1024; // ~2s at Twitch's ~160 kbps audio_only
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(4);
         let mut buf = vec![0u8; 16 * 1024];
@@ -1977,13 +2010,272 @@ pub async fn start_stream(
         // enables Twitch's native low-latency mode (TLLS): smaller HLS segments and a tighter PLR delay target, typically cutting stream delay from ~10-15s to ~3-5s. live channels only; VODs don't go through the relay at all
         extra_args.push("--twitch-low-latency".to_string());
     }
-    start_relay(
+    // claimed before taking the preload, so a preload_set landing in between doesn't start it again
+    if let Ok(mut cur) = state.current_login.lock() {
+        *cur = Some(channel.to_ascii_lowercase());
+    }
+    let ready = take_warm(state.inner(), &channel, &quality, low_latency == Some(true)).await;
+    if ready.is_some() {
+        eprintln!("[preload] {channel}: using the preloaded stream");
+    }
+    start_relay_with(
         state.inner().clone(),
         target,
         quality,
         extra_args,
+        ready,
     )
     .await
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Preloading (Settings > Player > Preload favorites)
+//
+// Opening a stream normally waits for the whole pipeline to start: streamlink launches, asks Twitch for a
+// playback token and playlist, downloads the first segments, and ffmpeg remuxes them. That's a few seconds
+// before the first frame. A preloaded favorite has that pipeline already running in the background, reading
+// the stream and keeping only the init segment and the newest couple of fragments. Opening it hands the
+// running pipeline to start_relay_with as if it had just been launched, with its first chunk being that init
+// segment plus the newest fragments, so the player has a couple of seconds buffered the moment it attaches.
+//
+// The frontend (src/preload.js) decides which channels (live favorites, the setting's count and picks, never
+// the one already playing) and calls preload_set with the full list whenever it changes; this side starts,
+// keeps and stops pipelines to match. Each one costs about what watching it does (the whole stream is
+// downloaded), which is why the setting is off by default and capped at WARM_MAX.
+// ---------------------------------------------------------------------------------------------------------
+
+const WARM_MAX: usize = 4;
+// a preloaded stream keeps from the second-newest fragment on (a complete fragment plus the one arriving);
+// this cap only matters if fragments are absurdly long
+const WARM_TAIL_CAP: usize = 24 * 1024 * 1024;
+// a channel whose pipeline failed (went offline, streamlink error) isn't retried for this long
+const WARM_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(120);
+
+pub struct WarmEntry {
+    quality: String,
+    low_latency: bool,
+    id: u64,
+    // the running task's mailbox; None once it has failed (then retry_after says when to try again)
+    cmd: Option<tokio::sync::mpsc::Sender<WarmCmd>>,
+    retry_after: Option<std::time::Instant>,
+}
+
+enum WarmCmd {
+    // hand the pipeline over (None if it isn't producing yet or can't start cleanly)
+    Adopt(tokio::sync::oneshot::Sender<Option<ReadyPipeline>>),
+}
+
+static WARM_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+// what a preloaded stream keeps while it waits: the bytes from the second-newest fragment on, plus the
+// walker's init segment (see BoxWalker) to put in front of them
+struct WarmBuffer {
+    walker: BoxWalker,
+    total: u64,
+    tail: Vec<u8>,
+    tail_abs: u64,
+    frag_starts: VecDeque<u64>,
+}
+
+impl WarmBuffer {
+    fn new() -> Self {
+        WarmBuffer { walker: BoxWalker::new(), total: 0, tail: Vec::new(), tail_abs: 0, frag_starts: VecDeque::new() }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        self.walker.feed(bytes, self.total);
+        self.total += bytes.len() as u64;
+        self.tail.extend_from_slice(bytes);
+        if let Some(f) = self.walker.latest_frag_abs {
+            if self.frag_starts.back() != Some(&f) {
+                self.frag_starts.push_back(f);
+                while self.frag_starts.len() > 2 {
+                    self.frag_starts.pop_front();
+                }
+            }
+        }
+        // keep from the older of the two newest fragment starts; past the cap, from the newest
+        let keep_from = if self.tail.len() > WARM_TAIL_CAP {
+            self.frag_starts.back().copied()
+        } else if self.frag_starts.len() == 2 {
+            self.frag_starts.front().copied()
+        } else {
+            None
+        };
+        if let Some(k) = keep_from {
+            if k > self.tail_abs {
+                let cut = usize::try_from(k - self.tail_abs).unwrap_or(usize::MAX).min(self.tail.len());
+                self.tail.drain(..cut);
+                self.tail_abs += cut as u64;
+            }
+        }
+    }
+
+    // the bytes a player starts from: the stream from byte 0 if nothing was trimmed yet (it starts with the
+    // init segment), else the init segment followed by the kept fragments. None if the walker lost track
+    fn start_bytes(&self) -> Option<Vec<u8>> {
+        if self.walker.dead || self.frag_starts.is_empty() {
+            return None;
+        }
+        if self.tail_abs == 0 {
+            return Some(self.tail.clone());
+        }
+        if !self.walker.latest_init_complete || !self.frag_starts.contains(&self.tail_abs) {
+            return None;
+        }
+        let mut out = Vec::with_capacity(self.walker.latest_init.len() + self.tail.len());
+        out.extend_from_slice(&self.walker.latest_init);
+        out.extend_from_slice(&self.tail);
+        Some(out)
+    }
+}
+
+fn warm_target_args(low_latency: bool) -> Vec<String> {
+    if low_latency { vec!["--twitch-low-latency".to_string()] } else { Vec::new() }
+}
+
+// one preloaded channel: launch, then keep reading until asked to hand over or told to stop (the mailbox
+// closing: the entry was removed). the processes die with the pipeline when this returns (kill_on_drop)
+async fn run_warm(
+    state: Arc<StreamRelayState>,
+    login: String,
+    quality: String,
+    low_latency: bool,
+    id: u64,
+    delay: std::time::Duration,
+    mut rx: tokio::sync::mpsc::Receiver<WarmCmd>,
+) {
+    tokio::time::sleep(delay).await;
+    let target = format!("https://www.twitch.tv/{login}");
+    let args = warm_target_args(low_latency);
+    let launched = tokio::select! {
+        r = launch_pipeline(&target, &quality, &args) => r,
+        cmd = rx.recv() => {
+            // asked before it was ready, or removed: nothing to give
+            if let Some(WarmCmd::Adopt(reply)) = cmd { let _ = reply.send(None); }
+            forget_warm(&state, &login, id, false);
+            return;
+        }
+    };
+    let (first, mut stream, children) = match launched {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[preload] {login}: couldn't start ({e})");
+            forget_warm(&state, &login, id, true);
+            return;
+        }
+    };
+    eprintln!("[preload] {login}: ready");
+    let mut buf = WarmBuffer::new();
+    buf.feed(&first);
+    let mut read = vec![0u8; 64 * 1024];
+    loop {
+        tokio::select! {
+            r = stream.read(&mut read) => match r {
+                Ok(n) if n > 0 => buf.feed(&read[..n]),
+                _ => {
+                    eprintln!("[preload] {login}: stream ended");
+                    forget_warm(&state, &login, id, true);
+                    return;
+                }
+            },
+            cmd = rx.recv() => {
+                match cmd {
+                    Some(WarmCmd::Adopt(reply)) => {
+                        let pipeline = buf.start_bytes().map(|first| (first, stream, children));
+                        let _ = reply.send(pipeline);
+                    }
+                    None => {}
+                }
+                return; // handed over, or removed: either way this task is done
+            }
+        }
+    }
+}
+
+// drops this task's entry (if it's still the current one for the login); failed ones stay listed, paused
+fn forget_warm(state: &StreamRelayState, login: &str, id: u64, failed: bool) {
+    let Ok(mut warm) = state.warm.lock() else { return };
+    if warm.get(login).map(|e| e.id) != Some(id) {
+        return;
+    }
+    if failed {
+        if let Some(e) = warm.get_mut(login) {
+            e.cmd = None;
+            e.retry_after = Some(std::time::Instant::now() + WARM_RETRY_AFTER);
+        }
+    } else {
+        warm.remove(login);
+    }
+}
+
+// the preloaded pipeline for this channel, if one is running with the same quality and latency mode and
+// is producing. it's removed either way (an unusable one would only be restarted)
+async fn take_warm(state: &Arc<StreamRelayState>, channel: &str, quality: &str, low_latency: bool) -> Option<ReadyPipeline> {
+    let login = channel.to_ascii_lowercase();
+    let cmd = {
+        let mut warm = state.warm.lock().ok()?;
+        let matches = warm.get(&login).is_some_and(|e| e.quality == quality && e.low_latency == low_latency && e.cmd.is_some());
+        if !matches {
+            return None;
+        }
+        warm.remove(&login)?.cmd?
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    cmd.send(WarmCmd::Adopt(tx)).await.ok()?;
+    tokio::time::timeout(std::time::Duration::from_secs(2), rx).await.ok()?.ok()?
+}
+
+// makes the running preloads match channels: the first `count` of them (at most WARM_MAX) in priority order,
+// skipping the one already playing. returns the channels being preloaded now
+#[tauri::command]
+pub async fn preload_set(
+    state: tauri::State<'_, Arc<StreamRelayState>>,
+    channels: Vec<String>,
+    count: usize,
+    quality: String,
+    low_latency: bool,
+) -> Result<Vec<String>, String> {
+    let count = count.min(WARM_MAX);
+    check_quality(&quality)?;
+    let state = state.inner().clone();
+    // the channel already playing is never preloaded too
+    let current = state.current_login.lock().ok().and_then(|c| c.clone());
+    let mut wanted: Vec<String> = Vec::new();
+    // audio-only isn't preloaded: its start needs the separate audio preroll, and it's cheap to start anyway
+    if quality != "audio_only" {
+        for c in channels {
+            let c = c.to_ascii_lowercase();
+            if valid_twitch_login(&c) && !wanted.contains(&c) && Some(&c) != current.as_ref() {
+                wanted.push(c);
+            }
+            if wanted.len() >= count {
+                break;
+            }
+        }
+    }
+    let mut warm = state.warm.lock().map_err(|_| "preload state poisoned".to_string())?;
+    // stop the ones no longer wanted, or wanted with other settings (dropping the mailbox ends the task)
+    warm.retain(|login, e| wanted.contains(login) && e.quality == quality && e.low_latency == low_latency);
+    let now = std::time::Instant::now();
+    let mut started = 0u32;
+    for login in &wanted {
+        let due = match warm.get(login) {
+            None => true,
+            Some(e) => e.cmd.is_none() && e.retry_after.is_some_and(|t| now >= t),
+        };
+        if !due {
+            continue;
+        }
+        let id = WARM_IDS.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        warm.insert(login.clone(), WarmEntry { quality: quality.clone(), low_latency, id, cmd: Some(tx), retry_after: None });
+        // a couple of seconds apart, so several launches don't all hit the CPU and network at once
+        let delay = std::time::Duration::from_millis(1500 * started as u64);
+        started += 1;
+        tauri::async_runtime::spawn(run_warm(state.clone(), login.clone(), quality.clone(), low_latency, id, delay, rx));
+    }
+    Ok(wanted.into_iter().filter(|l| warm.get(l).is_some_and(|e| e.cmd.is_some())).collect())
 }
 
 // stops whatever is currently relaying, if anything. called on Stop / before switching channels/VODs (start_stream also stops the previous one itself, but an explicit Stop button needs this even when nothing new is about to start)
@@ -1992,6 +2284,9 @@ pub async fn stop_stream(state: tauri::State<'_, Arc<StreamRelayState>>) -> Resu
     // bump the start-request counter so any start_relay currently spawning (e.g. the user hit Stop while a channel was still starting) sees itself superseded and aborts, rather than completing and storing a fresh relay that plays after the user asked to stop
     state.start_requests.fetch_add(1, Ordering::SeqCst);
     stop_current_stream(state.inner()).await;
+    if let Ok(mut cur) = state.current_login.lock() {
+        *cur = None;
+    }
     Ok(())
 }
 
@@ -2258,5 +2553,44 @@ mod fuzz_tests {
                     "invented line {l:?} from {s:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod warm_buffer_tests {
+    use super::WarmBuffer;
+
+    fn bx(kind: &[u8; 4], body: usize) -> Vec<u8> {
+        let mut b = ((8 + body) as u32).to_be_bytes().to_vec();
+        b.extend_from_slice(kind);
+        b.extend(std::iter::repeat(kind[0]).take(body));
+        b
+    }
+
+    // a preloaded stream must always offer the player a clean start: the init segment, then whole fragments
+    // from the second-newest one on, contiguous with what the pipeline reads next
+    #[test]
+    fn starts_with_init_then_newest_fragments() {
+        let init = [bx(b"ftyp", 8), bx(b"moov", 40)].concat();
+        let frag = |n: u8| [bx(b"moof", 16 + n as usize), bx(b"mdat", 200 + n as usize)].concat();
+        let mut stream = init.clone();
+        for n in 0..5 { stream.extend(frag(n)); }
+
+        // fed in odd-sized pieces, like pipe reads
+        let mut w = WarmBuffer::new();
+        for piece in stream.chunks(37) { w.feed(piece); }
+        let start = w.start_bytes().expect("a clean start");
+        let expected = [init.clone(), frag(3), frag(4)].concat();
+        assert_eq!(start, expected);
+
+        // before anything is trimmed, the stream itself (from byte 0) is the start
+        let mut early = WarmBuffer::new();
+        early.feed(&[init.clone(), frag(0)].concat());
+        assert_eq!(early.start_bytes().unwrap(), [init.clone(), frag(0)].concat());
+
+        // nothing to start from yet: no fragment seen
+        let mut none = WarmBuffer::new();
+        none.feed(&init);
+        assert!(none.start_bytes().is_none());
     }
 }

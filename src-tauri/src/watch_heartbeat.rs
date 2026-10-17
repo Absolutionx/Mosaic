@@ -66,6 +66,10 @@ pub struct WatchHeartbeatService {
     drops_playlist: tokio::sync::Mutex<Option<(String, String)>>,
     drops_seen: std::sync::Mutex<std::collections::VecDeque<String>>,
     drops_status: std::sync::Mutex<String>,
+    // whether watching can count at all, for the "drops aren't counting" bar (drops-banner.js):
+    // "unknown" until the first minute, "ok", "no_login" (no Twitch connection token) or "rejected"
+    // (Twitch refused the token, so the connection has to be renewed)
+    health: std::sync::Mutex<&'static str>,
 }
 
 impl WatchHeartbeatService {
@@ -81,6 +85,7 @@ impl WatchHeartbeatService {
             drops_playlist: tokio::sync::Mutex::new(None),
             drops_seen: std::sync::Mutex::new(std::collections::VecDeque::new()),
             drops_status: std::sync::Mutex::new("no playlist check yet".into()),
+            health: std::sync::Mutex::new("unknown"),
         }
     }
 
@@ -148,6 +153,7 @@ impl WatchHeartbeatService {
         };
         // no device token => no spade surface to report on; watching earns nothing (as if logged out)
         let Some(token) = crate::twitch_device_auth::get_device_token(&self.app).await else {
+            self.set_health("no_login");
             self.set_status("not connected (device login needed), nothing sent".into());
             return;
         };
@@ -189,6 +195,11 @@ impl WatchHeartbeatService {
 
         // primary: the GQL path the web player uses now (credits both points and drops)
         let gql = self.send_minute_watched_gql(&target, &broadcast_id, &token).await;
+        match &gql {
+            Ok(code) if (200..300).contains(code) => self.set_health("ok"),
+            Err(e) if is_auth_error(e) => self.set_health("rejected"),
+            _ => {}
+        }
         if let Err(e) = &gql {
             eprintln!("[heartbeat] gql send failed for {}: {e}", target.login);
         }
@@ -267,6 +278,11 @@ impl WatchHeartbeatService {
             return;
         }
         let result = self.request_new_segments(&login, &token).await;
+        if let Err(e) = &result {
+            if is_auth_error(e) {
+                self.set_health("rejected");
+            }
+        }
         let now = chrono::Local::now().format("%H:%M:%S");
         let line = match &result {
             Ok(n) => format!("{now} {}: playlist ok, {n} new segment(s) requested", target.login),
@@ -389,6 +405,42 @@ impl WatchHeartbeatService {
             .last()
             .map(str::to_owned)
             .ok_or_else(|| "master playlist listed no variants".to_string())
+    }
+
+    fn set_health(&self, h: &'static str) {
+        if let Ok(mut g) = self.health.lock() {
+            *g = h;
+        }
+    }
+
+    // the automatic "log out and back in": a fresh Twitch connection token, everything remembered about the
+    // stream and the account forgotten, then one minute reported right away to see whether watching counts
+    // now. returns the health afterwards ("ok" when it worked)
+    pub async fn repair(&self, playing: bool) -> &'static str {
+        self.playing.store(playing, Ordering::SeqCst);
+        if crate::twitch_device_auth::get_device_token(&self.app).await.is_none()
+            && !crate::twitch_device_auth::twitch_device_connected(self.app.clone())
+        {
+            self.set_health("no_login");
+            return "no_login";
+        }
+        let refreshed = crate::twitch_device_auth::force_refresh(&self.app).await;
+        eprintln!("[heartbeat] repair: token refresh {}", if refreshed { "ok" } else { "failed" });
+        *self.cached_user_id.write().await = None;
+        self.drops_playlist.lock().await.take();
+        if let Ok(mut seen) = self.drops_seen.lock() {
+            seen.clear();
+        }
+        if let Some(t) = self.target.write().await.as_mut() {
+            t.broadcast_checked_at = None;
+        }
+        self.set_health("unknown");
+        self.tick().await;
+        self.health()
+    }
+
+    pub fn health(&self) -> &'static str {
+        self.health.lock().map(|g| *g).unwrap_or("unknown")
     }
 
     pub fn drops_status(&self) -> String {
@@ -607,9 +659,47 @@ pub fn heartbeat_set_playing(playing: bool, state: State<'_, Arc<WatchHeartbeatS
     state.set_playing(playing);
 }
 
+// Twitch's answer when the connection's token is no good any more (revoked, expired, or issued under rules
+// that changed): GQL says 401 or names the token. Network trouble and other failures don't count
+fn is_auth_error(e: &str) -> bool {
+    let e = e.to_ascii_lowercase();
+    e.contains("401") || e.contains("unauthorized") || e.contains("invalid oauth") || e.contains("oauth token")
+}
+
+// the stream being credited right now, for the Drops hub to put the campaign you're earning first:
+// { login, game_id, game_name, playing, health }, or null when nothing is (health: see the field). game_* fill in after the first minute
+#[tauri::command]
+pub async fn heartbeat_watching(state: State<'_, Arc<WatchHeartbeatService>>) -> Result<serde_json::Value, String> {
+    let playing = state.playing.load(Ordering::SeqCst);
+    Ok(match state.target.read().await.as_ref() {
+        Some(t) => json!({ "login": t.login, "game_id": t.game_id, "game_name": t.game_name, "playing": playing, "health": state.health() }),
+        None => serde_json::Value::Null,
+    })
+}
+
+// see WatchHeartbeatService::repair. playing: whether the player on screen is actually playing right now
+#[tauri::command]
+pub async fn heartbeat_repair(playing: bool, state: State<'_, Arc<WatchHeartbeatService>>) -> Result<String, String> {
+    Ok(state.repair(playing).await.to_string())
+}
+
 // what the last heartbeat minute did, e.g. "21:04:12 somechannel: sendSpadeEvents 204". for checking that
 // watching is being credited (devtools: __TAURI_INTERNALS__.invoke("heartbeat_status"))
 #[tauri::command]
 pub fn heartbeat_status(state: State<'_, Arc<WatchHeartbeatService>>) -> String {
     format!("points: {} | drops: {}", state.status(), state.drops_status())
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::is_auth_error;
+
+    #[test]
+    fn only_token_trouble_means_reconnect() {
+        assert!(is_auth_error("HTTP 401 Unauthorized: no statusCode in reply"));
+        assert!(is_auth_error("HTTP 200 OK: Invalid OAuth token"));
+        assert!(!is_auth_error("error sending request: connection reset"));
+        assert!(!is_auth_error("HTTP 500 Internal Server Error: no statusCode in reply"));
+        assert!(!is_auth_error("playlist answered 404 Not Found"));
+    }
 }

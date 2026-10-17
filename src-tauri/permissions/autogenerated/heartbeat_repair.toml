@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-heartbeat-repair"
+description = "Enables the heartbeat_repair command without any pre-configured scope."
+commands.allow = ["heartbeat_repair"]
+
+[[permission]]
+identifier = "deny-heartbeat-repair"
+description = "Denies the heartbeat_repair command without any pre-configured scope."
+commands.deny = ["heartbeat_repair"]

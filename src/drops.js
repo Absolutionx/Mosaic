@@ -1,5 +1,5 @@
-// drops can't progress here (Twitch tracks watch-time server-side), so this just
-// surfaces whether the broadcaster has Drops enabled, via the DropsEnabled Helix tag
+// whether the broadcaster has Drops enabled, via the DropsEnabled Helix tag (drops-banner.js only
+// checks the Twitch connection on those channels)
 
 const DROPS_TAG = "dropsenabled";
 

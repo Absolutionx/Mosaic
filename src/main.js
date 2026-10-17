@@ -49,6 +49,7 @@ import "./context-menu.js"; // the embedded browser's right-click menu (spelling
 import { exportBackup, importBackup } from "./backup.js";
 import { checkForUpdatesNow } from "./update-banner.js";
 import { openSettingsPanel, configureSettingsPanel, getSettingsIndex } from "./settings-panel.js";
+import { initPreload, syncPreload, openPreloadPicker } from "./preload.js";
 import { isKickFollowed, toggleKickFollow } from "./kick-follows.js";
 import { getKickAlias, setKickAlias, kickSlugFor } from "./kick-aliases.js";
 import { HomeFeed } from "./home.js";
@@ -62,7 +63,7 @@ import { formatViewerCount } from "./format.js";
 import { checkStreamDeps } from "./deps-banner.js";
 import { checkForUpdate } from "./update-banner.js";
 import { MultiView } from "./multiview.js";
-import { updateDropsBanner, hideDropsBanner, resetDropsDismissal } from "./drops-banner.js";
+import { updateDropsBanner, hideDropsBanner, resetDropsDismissal, configureDropsBanner } from "./drops-banner.js";
 import { openHiddenChannelsModal } from "./hidden-channels.js";
 import { initMiniPlayer, activateMiniPlayer, deactivateMiniPlayer, resetMiniPlayerDismissal } from "./mini-player.js";
 import {
@@ -1086,6 +1087,11 @@ configureSettingsPanel({
   openChatFilter: () => openChatFilterModal(() => chat.reloadChatFilter()),
   openHiddenChannels: () => openHiddenChannelsModal(),
   openTwitchConnection: () => openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); }),
+  openPreloadPicker: () => openPreloadPicker(),
+});
+// "Drops aren't counting" bar: its button opens the same Twitch connection editor
+configureDropsBanner({
+  openTwitchConnection: (opts, onDone) => openPinAuthModal(() => { onDone?.(); if (chat.roomId) chat._startPinPoll(chat.roomId); }, opts),
 });
 document.getElementById("settings-open-btn")?.addEventListener("click", () => openSettingsPanel());
 document.addEventListener("keydown", (e) => {
@@ -1757,6 +1763,7 @@ async function watchChannel(channel, stream) {
       }
     }
     const relayUrl = await invoke("start_stream", { channel, quality: session.currentQuality, lowLatency: session.lowLatency });
+    syncPreload(3000); // the channel you came from can be preloaded again
     // again after: the spawn took real time and the user may have switched, don't ATTACH a superseded stream. we don't stop the relay here: whichever channel they land on runs its own start_stream, which reaps the previous pipeline first. calling stop_stream from this stale path could race and kill the NEWER channel's relay
     if (session.intendedChannel !== channel) return;
     session.playing = true;
@@ -2343,6 +2350,7 @@ channelInput.addEventListener("keydown", (e) => {
 // Full stop of playback + relay teardown, shared by the Stop button and by hiding to tray (so a
 // tray-minimized app is quiet and lightweight rather than streaming in the background).
 function stopPlayback({ returnToPage = true, goHome = false } = {}) {
+  syncPreload(3000); // what you were watching can be preloaded again
   if (!session.playing) return;
   hideRaidBanner();
   _heatmapHandle?.cancel(); // stop sampling a VOD we're leaving
@@ -2394,6 +2402,18 @@ watchBtn.addEventListener("click", async () => {
   }
 });
 
+// Settings > Player > Preload favorites (preload.js): live favorites, the picks, and when to pause. after a
+// stream starts or stops it's told again a little later, so the channel you left can be preloaded again
+let preloadPausedForTray = false;
+window.addEventListener("focus", () => { if (preloadPausedForTray) { preloadPausedForTray = false; syncPreload(); } });
+initPreload({
+  liveFavorites: () => { try { return sidebar.getLiveFavorites(); } catch { return []; } },
+  allFavorites: () => { try { return sidebar.getFavorites(); } catch { return []; } },
+  lowLatency: () => !!session.lowLatency,
+  // the macOS native-HLS path doesn't use the relay, so there's nothing to hand a preload to
+  paused: () => preloadPausedForTray || !!session.useNativeHlsForLive,
+});
+
 // Close-to-tray: push the saved preference to the backend at startup (default on), and stop playback
 // whenever the window is hidden to the tray so the app stays quiet and light while still receiving
 // whispers and live/category notifications (those run in the still-alive webview).
@@ -2401,6 +2421,9 @@ watchBtn.addEventListener("click", async () => {
   const closeToTray = localStorage.getItem("closeToTray") !== "0"; // default on
   invoke("set_close_to_tray", { enabled: closeToTray }).catch(() => {});
   listen("hidden-to-tray", () => {
+    // nothing preloads while Mosaic sits in the tray; it starts again when the window comes back
+    preloadPausedForTray = true;
+    syncPreload(0);
     // Fully stop and return to Home so reopening from the tray shows a clean home page rather than a
     // disconnected chat + empty black stream frame.
     if (session.playing) stopPlayback({ returnToPage: true, goHome: true });

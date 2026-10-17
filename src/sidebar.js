@@ -649,9 +649,16 @@ export class ChannelsSidebar {
   // Fleshed-out popup on the bell, in two sections: "Notify when live" (a toggle) and "Notify for
   // categories" (multiple categories as removable chips, added via a searchable input).
   openNotifyMenu(anchor, ch) {
-    document.querySelector(".sidebar-notify-menu")?.remove();
+    // the bell toggles: clicking it again while its menu is open just closes the menu
+    const open = document.querySelector(".sidebar-notify-menu");
+    if (open && open.dataset.login === ch.login) {
+      open._close?.();
+      return;
+    }
+    open?._close ? open._close() : open?.remove();
     const menu = document.createElement("div");
     menu.className = "sidebar-notify-menu";
+    menu.dataset.login = ch.login;
     // places the menu next to `anchor` (the bell). reused after a favorite toggle moves the row
     const positionMenu = () => {
       const r = anchor.getBoundingClientRect();
@@ -884,11 +891,17 @@ export class ChannelsSidebar {
 
     document.body.appendChild(menu);
     positionMenu();
+    menu._close = () => {
+      menu.remove();
+      document.removeEventListener("mousedown", close);
+    };
+    // pressing anywhere else closes it. this channel's bell (including the icon inside it, and the bell
+    // a re-render puts in its place) is left to its click handler, which toggles
     const close = (ev) => {
-      if (!menu.contains(ev.target) && ev.target !== anchor) {
-        menu.remove();
-        document.removeEventListener("mousedown", close);
-      }
+      if (menu.contains(ev.target)) return;
+      const bell = ev.target.closest?.(".sidebar-notify-toggle");
+      if (bell && bell.dataset.login === ch.login) return;
+      menu._close();
     };
     setTimeout(() => document.addEventListener("mousedown", close), 0);
   }
@@ -907,6 +920,14 @@ export class ChannelsSidebar {
         favorite: this._isFavorite(ch.login),
       }))
       .sort((a, b) => (b.favorite - a.favorite) || (b.viewers - a.viewers));
+  }
+
+  // every favorite (live or not) in sidebar order, for the preload picker (preload.js)
+  getFavorites() {
+    if (isKick()) return [];
+    return this.followed
+      .filter((ch) => this._isFavorite(ch.login))
+      .map((ch) => ({ login: ch.login, name: ch.name || ch.login, avatar: ch.avatar || "", live: !!ch.live }));
   }
 
   // logins of followed channels live right now (lowercase), e.g. to check a past MultiView set is still live

@@ -1805,6 +1805,7 @@ pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Va
                 .unwrap_or("")
                 .to_string();
             let box_art = c.pointer("/game/boxArtURL").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let game_id = c.pointer("/game/id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let campaign = c.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
             let mut drops = Vec::new();
@@ -1841,7 +1842,7 @@ pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Va
                     .unwrap_or_else(|| format!("{game}|{campaign}"));
                 let end = c.get("endAt").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 out.push(serde_json::json!({
-                    "id": cid, "game": game, "campaign": campaign, "box_art": box_art, "drops": drops, "end": end
+                    "id": cid, "game": game, "game_id": game_id, "campaign": campaign, "box_art": box_art, "drops": drops, "end": end
                 }));
             }
         }
