@@ -12,6 +12,14 @@
 // stopped. The GQL path is now the primary one; the raw POSTs are still sent as a harmless fallback
 // (Twitch dedupes a minute reported twice).
 //
+// Drops need more since Twitch's change of about 2026-10-07: minutes count toward a drop only while the viewer's
+// player is fetching the stream's video segments, and only with a playlist that carries the viewer's identity.
+// Mosaic's own playback runs through streamlink without the account, so a second loop (playlist_tick, every
+// 20 s) does what the official player does: a playback token signed for the account, the lowest-quality media
+// playlist, and a HEAD request (no video downloaded) for each new segment. Same approach as TwitchDropsMiner
+// (f693b0c, 2026-10-09). It follows the same rules as the minute: one channel, the one on screen, only while
+// it plays and is live.
+//
 // Requires the Twitch device-login token (same one pins/predictions use). No device login -> no token
 // -> nothing is reported, exactly like not being logged in on the web.
 
@@ -31,6 +39,9 @@ use tokio::sync::RwLock;
 const SPADE_URL: &str = "https://spade.twitch.tv/track";
 const GQL_URL: &str = "https://gql.twitch.tv/gql";
 const BROADCAST_REFRESH: Duration = Duration::from_secs(900);
+const DROPS_INTERVAL: Duration = Duration::from_secs(20);
+// segments remembered as already requested (a live media playlist lists ~15 at a time)
+const DROPS_SEEN_CAP: usize = 256;
 
 #[derive(Clone)]
 struct WatchTarget {
@@ -51,6 +62,10 @@ pub struct WatchHeartbeatService {
     loop_started: AtomicBool,
     // what the last minute did, for heartbeat_status (Settings / devtools: is watching being credited?)
     last_status: std::sync::Mutex<String>,
+    // drops: (login, media playlist URL) signed for the account, and the segments already requested from it
+    drops_playlist: tokio::sync::Mutex<Option<(String, String)>>,
+    drops_seen: std::sync::Mutex<std::collections::VecDeque<String>>,
+    drops_status: std::sync::Mutex<String>,
 }
 
 impl WatchHeartbeatService {
@@ -63,6 +78,9 @@ impl WatchHeartbeatService {
             cached_user_id: RwLock::new(None),
             loop_started: AtomicBool::new(false),
             last_status: std::sync::Mutex::new("no minute sent yet".into()),
+            drops_playlist: tokio::sync::Mutex::new(None),
+            drops_seen: std::sync::Mutex::new(std::collections::VecDeque::new()),
+            drops_status: std::sync::Mutex::new("no playlist check yet".into()),
         }
     }
 
@@ -80,6 +98,16 @@ impl WatchHeartbeatService {
             loop {
                 tick.tick().await;
                 service.tick().await;
+            }
+        });
+        // drops: the segment loop, every 20 s (see the header)
+        let service = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut tick = tokio::time::interval(DROPS_INTERVAL);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                service.playlist_tick().await;
             }
         });
     }
@@ -103,6 +131,7 @@ impl WatchHeartbeatService {
     pub async fn clear_target(&self) {
         self.playing.store(false, Ordering::SeqCst);
         self.target.write().await.take();
+        self.drops_playlist.lock().await.take();
     }
 
     pub fn set_playing(&self, playing: bool) {
@@ -213,6 +242,157 @@ impl WatchHeartbeatService {
             stream["game"]["id"].as_str().unwrap_or_default().to_string(),
             stream["game"]["name"].as_str().unwrap_or_default().to_string(),
         )))
+    }
+
+    // DROPS: one round of what the official player does (see the header). Skipped unless a live Twitch channel
+    // is on screen and playing, with the device login connected
+    async fn playlist_tick(&self) {
+        if !self.playing.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(target) = self.target.read().await.clone() else {
+            return;
+        };
+        // the minute loop decides "live" (broadcast id); before its first check, or while offline, do nothing
+        if target.broadcast_id.is_none() {
+            self.drops_playlist.lock().await.take();
+            return;
+        }
+        let Some(token) = crate::twitch_device_auth::get_device_token(&self.app).await else {
+            return;
+        };
+        // the login goes into usher's URL: only a plain Twitch login gets through
+        let login = target.login.to_ascii_lowercase();
+        if !crate::stream_relay::valid_twitch_login(&login) {
+            return;
+        }
+        let result = self.request_new_segments(&login, &token).await;
+        let now = chrono::Local::now().format("%H:%M:%S");
+        let line = match &result {
+            Ok(n) => format!("{now} {}: playlist ok, {n} new segment(s) requested", target.login),
+            Err(e) => format!("{now} {}: playlist failed: {e}", target.login),
+        };
+        if let Err(e) = &result {
+            eprintln!("[heartbeat] drops playlist for {}: {e}", target.login);
+        }
+        if let Ok(mut g) = self.drops_status.lock() {
+            *g = line;
+        }
+    }
+
+    // GETs the account-signed media playlist (fetching a new one when there is none for this channel, or the
+    // old one stopped answering) and HEADs every segment not requested before. returns how many were new
+    async fn request_new_segments(&self, login: &str, token: &str) -> Result<usize, String> {
+        let mut cached = self.drops_playlist.lock().await;
+        let mut fresh = false;
+        let url = match cached.as_ref() {
+            Some((l, u)) if l == login => u.clone(),
+            _ => {
+                let u = self.media_playlist_url(login, token).await?;
+                *cached = Some((login.to_string(), u.clone()));
+                fresh = true;
+                u
+            }
+        };
+        let mut body = self.get_playlist(&url).await;
+        if body.is_err() && !fresh {
+            // signed playlists expire: one retry with a new one
+            let u = self.media_playlist_url(login, token).await?;
+            *cached = Some((login.to_string(), u.clone()));
+            body = self.get_playlist(&u).await;
+        }
+        drop(cached);
+        let body = body?;
+        let segments: Vec<String> =
+            body.lines().map(str::trim).filter(|l| l.starts_with("https://")).map(str::to_owned).collect();
+        if segments.is_empty() {
+            return Err("playlist had no segments".into());
+        }
+        let new: Vec<String> = {
+            let seen = self.drops_seen.lock().map_err(|e| e.to_string())?;
+            segments.into_iter().filter(|s| !seen.contains(s)).collect()
+        };
+        let mut done = 0usize;
+        for seg in &new {
+            let resp = self
+                .client
+                .head(seg)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("segment HEAD answered {}", resp.status()));
+            }
+            if let Ok(mut seen) = self.drops_seen.lock() {
+                seen.push_back(seg.clone());
+                while seen.len() > DROPS_SEEN_CAP {
+                    seen.pop_front();
+                }
+            }
+            done += 1;
+        }
+        Ok(done)
+    }
+
+    async fn get_playlist(&self, url: &str) -> Result<String, String> {
+        let resp = self
+            .client
+            .get(url)
+            .header("Connection", "close")
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("playlist answered {}", resp.status()));
+        }
+        resp.text().await.map_err(|e| e.to_string())
+    }
+
+    // a playback token signed for the account (GQL with the device token), then usher's master playlist, and
+    // the last (lowest-quality) variant listed in it
+    async fn media_playlist_url(&self, login: &str, token: &str) -> Result<String, String> {
+        let body = json!({
+            "operationName": "PlaybackAccessToken",
+            "query": crate::stream_relay::PREVIEW_TOKEN_QUERY,
+            "variables": { "login": login, "playerType": "site" }
+        });
+        let resp = self
+            .client
+            .post(GQL_URL)
+            .header("Client-Id", crate::twitch_device_auth::device_client_id())
+            .header("Authorization", format!("OAuth {token}"))
+            .json(&body)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        let tok = &json["data"]["streamPlaybackAccessToken"];
+        let (Some(value), Some(sig)) = (tok["value"].as_str(), tok["signature"].as_str()) else {
+            let msg = json["errors"][0]["message"].as_str().unwrap_or("no playback token");
+            return Err(format!("playback token: {msg}"));
+        };
+        let usher = format!(
+            "https://usher.ttvnw.net/api/channel/hls/{login}.m3u8?sig={}&token={}&allow_source=true\
+&allow_audio_only=false&fast_bread=true&p={}&player_backend=mediaplayer&playlist_include_framerate=true",
+            crate::stream_relay::pct_encode(sig),
+            crate::stream_relay::pct_encode(value),
+            rand::random::<u32>() % 10_000_000,
+        );
+        let master = self.get_playlist(&usher).await.map_err(|e| format!("master {e}"))?;
+        master
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("https://"))
+            .last()
+            .map(str::to_owned)
+            .ok_or_else(|| "master playlist listed no variants".to_string())
+    }
+
+    pub fn drops_status(&self) -> String {
+        self.drops_status.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     fn set_status(&self, s: String) {
@@ -431,5 +611,5 @@ pub fn heartbeat_set_playing(playing: bool, state: State<'_, Arc<WatchHeartbeatS
 // watching is being credited (devtools: __TAURI_INTERNALS__.invoke("heartbeat_status"))
 #[tauri::command]
 pub fn heartbeat_status(state: State<'_, Arc<WatchHeartbeatService>>) -> String {
-    state.status()
+    format!("points: {} | drops: {}", state.status(), state.drops_status())
 }

@@ -3348,14 +3348,12 @@ body.kick-mode .sidebar-channel-name {
 .skinned-context-menu-root { position: fixed; inset: 0; pointer-events: none; z-index: 12500; }
 .skinned-context-menu { pointer-events: auto; min-width: 200px; max-width: 320px; animation: skinned-menu-in .09s ease-out; }
 .skinned-context-menu .chat-context-menu-item { gap: 8px; padding: 6px 9px; }
-.skinned-context-menu-check { display: none; width: 12px; flex: 0 0 auto; color: var(--m-accent, #9147ff); font-size: 12px; text-align: center; }
+.skinned-context-menu-check { display: none; width: 12px; flex: 0 0 auto; color: var(--m-text, #e7ebf2); font-size: 12px; text-align: center; }
 .skinned-context-menu.has-checks .skinned-context-menu-check { display: inline-block; }
 .skinned-context-menu-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .skinned-context-menu-shortcut { flex: 0 0 auto; padding-left: 18px; color: var(--m-faint, #697386); font-size: 11.5px; font-weight: 500; }
 .skinned-context-menu .chat-context-menu-item.is-kbd:not(:disabled) { background: var(--m-surface-2, #1c222c); }
-.skinned-context-menu .chat-context-menu-item-suggestion,
-.skinned-context-menu .skinned-context-menu-suggestion { font-weight: 700; color: var(--m-accent, #9147ff); }
-.skinned-context-menu .skinned-context-menu-suggestion:hover:not(:disabled) { background: var(--m-accent-soft, rgba(145, 71, 255, 0.14)); }
+.skinned-context-menu .skinned-context-menu-suggestion { font-weight: 650; color: var(--m-text, #e7ebf2); }
 @keyframes skinned-menu-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .skinned-context-menu { animation: none; } }
 /* Timeout durations, shown inside the menu when "Timeout" is clicked */

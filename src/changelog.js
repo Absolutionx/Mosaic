@@ -3,6 +3,13 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.5",
+    items: [
+      { kind: "fixed", title: "Drop progress", desc: "Twitch changed how it counts drop minutes, so watching in Mosaic stopped advancing drops even though channel points kept coming. Mosaic now reports watching the way Twitch's own player does, and drop progress counts again." },
+      { kind: "improved", title: "Spell check menu colours", desc: "Spelling suggestions in the right-click menu now use the same colours as the rest of the menu." },
+    ],
+  },
+  {
     version: "1.5.4",
     items: [
       { kind: "fixed", title: "Channel points and drops", desc: "Twitch changed how watch time is reported, so watching in Mosaic stopped earning channel points and drop progress. Mosaic now reports it the way twitch.tv does, and both accrue again." },

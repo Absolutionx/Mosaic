@@ -977,7 +977,7 @@ async fn ensure_listener_running(state: &Arc<StreamRelayState>) -> Result<(), St
 // HLS proxy: fetches Twitch CDN URLs with CORS headers so HLS.js can work
 
 // percent-encodes a string for use as a URL query-parameter value
-fn pct_encode(s: &str) -> String {
+pub(crate) fn pct_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.bytes() {
         match b {
@@ -1859,7 +1859,7 @@ pub async fn get_live_m3u8_url(
 }
 
 // the playback-token query for get_live_preview_url (Twitch's web GQL, no login needed)
-const PREVIEW_TOKEN_QUERY: &str = "query PlaybackAccessToken($login: String!, $playerType: String!) { \
+pub(crate) const PREVIEW_TOKEN_QUERY: &str = "query PlaybackAccessToken($login: String!, $playerType: String!) { \
 streamPlaybackAccessToken(channelName: $login, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) \
 { value signature } }";
 
