@@ -45,6 +45,7 @@ import { startHypeBadgePolling } from "./hype-badges.js";
 import { startDropsAutoClaim, stopDropsAutoClaim } from "./drops-autoclaim.js";
 import { getSetting, setSetting, onSettingChange, applyAppearance } from "./settings.js";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import "./context-menu.js"; // the embedded browser's right-click menu (spelling suggestions) in the app's style
 import { exportBackup, importBackup } from "./backup.js";
 import { checkForUpdatesNow } from "./update-banner.js";
 import { openSettingsPanel, configureSettingsPanel, getSettingsIndex } from "./settings-panel.js";

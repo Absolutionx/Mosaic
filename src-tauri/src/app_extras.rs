@@ -387,3 +387,220 @@ pub fn set_memory_saver(app: tauri::AppHandle, on: bool) {
         let _ = (app, on);
     }
 }
+
+// Skinned right-click menu. WebView2 draws its own native (light, Windows-styled) context menu, which is where the
+// chat box's spelling suggestions live. Its ContextMenuRequested event hands over that menu's items (suggestions,
+// Cut/Copy/Paste, ...); we mark it handled so WebView2 doesn't draw it, send the items to the frontend
+// (context-menu.js) to draw in the app's style, and when one is picked, hand its command id back to WebView2, which
+// runs it exactly as if it had been clicked in the native menu (so a suggestion still replaces the word).
+// The pending request is held open with a deferral until the frontend answers. Windows only; elsewhere the
+// webview's own menu stays.
+#[cfg(windows)]
+mod skinned_menu {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tauri::Emitter;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2ContextMenuItemCollection, ICoreWebView2ContextMenuRequestedEventArgs,
+        ICoreWebView2Deferral, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_CHECK_BOX,
+        COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_RADIO, COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR,
+        COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU,
+    };
+
+    // only ever touched on the UI thread (the event handler and run_on_main_thread both run there)
+    thread_local! {
+        static PENDING: RefCell<Option<(u64, ICoreWebView2ContextMenuRequestedEventArgs, ICoreWebView2Deferral)>> =
+            const { RefCell::new(None) };
+    }
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn pwstr(get: impl FnOnce(*mut windows_core::PWSTR) -> windows_core::Result<()>) -> String {
+        let mut p = windows_core::PWSTR::null();
+        if get(&mut p).is_err() || p.is_null() {
+            return String::new();
+        }
+        webview2_com::take_pwstr(p)
+    }
+
+    // the native menu, as plain JSON: { kind, name, label, shortcut, command, enabled, checked, children }
+    unsafe fn items_json(items: &ICoreWebView2ContextMenuItemCollection) -> Vec<serde_json::Value> {
+        let mut out = Vec::new();
+        let mut count = 0u32;
+        if items.Count(&mut count).is_err() {
+            return out;
+        }
+        for i in 0..count {
+            let Ok(item) = items.GetValueAtIndex(i) else { continue };
+            let mut kind = Default::default();
+            let _ = item.Kind(&mut kind);
+            let kind_str = if kind == COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SEPARATOR {
+                "separator"
+            } else if kind == COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU {
+                "submenu"
+            } else if kind == COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_CHECK_BOX {
+                "checkbox"
+            } else if kind == COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_RADIO {
+                "radio"
+            } else {
+                "command"
+            };
+            let mut command = -1i32;
+            let _ = item.CommandId(&mut command);
+            let mut enabled = windows_core::BOOL(1);
+            let _ = item.IsEnabled(&mut enabled);
+            let mut checked = windows_core::BOOL(0);
+            let _ = item.IsChecked(&mut checked);
+            let children = if kind == COREWEBVIEW2_CONTEXT_MENU_ITEM_KIND_SUBMENU {
+                item.Children().map(|c| items_json(&c)).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            out.push(serde_json::json!({
+                "kind": kind_str,
+                "name": pwstr(|p| item.Name(p)),
+                "label": pwstr(|p| item.Label(p)),
+                "shortcut": pwstr(|p| item.ShortcutKeyDescription(p)),
+                "command": command,
+                "enabled": enabled.as_bool(),
+                "checked": checked.as_bool(),
+                "children": children,
+            }));
+        }
+        out
+    }
+
+    // finish the open request, running `command` (or nothing, for < 0). a stale id (a newer menu replaced it) is ignored
+    pub fn finish(id: u64, command: i32) {
+        PENDING.with(|p| {
+            let mut p = p.borrow_mut();
+            if !matches!(p.as_ref(), Some((pid, _, _)) if *pid == id) {
+                return;
+            }
+            let (_, args, deferral) = p.take().unwrap();
+            unsafe {
+                if command >= 0 {
+                    let _ = args.SetSelectedCommandId(command);
+                }
+                let _ = deferral.Complete();
+            }
+        });
+    }
+
+    pub fn install(app: &tauri::AppHandle) {
+        use tauri::Manager;
+        let Some(win) = app.get_webview_window("main") else { return };
+        let handle = app.clone();
+        let _ = win.with_webview(move |wv| unsafe {
+            use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_11;
+            use windows_core::Interface;
+            let Ok(core) = wv.controller().CoreWebView2() else { return };
+            // ContextMenuRequested needs WebView2 runtime 1.0.1185+; older ones just keep the native menu
+            let Ok(core11) = core.cast::<ICoreWebView2_11>() else { return };
+            let handler = webview2_com::ContextMenuRequestedEventHandler::create(Box::new(move |_sender, args| {
+                let Some(args) = args else { return Ok(()) };
+                let items = match args.MenuItems() {
+                    Ok(c) => items_json(&c),
+                    Err(_) => return Ok(()),
+                };
+                if items.is_empty() {
+                    return Ok(());
+                }
+                let Ok(deferral) = args.GetDeferral() else { return Ok(()) };
+                args.SetHandled(true)?;
+                // a menu still open (right-clicked again) closes without running anything
+                if let Some(old) = PENDING.with(|p| p.borrow().as_ref().map(|(id, _, _)| *id)) {
+                    finish(old, -1);
+                }
+                let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                PENDING.with(|p| *p.borrow_mut() = Some((id, args.clone(), deferral)));
+                if handle.emit("skinned-context-menu", serde_json::json!({ "id": id, "items": items })).is_err() {
+                    finish(id, -1);
+                }
+                Ok(())
+            }));
+            let mut token = 0i64;
+            let _ = core11.add_ContextMenuRequested(&handler, &mut token);
+        });
+    }
+}
+
+// called once from setup()
+pub fn install_skinned_context_menu(app: &tauri::AppHandle) {
+    #[cfg(windows)]
+    skinned_menu::install(app);
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
+// the frontend's answer to a "skinned-context-menu" event: the picked item's command id, or -1 for dismissed
+#[tauri::command]
+pub fn context_menu_choose(app: tauri::AppHandle, id: u64, command: i32) {
+    #[cfg(windows)]
+    {
+        let _ = app.run_on_main_thread(move || skinned_menu::finish(id, command));
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, id, command);
+    }
+}
+
+// Spelling suggestions for the skinned menu. WebView2 does put the spelling suggestions in the menu it hands over,
+// but with empty labels (Chromium fills them in from Windows' spell checker after the event has fired, and never
+// for a menu the app draws itself), so the frontend asks Windows' spell checker (the same one Chromium uses)
+// directly. `lang` is a BCP-47 tag like "en-US"; an unsupported one falls back to en-US. Empty on failure / elsewhere
+#[tauri::command]
+pub async fn spell_suggest(word: String, lang: String, max: usize) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        tauri::async_runtime::spawn_blocking(move || spell_suggest_blocking(&word, &lang, max.min(8)))
+            .await
+            .unwrap_or_default()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (word, lang, max);
+        Vec::new()
+    }
+}
+
+#[cfg(windows)]
+fn spell_suggest_blocking(word: &str, lang: &str, max: usize) -> Vec<String> {
+    use windows::core::HSTRING;
+    use windows::Win32::Globalization::{ISpellCheckerFactory, SpellCheckerFactory};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    };
+    let word = word.trim();
+    if word.is_empty() || max == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    unsafe {
+        let inited = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        (|| -> windows::core::Result<()> {
+            let factory: ISpellCheckerFactory = CoCreateInstance(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER)?;
+            let tag = if factory.IsSupported(&HSTRING::from(lang))?.as_bool() { lang } else { "en-US" };
+            let checker = factory.CreateSpellChecker(&HSTRING::from(tag))?;
+            let list = checker.Suggest(&HSTRING::from(word))?;
+            while out.len() < max {
+                let mut item = [windows::core::PWSTR::null()];
+                let mut fetched = 0u32;
+                if list.Next(&mut item, Some(&mut fetched)).is_err() || fetched == 0 {
+                    break;
+                }
+                let s = item[0].to_string().unwrap_or_default();
+                CoTaskMemFree(Some(item[0].0 as *const _));
+                if !s.is_empty() && s != word {
+                    out.push(s);
+                }
+            }
+            Ok(())
+        })()
+        .ok();
+        if inited {
+            CoUninitialize();
+        }
+    }
+    out
+}

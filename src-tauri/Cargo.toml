@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.5.3"
+version = "1.5.4"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
@@ -19,6 +19,8 @@ tauri = { version = "2", features = ["devtools", "tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+# gzip for the watch heartbeat's sendSpadeEvents payload (watch_heartbeat.rs); already in the tree via reqwest/tauri
+flate2 = "1"
 getrandom = "0.2"
 # song_id (Shazam fingerprinting, vendored from shazamio-core)
 chfft = "0.3.4"
@@ -105,5 +107,8 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 # WebView2's memory saver (app_extras::set_memory_saver). the same versions Tauri's webview already uses
 webview2-com = "0.38"
 windows-core = "0.61"
+# the Windows spell checker, for the chat box's right-click suggestions (app_extras::spell_suggest). the same
+# version webview2-com already pulls in
+windows = { version = "0.61", features = ["Win32_Globalization", "Win32_System_Com"] }
 # checking the streamlink installer's download against its published SHA-256 (deps_check.rs)
 sha2 = "0.10"

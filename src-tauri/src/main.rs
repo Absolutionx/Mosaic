@@ -187,6 +187,9 @@ fn main() {
                 let _ = win.maximize();
             }
 
+            // WebView2's native right-click menu (spelling suggestions) drawn in the app's style instead
+            app_extras::install_skinned_context_menu(app.handle());
+
             // installers left in the temp folder by earlier updates (see app_extras::remove_old_update_files)
             let app_name = app.package_info().name.clone();
             std::thread::spawn(move || {
@@ -329,11 +332,14 @@ fn main() {
             helix::get_channel_clips,
             helix::get_drop_campaigns,
             helix::channel_points_tick,
+            watch_heartbeat::heartbeat_status,
             downloads::start_vod_download,
             downloads::cancel_vod_download,
             downloads::reveal_download,
             app_extras::launched_at_startup,
             app_extras::set_memory_saver,
+            app_extras::context_menu_choose,
+            app_extras::spell_suggest,
             app_extras::save_backup_file,
             app_extras::set_app_fullscreen,
             helix::create_clip,

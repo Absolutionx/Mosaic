@@ -3342,6 +3342,22 @@ body.kick-mode .sidebar-channel-name {
 .chat-context-menu-item-danger:not(:disabled),
 .chat-context-menu-item-danger:not(:disabled) svg { color: #ff8a8a; }
 .chat-context-menu-item-danger:hover:not(:disabled) { background: rgba(235, 87, 87, 0.14); }
+
+/* the embedded browser's own right-click menu (spelling suggestions, Cut / Copy / Paste), redrawn by
+   context-menu.js in the same style as the chat message menu above */
+.skinned-context-menu-root { position: fixed; inset: 0; pointer-events: none; z-index: 12500; }
+.skinned-context-menu { pointer-events: auto; min-width: 200px; max-width: 320px; animation: skinned-menu-in .09s ease-out; }
+.skinned-context-menu .chat-context-menu-item { gap: 8px; padding: 6px 9px; }
+.skinned-context-menu-check { display: none; width: 12px; flex: 0 0 auto; color: var(--m-accent, #9147ff); font-size: 12px; text-align: center; }
+.skinned-context-menu.has-checks .skinned-context-menu-check { display: inline-block; }
+.skinned-context-menu-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.skinned-context-menu-shortcut { flex: 0 0 auto; padding-left: 18px; color: var(--m-faint, #697386); font-size: 11.5px; font-weight: 500; }
+.skinned-context-menu .chat-context-menu-item.is-kbd:not(:disabled) { background: var(--m-surface-2, #1c222c); }
+.skinned-context-menu .chat-context-menu-item-suggestion,
+.skinned-context-menu .skinned-context-menu-suggestion { font-weight: 700; color: var(--m-accent, #9147ff); }
+.skinned-context-menu .skinned-context-menu-suggestion:hover:not(:disabled) { background: var(--m-accent-soft, rgba(145, 71, 255, 0.14)); }
+@keyframes skinned-menu-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .skinned-context-menu { animation: none; } }
 /* Timeout durations, shown inside the menu when "Timeout" is clicked */
 .chat-context-menu-durations { display: none; gap: 4px; padding: 3px 6px 6px 31px; flex-wrap: wrap; }
 .chat-context-menu.timeout-open .chat-context-menu-durations { display: flex; }

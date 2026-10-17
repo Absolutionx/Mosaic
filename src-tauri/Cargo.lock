@@ -2247,13 +2247,14 @@ dependencies = [
 
 [[package]]
 name = "mosaic"
-version = "1.5.3"
+version = "1.5.4"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
  "chfft",
  "chrono",
  "crc32fast",
+ "flate2",
  "futures-util",
  "getrandom 0.2.17",
  "keyring",
@@ -2278,6 +2279,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webview2-com",
+ "windows",
  "windows-core 0.61.2",
 ]
 

@@ -3,6 +3,13 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.4",
+    items: [
+      { kind: "fixed", title: "Channel points and drops", desc: "Twitch changed how watch time is reported, so watching in Mosaic stopped earning channel points and drop progress. Mosaic now reports it the way twitch.tv does, and both accrue again." },
+      { kind: "improved", title: "Spell check menu", desc: "Right-clicking in the chat box now opens a menu that matches the rest of Mosaic instead of the plain Windows one. Spelling suggestions sit at the top; pick one to fix the word (Ctrl+Z undoes it)." },
+    ],
+  },
+  {
     version: "1.5.3",
     items: [
       { kind: "new", title: "Streamlink updates", desc: "Streamlink is what blocks Twitch ads, so Mosaic now checks for a newer one each time it starts and updates it with one click: it downloads the official installer, checks it against its published checksum and installs it. A stream that's playing restarts when it's done. When Mosaic has an update too, one \"Update both\" button installs the two together." },

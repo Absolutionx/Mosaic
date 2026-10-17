@@ -1,24 +1,25 @@
 // Core "watch heartbeat" — ported from the StreamNook project's watch_heartbeat_service.rs.
 //
 // Reports exactly what the official web player reports: ONE minute-watched event per minute for the
-// single channel the user is actually watching, while it's playing. The minute goes out on BOTH
-// watch-reporting paths, because Twitch's spade ingestion is split:
-//   - the raw spade `/track` POST credits DROP progress, and
-//   - the same event with a `location`/`player` field on that endpoint credits CHANNEL POINTS.
-// Reporting one path only silently stops the other kind of crediting. This is the piece that makes
-// channel points accrue and drop progress advance for the on-screen stream. It never reports more than
-// one channel, never an off-screen one, and never claims anything.
+// single channel the user is actually watching, while it's playing. This is the piece that makes channel
+// points accrue and drop progress advance for the on-screen stream. It never reports more than one
+// channel, never an off-screen one, and never claims anything.
 //
-// Divergence from StreamNook: their drops path also fires a gzip'd `sendSpadeEvents` GraphQL mutation
-// as a redundant backup behind the raw spade POST. We keep only the raw POST (the one their comments
-// note "credits reliably") to avoid a gzip dependency. If drops ever stop crediting, that backup is
-// the thing to add.
+// How the minute reaches Twitch: the web player (checked 10-16-26) no longer posts to spade.twitch.tv at
+// all; every spade event, minute-watched included, goes through the GQL `sendSpadeEvents` mutation as a
+// gzip'd, base64'd JSON array, sent with the viewer's token. spade.twitch.tv/track still answers 204 to
+// anything (even an empty list), so the raw POSTs this used to rely on looked fine while crediting
+// stopped. The GQL path is now the primary one; the raw POSTs are still sent as a harmless fallback
+// (Twitch dedupes a minute reported twice).
 //
 // Requires the Twitch device-login token (same one pins/predictions use). No device login -> no token
 // -> nothing is reported, exactly like not being logged in on the web.
 
 use base64::engine::general_purpose;
 use base64::Engine;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::io::Write;
 use reqwest::Client;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +29,7 @@ use tauri::{AppHandle, State};
 use tokio::sync::RwLock;
 
 const SPADE_URL: &str = "https://spade.twitch.tv/track";
+const GQL_URL: &str = "https://gql.twitch.tv/gql";
 const BROADCAST_REFRESH: Duration = Duration::from_secs(900);
 
 #[derive(Clone)]
@@ -47,6 +49,8 @@ pub struct WatchHeartbeatService {
     playing: AtomicBool,
     cached_user_id: RwLock<Option<(String, String)>>,
     loop_started: AtomicBool,
+    // what the last minute did, for heartbeat_status (Settings / devtools: is watching being credited?)
+    last_status: std::sync::Mutex<String>,
 }
 
 impl WatchHeartbeatService {
@@ -58,6 +62,7 @@ impl WatchHeartbeatService {
             playing: AtomicBool::new(false),
             cached_user_id: RwLock::new(None),
             loop_started: AtomicBool::new(false),
+            last_status: std::sync::Mutex::new("no minute sent yet".into()),
         }
     }
 
@@ -114,6 +119,7 @@ impl WatchHeartbeatService {
         };
         // no device token => no spade surface to report on; watching earns nothing (as if logged out)
         let Some(token) = crate::twitch_device_auth::get_device_token(&self.app).await else {
+            self.set_status("not connected (device login needed), nothing sent".into());
             return;
         };
 
@@ -148,9 +154,20 @@ impl WatchHeartbeatService {
             }
         }
         let Some(broadcast_id) = target.broadcast_id.clone() else {
+            self.set_status(format!("{}: not live (or stream info unavailable), nothing sent", target.login));
             return;
         };
 
+        // primary: the GQL path the web player uses now (credits both points and drops)
+        let gql = self.send_minute_watched_gql(&target, &broadcast_id, &token).await;
+        if let Err(e) = &gql {
+            eprintln!("[heartbeat] gql send failed for {}: {e}", target.login);
+        }
+        self.set_status(match &gql {
+            Ok(code) => format!("{} {}: sendSpadeEvents {code}", chrono::Local::now().format("%H:%M:%S"), target.login),
+            Err(e) => format!("{} {}: sendSpadeEvents failed: {e}", chrono::Local::now().format("%H:%M:%S"), target.login),
+        });
+        // fallback: the old raw spade POSTs
         if let Err(e) = self.send_minute_watched(&target, &broadcast_id, &token).await {
             eprintln!("[heartbeat] drops send failed for {}: {e}", target.login);
         }
@@ -179,7 +196,14 @@ impl WatchHeartbeatService {
             .send()
             .await
             .map_err(|e| e.to_string())?;
+        let status = response.status();
         let body: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
+        // a rejected request (bad token, GQL error) is NOT "offline": report it, so the stamp stays stale and
+        // the next tick retries, instead of quietly sending nothing for 15 minutes
+        if !status.is_success() || body["data"]["user"].is_null() {
+            let msg = body["errors"][0]["message"].as_str().or(body["message"].as_str()).unwrap_or("no data");
+            return Err(format!("HTTP {status}: {msg}"));
+        }
         let stream = &body["data"]["user"]["stream"];
         let Some(id) = stream["id"].as_str() else {
             return Ok(None);
@@ -189,6 +213,77 @@ impl WatchHeartbeatService {
             stream["game"]["id"].as_str().unwrap_or_default().to_string(),
             stream["game"]["name"].as_str().unwrap_or_default().to_string(),
         )))
+    }
+
+    fn set_status(&self, s: String) {
+        if let Ok(mut g) = self.last_status.lock() {
+            *g = s;
+        }
+    }
+
+    // PRIMARY path: the same minute-watched the web player sends, through GQL sendSpadeEvents (gzip + base64
+    // JSON array, "twilight" repository), with the viewer's token. Returns the statusCode Twitch's spade
+    // answered with (204 = accepted)
+    async fn send_minute_watched_gql(
+        &self,
+        target: &WatchTarget,
+        broadcast_id: &str,
+        token: &str,
+    ) -> Result<i64, String> {
+        let user_id = self.user_id(token).await?;
+        let payload = json!([{
+            "event": "minute-watched",
+            "properties": {
+                "broadcast_id": broadcast_id,
+                "channel_id": target.channel_id,
+                "channel": target.login,
+                "client_time": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+                "content_mode": "live",
+                "game": target.game_name,
+                "game_id": target.game_id,
+                "category_id": target.game_id,
+                "hidden": false,
+                "is_live": true,
+                "live": true,
+                "location": "channel",
+                "logged_in": true,
+                "minutes_logged": 1,
+                "muted": false,
+                "player": "site",
+                "user_id": user_id
+            }
+        }]);
+        let raw = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+        let mut gz = GzEncoder::new(Vec::new(), Compression::default());
+        gz.write_all(&raw).map_err(|e| e.to_string())?;
+        let data = general_purpose::STANDARD.encode(gz.finish().map_err(|e| e.to_string())?);
+        let body = json!({
+            "operationName": "SendEvents",
+            "query": "mutation SendEvents($input: SendSpadeEventsInput!) { sendSpadeEvents(input: $input) { statusCode } }",
+            "variables": { "input": { "data": data, "repository": "twilight", "encoding": "GZIP_B64" } }
+        });
+        let resp = Self::send_once_retrying(|| {
+            self.client
+                .post(GQL_URL)
+                .header("Client-Id", crate::twitch_device_auth::device_client_id())
+                .header("Authorization", format!("OAuth {token}"))
+                .json(&body)
+                .timeout(Duration::from_secs(15))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        if let Some(msg) = json["errors"][0]["message"].as_str() {
+            return Err(format!("HTTP {status}: {msg}"));
+        }
+        json["data"]["sendSpadeEvents"]["statusCode"]
+            .as_i64()
+            .ok_or_else(|| format!("HTTP {status}: no statusCode in reply"))
+    }
+
+    pub fn status(&self) -> String {
+        self.last_status.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     async fn user_id(&self, token: &str) -> Result<String, String> {
@@ -330,4 +425,11 @@ pub async fn heartbeat_clear_target(
 #[tauri::command]
 pub fn heartbeat_set_playing(playing: bool, state: State<'_, Arc<WatchHeartbeatService>>) {
     state.set_playing(playing);
+}
+
+// what the last heartbeat minute did, e.g. "21:04:12 somechannel: sendSpadeEvents 204". for checking that
+// watching is being credited (devtools: __TAURI_INTERNALS__.invoke("heartbeat_status"))
+#[tauri::command]
+pub fn heartbeat_status(state: State<'_, Arc<WatchHeartbeatService>>) -> String {
+    state.status()
 }
