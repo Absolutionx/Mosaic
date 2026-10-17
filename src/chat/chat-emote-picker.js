@@ -5,6 +5,14 @@
 
 import { EMOJI_GROUPS } from "../emoji-data.js";
 
+// one collator for sorting emote names: String#localeCompare made a fresh one for each of the thousands of
+// comparisons a picker render does. same order
+const nameCollator = new Intl.Collator();
+// the grid is built in slices: the first fills the visible picker at once, the rest follow over the next few
+// frames, so opening and typing a search never wait on thousands of buttons being built and laid out
+const FIRST_SLICE = 200;
+const NEXT_SLICE = 300;
+
 // "All" plus one tab per source, per platform: the last tab is the platform's native global
 // set (Twitch chat gets "Twitch", Kick "Kick"). order mirrors reach: channel emotes first,
 // then the three providers, then native globals last
@@ -132,7 +140,7 @@ export const chatEmotePickerMixin = {
       }
     }
     for (const key of Object.keys(buckets)) {
-      buckets[key].sort((a, b) => a.name.localeCompare(b.name));
+      buckets[key].sort((a, b) => nameCollator.compare(a.name, b.name));
     }
     return buckets;
   },
@@ -144,6 +152,11 @@ export const chatEmotePickerMixin = {
 
     const gridWrap = document.createElement("div");
     gridWrap.className = "emote-picker-grid-wrap";
+    // one click listener for every emote and emoji button (each carries what it inserts)
+    gridWrap.addEventListener("click", (e) => {
+      const item = e.target instanceof Element ? e.target.closest(".emote-picker-item") : null;
+      if (item && gridWrap.contains(item) && item.dataset.insert != null) this._insertEmoteAtCursor(item.dataset.insert);
+    });
 
     const tabs = document.createElement("div");
     tabs.className = "emote-picker-tabs";
@@ -220,8 +233,13 @@ export const chatEmotePickerMixin = {
     search.focus();
   },
 
-  _renderEmoteGrid(gridWrap) {
-    gridWrap.innerHTML = "";
+  _renderEmoteGrid(scroller) {
+    const token = (this._emoteGridToken = (this._emoteGridToken || 0) + 1); // a newer render cancels pending slices
+    // everything goes in a fresh inner box that replaces the old one in a single step: removing thousands of
+    // buttons one by one (the old innerHTML = "") was most of the cost of each search keystroke
+    const gridWrap = document.createElement("div");
+    const old = scroller.firstElementChild;
+    if (old) scroller.replaceChild(gridWrap, old); else scroller.appendChild(gridWrap);
     const q = this._emotePickerSearch.trim().toLowerCase();
 
     // dedicated emoji tab: standard Unicode emoji grouped by category
@@ -253,6 +271,8 @@ export const chatEmotePickerMixin = {
       return;
     }
 
+    // sections and their headers (with full counts) go in right away; the buttons fill in slice by slice
+    const pending = [];
     for (const [id, rows] of sections) {
       const section = document.createElement("div");
       section.className = "emote-picker-section";
@@ -264,24 +284,45 @@ export const chatEmotePickerMixin = {
 
       const grid = document.createElement("div");
       grid.className = "emote-picker-grid";
-      for (const { name, url } of rows) {
-        const item = document.createElement("button");
-        item.type = "button";
-        item.className = "emote-picker-item";
-        item.title = name;
-        const img = document.createElement("img");
-        img.src = url;
-        img.alt = name;
-        img.loading = "lazy";
-        item.appendChild(img);
-        item.addEventListener("click", () => this._insertEmoteAtCursor(name));
-        grid.appendChild(item);
-      }
       section.appendChild(grid);
       gridWrap.appendChild(section);
+      pending.push({ grid, rows, i: 0 });
     }
+    const emojiSection = emojiMatches.length ? this._makeEmojiSection("Emoji", emojiMatches) : null;
+    if (emojiSection) gridWrap.appendChild(emojiSection);
 
-    if (emojiMatches.length) gridWrap.appendChild(this._makeEmojiSection("Emoji", emojiMatches));
+    const fill = (budget) => {
+      while (budget > 0 && pending.length) {
+        const p = pending[0];
+        const frag = document.createDocumentFragment();
+        const end = Math.min(p.rows.length, p.i + budget);
+        for (; p.i < end; p.i++) {
+          const { name, url } = p.rows[p.i];
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "emote-picker-item";
+          item.title = name;
+          item.dataset.insert = name;
+          const img = document.createElement("img");
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.src = url;
+          img.alt = name;
+          item.appendChild(img);
+          frag.appendChild(item);
+          budget--;
+        }
+        p.grid.appendChild(frag);
+        if (p.i >= p.rows.length) pending.shift();
+      }
+    };
+    fill(FIRST_SLICE);
+    const more = () => {
+      if (token !== this._emoteGridToken || !gridWrap.isConnected || !pending.length) return;
+      fill(NEXT_SLICE);
+      if (pending.length) requestAnimationFrame(more);
+    };
+    if (pending.length) requestAnimationFrame(more);
   },
 
   _renderEmojiSections(gridWrap, q) {
@@ -315,7 +356,7 @@ export const chatEmotePickerMixin = {
       item.className = "emote-picker-item emote-picker-emoji-item";
       item.title = name;
       item.textContent = emoji;
-      item.addEventListener("click", () => this._insertEmoteAtCursor(emoji));
+      item.dataset.insert = emoji;
       grid.appendChild(item);
     }
     section.appendChild(grid);

@@ -317,6 +317,7 @@ export class VodsPage {
     const thumb = document.createElement("img");
     thumb.className = "home-grid-thumb";
     thumb.alt = "";
+    thumb.loading = "lazy"; thumb.decoding = "async";
     const thumbUrl = vod.thumbnail_url || "";
     // Helix hands back a "_404_processing" URL for VODs still transcoding, treat as no
     // thumbnail rather than firing a 403

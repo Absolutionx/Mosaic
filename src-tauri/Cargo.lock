@@ -2247,7 +2247,7 @@ dependencies = [
 
 [[package]]
 name = "mosaic"
-version = "1.5.2"
+version = "1.5.3"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
@@ -2262,6 +2262,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -2276,6 +2277,8 @@ dependencies = [
  "tokio-tungstenite",
  "urlencoding",
  "uuid",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

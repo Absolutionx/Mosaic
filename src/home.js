@@ -224,6 +224,7 @@ export class HomeFeed {
     const thumb = document.createElement("img");
     thumb.className = "home-grid-thumb";
     thumb.alt = "";
+    thumb.loading = "lazy"; thumb.decoding = "async";
     const url = it.thumbnailUrl || "";
     // Helix hands back a "_404_processing" URL for VODs still transcoding, treat as no thumbnail
     if (url && !url.includes("404_processing")) {
@@ -780,6 +781,7 @@ export class HomeFeed {
 
     const thumb = document.createElement("img");
     thumb.className = "home-carousel-thumb";
+    thumb.decoding = "async";
     thumb.src = thumbnailUrl(s.thumbnail_url, 440, 248);
     thumb.alt = "";
     card.appendChild(thumb);
@@ -804,6 +806,7 @@ export class HomeFeed {
 
     const avatar = document.createElement("img");
     avatar.className = "home-carousel-avatar";
+    avatar.decoding = "async";
     avatar.src = smallAvatar(this.avatars.get(s.user_id)) || blankAvatarDataUri();
     avatar.alt = "";
     info.appendChild(avatar);
@@ -895,6 +898,7 @@ export class HomeFeed {
 
     const thumb = document.createElement("img");
     thumb.className = "home-grid-thumb";
+    thumb.loading = "lazy"; thumb.decoding = "async";
     thumb.src = thumbnailUrl(s.thumbnail_url, 320, 180);
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
@@ -926,6 +930,7 @@ export class HomeFeed {
 
     const avatar = document.createElement("img");
     avatar.className = "home-grid-avatar";
+    avatar.loading = "lazy"; avatar.decoding = "async";
     avatar.src = smallAvatar(this.avatars.get(s.user_id)) || blankAvatarDataUri();
     avatar.alt = "";
     meta.appendChild(avatar);

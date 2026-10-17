@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.5.2"
+version = "1.5.3"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
@@ -102,3 +102,8 @@ strip = true
 # login tokens go to Windows Credential Manager (secret_store.rs). Windows only: other platforms keep files
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
+# WebView2's memory saver (app_extras::set_memory_saver). the same versions Tauri's webview already uses
+webview2-com = "0.38"
+windows-core = "0.61"
+# checking the streamlink installer's download against its published SHA-256 (deps_check.rs)
+sha2 = "0.10"

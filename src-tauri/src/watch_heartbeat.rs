@@ -172,7 +172,7 @@ impl WatchHeartbeatService {
         let response = self
             .client
             .post("https://gql.twitch.tv/gql")
-            .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+            .header("Client-Id", crate::twitch_device_auth::device_client_id())
             .header("Authorization", format!("Bearer {token}"))
             .json(&json!({ "query": query, "variables": { "channelID": channel_id } }))
             .timeout(Duration::from_secs(10))

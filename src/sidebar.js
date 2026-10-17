@@ -114,12 +114,42 @@ export class ChannelsSidebar {
 
   async refresh() {
     // go-live detection runs independently of which platform the sidebar is showing (see
-    // _pollTwitchGoLive): notifications must keep firing for Twitch follows even while viewing Kick
-    await Promise.all([
-      this.refreshFollowed(),
-      this.refreshTopLive(),
-      this._pollTwitchGoLive(),
-    ]);
+    // _pollTwitchGoLive): notifications must keep firing for Twitch follows even while viewing Kick.
+    // the Recommended list is only for looking at, so it isn't fetched while the window is hidden (tray,
+    // minimized); it catches up the moment the window is back
+    const jobs = [this.refreshFollowed(), this._pollTwitchGoLive()];
+    if (document.hidden) {
+      if (!this._topLiveStaleHook) {
+        this._topLiveStaleHook = true;
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden && this._topLiveStale) { this._topLiveStale = false; this.refreshTopLive(); }
+        });
+      }
+      this._topLiveStale = true;
+    } else {
+      this._topLiveStale = false;
+      jobs.push(this.refreshTopLive());
+    }
+    await Promise.all(jobs);
+  }
+
+  // the followed list and who of them is live. the sidebar and the go-live poll both need it on the same
+  // minute tick; they share one fetch instead of each asking Twitch for it (2 requests a minute, not 4).
+  // only a fetch still in flight is shared, so anything asking afterwards (a follow, a login) gets fresh data
+  _twitchFollowLive() {
+    if (this._followLiveFetch) return this._followLiveFetch;
+    const p = (async () => {
+      const followedRows = JSON.parse(await invoke("get_followed_channels"));
+      const ids = followedRows.map((r) => r.broadcaster_id);
+      // the live lookup is handed back still running, so the sidebar can fetch avatars alongside it
+      const live = ids.length ? invoke("get_streams_for_users", { broadcasterIds: ids }) : Promise.resolve("[]");
+      live.catch(() => {}); // each caller reports its own failure
+      return { followedRows, ids, live };
+    })();
+    this._followLiveFetch = p;
+    const done = () => { if (this._followLiveFetch === p) this._followLiveFetch = null; };
+    p.then(done, done);
+    return p;
   }
 
   async refreshFollowed() {
@@ -130,26 +160,25 @@ export class ChannelsSidebar {
     }
     if (!this.loggedIn) return;
 
-    let followedRows;
+    let fetched;
     try {
-      followedRows = JSON.parse(await invoke("get_followed_channels"));
+      fetched = await this._twitchFollowLive();
     } catch (err) {
       console.error("Failed to load followed channels:", err);
       return;
     }
-
-    const ids = followedRows.map((r) => r.broadcaster_id);
+    const { followedRows, ids } = fetched;
     if (ids.length === 0) {
       this.followed = [];
       this.renderFollowed();
       return;
     }
 
-    // both fetches depend only on `ids`, so run them concurrently. allSettled keeps each failure
-    // independent, one erroring shouldn't wipe the other's data
+    // avatars depend only on `ids`. allSettled keeps each failure independent, one erroring shouldn't wipe
+    // the other's data
     const missingAvatarIds = ids.filter((id) => !this.avatars.has(id));
     const [liveResult, usersResult] = await Promise.allSettled([
-      invoke("get_streams_for_users", { broadcasterIds: ids }),
+      fetched.live,
       missingAvatarIds.length > 0
         ? invoke("get_users_info", { userIds: missingAvatarIds })
         : Promise.resolve(null),
@@ -213,19 +242,19 @@ export class ChannelsSidebar {
     // nothing is opted in (a later opt-in seeds its own baseline on the first tick after it's added)
     if (!this.loggedIn || (this.notifyChannels.size === 0 && this.categoryTargets.size === 0)) return;
 
-    let followedRows;
+    let fetched;
     try {
-      followedRows = JSON.parse(await invoke("get_followed_channels"));
+      fetched = await this._twitchFollowLive();
     } catch (err) {
       console.error("Go-live poll: failed to load followed channels:", err);
       return;
     }
-    const ids = followedRows.map((r) => r.broadcaster_id);
+    const { followedRows, ids } = fetched;
     if (ids.length === 0) return;
 
     let liveRows = [];
     try {
-      liveRows = JSON.parse(await invoke("get_streams_for_users", { broadcasterIds: ids }));
+      liveRows = JSON.parse(await fetched.live);
     } catch (err) {
       console.error("Go-live poll: failed to load stream status:", err);
       return;
@@ -543,6 +572,7 @@ export class ChannelsSidebar {
 
     const avatar = document.createElement("img");
     avatar.className = `sidebar-channel-avatar${ch.live ? "" : " offline"}`;
+    avatar.loading = "lazy"; avatar.decoding = "async"; // long follow lists: only rows near the view load
     avatar.src = smallAvatar(ch.avatar) || blankAvatarDataUri();
     avatar.alt = "";
     avatarWrap.appendChild(avatar);
@@ -827,6 +857,7 @@ export class ChannelsSidebar {
         item.type = "button";
         item.className = "sidebar-notify-suggest-item";
         const img = document.createElement("img");
+        img.loading = "lazy"; img.decoding = "async";
         img.src = sizedImage(cat.box_art_url || "", 36, 48);
         img.alt = "";
         img.addEventListener("error", () => { img.style.visibility = "hidden"; });

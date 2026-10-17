@@ -36,6 +36,39 @@ const CHUNK_BUFFER_CAPACITY: usize = 4096;
 const SNAPSHOT_TAIL_TRIM_THRESHOLD: usize = 4 * 1024 * 1024;
 
 // mirrors the search order the old resolve_dep() in main.rs used before the mpv-based player was removed: PATH lookup is the common case for anyone with streamlink installed (via pip, or the standalone Windows installer, both of which put it on PATH)
+// Twitch ad filtering. streamlink 7.5 (July 2025) filters ads ALWAYS and deprecated --twitch-disable-ads
+// ("has been disabled and will be removed in the future"); older versions only filter with the flag. once a
+// future streamlink drops the flag, passing it would make every live stream fail to start, so it's sent only
+// to versions that need it. the version is read once in the background at startup (probe_streamlink_version);
+// until it's known, or if it can't be read, the flag is sent, which works on every version released so far
+static STREAMLINK_FILTERS_ADS_ITSELF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn twitch_disable_ads_arg() -> &'static [&'static str] {
+    if STREAMLINK_FILTERS_ADS_ITSELF.get().copied().unwrap_or(false) { &[] } else { &["--twitch-disable-ads"] }
+}
+
+// "streamlink 8.6.1" -> true when that version filters ads without the flag (7.5.0 and later)
+fn version_filters_ads(version_output: &str) -> Option<bool> {
+    let v = version_output.split_whitespace().find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))?;
+    let mut parts = v.split(|c: char| !c.is_ascii_digit()).filter(|p| !p.is_empty()).map(|p| p.parse::<u32>().ok());
+    let major = parts.next()??;
+    let minor = parts.next().flatten().unwrap_or(0);
+    Some(major > 7 || (major == 7 && minor >= 5))
+}
+
+pub async fn probe_streamlink_version() {
+    let mut cmd = Command::new(resolve_streamlink_path());
+    cmd.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    augment_child_path(&mut cmd);
+    let Ok(Ok(out)) = tokio::time::timeout(std::time::Duration::from_secs(20), cmd.output()).await else { return };
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if let Some(filters) = version_filters_ads(&text) {
+        let _ = STREAMLINK_FILTERS_ADS_ITSELF.set(filters);
+    }
+}
+
 fn resolve_streamlink_path() -> std::path::PathBuf {
     resolve_dep_path("streamlink")
 }
@@ -250,7 +283,7 @@ async fn spawn_pipeline(
         .arg(target_url)
         .arg(quality)
         .arg("--stdout")
-        .arg("--twitch-disable-ads")
+        .args(twitch_disable_ads_arg())
         .args(extra_args)
         .stdout(Stdio::piped())
         // capture streamlink's stderr instead of discarding it. when streamlink launches but then fails (most commonly on macOS, where a pip-installed streamlink's own Python isn't on a Finder-launched app's minimal PATH, or a plugin can't resolve the stream) its diagnostics are the only thing that says why. discarding them (the old Stdio::null) turned every such failure into a silent black screen. the read loop drains this and logs it
@@ -437,6 +470,9 @@ async fn pump_stdout_to_broadcast(
                 cache.walker.feed(&buf[..n], abs_base);
                 cache.total_bytes += n as u64;
 
+                // one shared copy of the chunk: the cache and every viewer hold the same bytes (an Arc clone is a
+                // reference count, not a copy)
+                let chunk_arc: Arc<[u8]> = Arc::from(&buf[..n]);
                 if cache.init_bytes.len() < INIT_SEGMENT_CACHE_CAP {
                     // init_bytes still has room: fill it first
                     let space = INIT_SEGMENT_CACHE_CAP - cache.init_bytes.len();
@@ -452,15 +488,14 @@ async fn pump_stdout_to_broadcast(
                     }
                 } else {
                     // init_bytes is full; the whole chunk goes to overflow
-                    let chunk_arc: Arc<[u8]> = Arc::from(&buf[..n]);
                     evict_overflow_if_needed(&mut cache, chunk_arc.len());
                     cache.overflow_byte_count += chunk_arc.len();
-                    cache.overflow.push_back(chunk_arc);
+                    cache.overflow.push_back(chunk_arc.clone());
                 }
 
                 // still holding cache's lock here, deliberately, see the function doc above.
                 // errors here just mean there are currently no subscribers (e.g. between a channel switch and the new HTTP request landing), not fatal, the next chunk might have a subscriber by then
-                let _ = chunk_tx.send(Arc::from(&buf[..n]));
+                let _ = chunk_tx.send(chunk_arc);
             }
             Err(e) => {
                 eprintln!("[stream_relay] stdout read error (stopping pump): {e}");
@@ -2059,6 +2094,21 @@ fn clip_client() -> Result<reqwest::Client, reqwest::Error> {
         .build()?;
     let _ = CLIP_CLIENT.set(c.clone());
     Ok(c)
+}
+
+#[cfg(test)]
+mod streamlink_version_tests {
+    use super::version_filters_ads;
+    #[test]
+    fn reads_versions() {
+        assert_eq!(version_filters_ads("streamlink 8.6.1"), Some(true));
+        assert_eq!(version_filters_ads("streamlink 7.5.0\n"), Some(true));
+        assert_eq!(version_filters_ads("streamlink 7.4.0"), Some(false));
+        assert_eq!(version_filters_ads("streamlink 6.11.0+12.g1234"), Some(false));
+        assert_eq!(version_filters_ads("streamlink 10.0"), Some(true));
+        assert_eq!(version_filters_ads("command not found"), None);
+        assert_eq!(version_filters_ads(""), None);
+    }
 }
 
 #[cfg(test)]

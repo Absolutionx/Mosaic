@@ -358,3 +358,32 @@ mod win32 {
         }
     }
 }
+
+
+// WebView2's memory saver: while Mosaic sits hidden (tray, minimized) with nothing playing, the frontend turns
+// it on and WebView2 gives back what it can (caches, decoded images, the graphics process's spare memory);
+// back on screen it's turned off again. Microsoft's API for exactly this (ICoreWebView2_19 MemoryUsageTargetLevel).
+// a no-op elsewhere, or on a WebView2 runtime too old to have it
+#[tauri::command]
+pub fn set_memory_saver(app: tauri::AppHandle, on: bool) {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        let Some(win) = app.get_webview_window("main") else { return };
+        let _ = win.with_webview(move |wv| unsafe {
+            use webview2_com::Microsoft::Web::WebView2::Win32::{
+                ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+            };
+            use windows_core::Interface;
+            let Ok(core) = wv.controller().CoreWebView2() else { return };
+            let Ok(core19) = core.cast::<ICoreWebView2_19>() else { return };
+            let level = if on { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW } else { COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL };
+            let _ = core19.SetMemoryUsageTargetLevel(level);
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, on);
+    }
+}

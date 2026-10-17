@@ -9,11 +9,25 @@ import { getSetting } from "./settings.js";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { platform } from "@tauri-apps/plugin-os";
+import { setAppUpdatePending, bundledStreamlinkUpdate, updateStreamlinkForBundle, bundledStreamlinkFinished } from "./streamlink-update.js";
 
 let _updating = false;      // an install is in progress — stop re-checking
 let _shown = false;         // the Update button is already visible — nothing to re-do
 let _pollTimer = null;      // interval handle
 let _started = false;       // guard so we only wire interval/focus listeners once
+let _update = null;         // the update the button installs
+
+// the button's label: with a one-click streamlink update waiting too (streamlink-update.js), it installs both
+function renderButton() {
+  const btn = document.getElementById("update-btn");
+  if (!btn || !_update || _updating) return;
+  const sl = bundledStreamlinkUpdate();
+  btn.textContent = sl ? "Update both" : "Update";
+  btn.title = sl
+    ? `Mosaic ${_update.version} and streamlink ${String(sl.available).replace(/-\d+$/, "")} are ready — click to install both`
+    : `Version ${_update.version} is ready — click to install`;
+}
+window.addEventListener("mosaic:streamlink-status", renderButton);
 
 // How often to re-check while the app stays open. 15 minutes is frequent enough that a push reaches
 // active users promptly without hammering the release endpoint.
@@ -57,10 +71,11 @@ async function _runCheck({ startup = false, manual = false } = {}) {
 
     const btn = document.getElementById("update-btn");
     if (!btn) return;
-    btn.textContent = "Update";
-    btn.title = `Version ${update.version} is ready — click to install`;
+    _update = update;
     btn.style.display = "";
     btn.onclick = () => runUpdate(update, btn);
+    setAppUpdatePending(true); // hides the separate Streamlink update button when it can come along
+    renderButton();
     // Draw the eye only when it pops in while the app is already in use.
     if (!startup) {
       btn.classList.add("just-appeared");
@@ -81,15 +96,21 @@ async function _runCheck({ startup = false, manual = false } = {}) {
 
 async function runUpdate(update, btn) {
   if (_updating) return;
+  const sl = bundledStreamlinkUpdate();
   _updating = true;
   btn.disabled = true;
   btn.classList.add("updating");
 
+  // both download at once: streamlink's installer (deps_check.rs update_streamlink downloads, checks and installs
+  // it) and Mosaic's. Mosaic's installs only after streamlink's is done, since installing it closes the app
+  const slDone = sl ? updateStreamlinkForBundle() : null;
+  let slFinished = !sl;
+  slDone?.then(() => { slFinished = true; });
+
   let downloaded = 0;
   let contentLength = 0;
   try {
-    // on Windows (NSIS passive) the installer runs and the app relaunches below
-    await update.downloadAndInstall((event) => {
+    await update.download((event) => {
       switch (event.event) {
         case "Started":
           contentLength = event.data.contentLength || 0;
@@ -102,16 +123,25 @@ async function runUpdate(update, btn) {
             btn.textContent = `Downloading… ${pct}%`;
           }
           break;
-        case "Finished":
-          btn.textContent = "Installing…";
-          break;
       }
     });
-
+    if (slDone) {
+      if (!slFinished) btn.textContent = "Installing streamlink…";
+      await slDone; // its result is shown after the restart, success or not; Mosaic's update goes ahead either way
+    }
+    btn.textContent = "Installing…";
+    // on Windows (NSIS passive) the installer runs and the app relaunches below
+    await update.install();
     btn.textContent = "Restarting…";
     await relaunch();
   } catch (err) {
     console.error("[updater] install failed:", err);
+    if (slDone) {
+      await slDone;
+      // Mosaic isn't restarting after all: bring the stream back and say how streamlink's update went
+      window.dispatchEvent(new CustomEvent("mosaic:streamlink-update", { detail: { phase: "done" } }));
+      bundledStreamlinkFinished();
+    }
     _updating = false;
     btn.disabled = false;
     btn.classList.remove("updating");

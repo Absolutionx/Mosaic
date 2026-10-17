@@ -788,6 +788,32 @@ header #login-btn.logged-in { border-radius: 7px; }
 }
 .scope-relogin-banner .scope-relogin-btn:hover { background: var(--m-accent-hover, #772ce8); }
 #app.scope-banner-visible { padding-top: 38px; }
+/* streamlink update (streamlink-update.js): a header button like the app's own Update, opening this card */
+.sl-update-card {
+  position: fixed; z-index: 9999; width: 320px; box-sizing: border-box; padding: 14px;
+  background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); color: var(--m-text, #e7ebf2);
+}
+.sl-update-card-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
+.sl-update-card-versions { color: var(--m-muted, #9aa5b4); font-weight: 600; margin-left: 4px; }
+.sl-update-card-text { font-size: 12.5px; line-height: 1.45; color: var(--m-muted, #9aa5b4); margin: 0 0 12px; }
+.sl-update-card-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.sl-update-card-btn {
+  height: 30px; padding: 0 12px; border-radius: 7px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d); color: var(--m-text, #e7ebf2);
+}
+.sl-update-card-btn:hover { background: var(--m-raised, #232b36); }
+.sl-update-card-btn.primary { background: var(--m-raised, #232b36); }
+.sl-update-card-btn.primary:hover { background: #2c3542; }
+.sl-update-card-btn.quiet { background: transparent; border-color: transparent; color: var(--m-muted, #9aa5b4); }
+.sl-update-card-btn.quiet:hover { background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); }
+#sl-update-btn.updating { cursor: default; }
+#sl-update-btn.updating::before {
+  background: transparent; border: 2px solid var(--m-muted, #9aa5b4); border-top-color: transparent;
+  width: 8px; height: 8px; display: block; animation: sl-spin .8s linear infinite;
+}
+@keyframes sl-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #sl-update-btn.updating::before { animation: none; } }
 .deps-banner-icon {
   color: #ff6b6b;
   flex-shrink: 0;
@@ -5663,7 +5689,8 @@ header #kick-login-btn {
   border: 1px solid rgba(255,255,255,.12);
   backdrop-filter: blur(7px);
 }
-.center-play-btn:hover { background: rgba(145,71,255,.9); color: #fff; }
+/* hover: brighter glass, matching the app's neutral controls (it was a hardcoded Twitch purple, also in Kick mode) */
+.center-play-btn:hover { background: rgba(35,43,54,.88); border-color: rgba(255,255,255,.28); color: #fff; }
 
 .stream-info-overlay {
   top: 12px;
@@ -6671,56 +6698,61 @@ button:active { transform: translateY(1px); }
 /* Hype train badges on stream lists (sidebar / home / browse) */
 /* Hype-train glow (set by hype-badges.js) — a subtle aura on the row/card of a channel with an active
    train: purple for a normal train, gold for Golden Kappa, gently pulsing so it reads as "something's
-   happening" without being distracting. This fully replaces the old hype badges. */
+   happening" without being distracting. This fully replaces the old hype badges.
+   The pulse is a crossfade between the glow's dim and bright states, drawn on ::before (dim) and ::after
+   (bright) and animated by opacity only: the GPU does it. Animating box-shadow itself repainted every
+   pulsing row and card on the main thread 60 times a second. */
 .sidebar-channel.hype-active {
   background: linear-gradient(90deg, rgba(145, 71, 255, 0.16), rgba(145, 71, 255, 0.05) 60%, transparent);
-  box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.45), 0 0 12px rgba(145, 71, 255, 0.28);
-  animation: hype-glow-pulse 2.4s ease-in-out infinite;
 }
 .sidebar-channel.hype-active:hover {
   background: linear-gradient(90deg, rgba(145, 71, 255, 0.24), rgba(145, 71, 255, 0.08) 60%, var(--m-surface-2));
 }
 .sidebar-channel.hype-active.hype-golden {
   background: linear-gradient(90deg, rgba(245, 179, 1, 0.18), rgba(245, 179, 1, 0.05) 60%, transparent);
-  box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.5), 0 0 12px rgba(245, 179, 1, 0.3);
-  animation: hype-glow-pulse-gold 2.4s ease-in-out infinite;
 }
 .sidebar-channel.hype-active.hype-golden:hover {
   background: linear-gradient(90deg, rgba(245, 179, 1, 0.26), rgba(245, 179, 1, 0.08) 60%, var(--m-surface-2));
 }
-@keyframes hype-glow-pulse {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.40), 0 0 8px rgba(145, 71, 255, 0.20); }
-  50%      { box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.55), 0 0 16px rgba(145, 71, 255, 0.38); }
-}
-@keyframes hype-glow-pulse-gold {
-  0%, 100% { box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.45), 0 0 8px rgba(245, 179, 1, 0.22); }
-  50%      { box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.60), 0 0 18px rgba(245, 179, 1, 0.42); }
-}
-
-/* Same glow on Home / Browse thumbnail cards. Ring + outer glow (no background wash — the thumbnail
-   fills the card), pulsing like the sidebar. */
 .home-carousel-card, .home-grid-thumb-wrap, .home-grid-card { position: relative; }
 .home-carousel-card.hype-active,
-.home-grid-card.hype-active {
-  border-radius: 8px;
-  box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.6), 0 0 14px rgba(145, 71, 255, 0.35);
-  animation: hype-card-pulse 2.4s ease-in-out infinite;
+.home-grid-card.hype-active { border-radius: 8px; }
+/* cards clip their contents (overflow: hidden), which would clip the glow layers too. while glowing they
+   don't: a grid card's thumbnail clips itself, and a carousel thumbnail gets the card's top corners */
+.home-carousel-card.hype-active,
+.home-grid-card.hype-active { overflow: visible; box-shadow: none; } /* the glow replaces the card's own shadow, as before */
+.home-carousel-card.hype-active > .home-carousel-thumb { border-radius: 7px 7px 0 0; }
+
+.hype-active::before,
+.hype-active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  will-change: opacity;
+  animation: hype-glow-dim 2.4s ease-in-out infinite;
 }
-.home-carousel-card.hype-active.hype-golden,
-.home-grid-card.hype-active.hype-golden {
-  box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.65), 0 0 14px rgba(245, 179, 1, 0.38);
-  animation: hype-card-pulse-gold 2.4s ease-in-out infinite;
-}
-@keyframes hype-card-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.50), 0 0 10px rgba(145, 71, 255, 0.28); }
-  50%      { box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.70), 0 0 20px rgba(145, 71, 255, 0.45); }
-}
-@keyframes hype-card-pulse-gold {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.55), 0 0 10px rgba(245, 179, 1, 0.30); }
-  50%      { box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.75), 0 0 22px rgba(245, 179, 1, 0.48); }
-}
+.hype-active::after { opacity: 0; animation-name: hype-glow-bright; }
+@keyframes hype-glow-dim    { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes hype-glow-bright { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+
+.sidebar-channel.hype-active::before { box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.40), 0 0 8px rgba(145, 71, 255, 0.20); }
+.sidebar-channel.hype-active::after  { box-shadow: inset 0 0 0 1px rgba(145, 71, 255, 0.55), 0 0 16px rgba(145, 71, 255, 0.38); }
+.sidebar-channel.hype-active.hype-golden::before { box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.45), 0 0 8px rgba(245, 179, 1, 0.22); }
+.sidebar-channel.hype-active.hype-golden::after  { box-shadow: inset 0 0 0 1px rgba(245, 179, 1, 0.60), 0 0 18px rgba(245, 179, 1, 0.42); }
+.home-carousel-card.hype-active::before,
+.home-grid-card.hype-active::before { box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.50), 0 0 10px rgba(145, 71, 255, 0.28); }
+.home-carousel-card.hype-active::after,
+.home-grid-card.hype-active::after  { box-shadow: 0 0 0 2px rgba(145, 71, 255, 0.70), 0 0 20px rgba(145, 71, 255, 0.45); }
+.home-carousel-card.hype-active.hype-golden::before,
+.home-grid-card.hype-active.hype-golden::before { box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.55), 0 0 10px rgba(245, 179, 1, 0.30); }
+.home-carousel-card.hype-active.hype-golden::after,
+.home-grid-card.hype-active.hype-golden::after  { box-shadow: 0 0 0 2px rgba(245, 179, 1, 0.75), 0 0 22px rgba(245, 179, 1, 0.48); }
 @media (prefers-reduced-motion: reduce) {
-  .hype-active { animation: none !important; }
+  /* a steady glow, between the two states */
+  .hype-active::before { animation: none !important; opacity: 0.5; }
+  .hype-active::after { animation: none !important; opacity: 0.5; }
 }
 .sidebar-channel-avatar-wrap { position: relative; }
 
@@ -6874,6 +6906,10 @@ button:active { transform: translateY(1px); }
   -webkit-background-clip: text;
   color: transparent !important;
   -webkit-text-fill-color: transparent;
+}
+/* the flow animation repaints every animated name each frame (it can't run on the GPU: the gradient is
+   clipped to the text), so it's a setting, off by default: Settings > Chat > Animate name paints */
+body.chat-paints-animate .chat-username.has-7tv-paint {
   background-size: 200% auto;
   animation: seventv-paint-flow 6s linear infinite;
 }
@@ -8583,6 +8619,8 @@ body.no-stream-info-overlay #stream-info-overlay { display: none !important; }
 /* hype train glow (sidebar rows, Home cards) */
 body.no-hype-glow .hype-active,
 body.no-hype-glow .hype-golden { animation: none !important; box-shadow: none !important; }
+body.no-hype-glow .hype-active::before,
+body.no-hype-glow .hype-active::after { content: none; }
 /* reduce motion: no animations or transitions anywhere */
 body.reduce-motion *,
 body.reduce-motion *::before,

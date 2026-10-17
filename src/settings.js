@@ -16,6 +16,9 @@ export const DEFAULTS = {
   emotesBttv: true,
   emotesFfz: true,
   sevenTvPaints: true,       // 7TV gradient/image username paints
+  liveRewindSecs: 120,       // live video kept in memory for instant rewinding (Twitch relay + Kick); 1080p is ~45 MB a minute
+  chatSpellcheck: true,      // red underlines on misspelled words in the chat box; right-click one for suggestions
+  sevenTvPaintsAnimate: false, // the paints' colors slowly flowing. off: each repaint of an animated name costs CPU every frame
   clipCards: true,           // Twitch clip links -> playable cards
   linkPreviews: true,        // hover previews on links
   predictionsPolls: true,
@@ -199,7 +202,11 @@ export function applyAppearance() {
   body.classList.toggle("chat-no-highlight-glow", !getSetting("highlightedGlow"));
   body.classList.toggle("no-stream-info-overlay", !getSetting("streamInfoOverlay"));
   body.classList.toggle("no-hype-glow", !getSetting("hypeGlow"));
+  body.classList.toggle("chat-paints-animate", !!getSetting("sevenTvPaintsAnimate"));
   body.classList.toggle("reduce-motion", !!getSetting("reduceMotion"));
+  // spell check in the chat box (WebView2 uses the Windows spell checker and its language)
+  const chatInput = document.getElementById("chat-input");
+  if (chatInput) chatInput.spellcheck = !!getSetting("chatSpellcheck");
 }
 
 // ---- notifications (Settings > Notifications) ----

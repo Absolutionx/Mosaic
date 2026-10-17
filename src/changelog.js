@@ -3,6 +3,21 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.3",
+    items: [
+      { kind: "new", title: "Streamlink updates", desc: "Streamlink is what blocks Twitch ads, so Mosaic now checks for a newer one each time it starts and updates it with one click: it downloads the official installer, checks it against its published checksum and installs it. A stream that's playing restarts when it's done. When Mosaic has an update too, one \"Update both\" button installs the two together." },
+      { kind: "new", title: "Spell check in chat", desc: "Misspelled words get underlined while you type a message; right-click one for suggestions. Turn it off in Settings > Chat." },
+      { kind: "improved", title: "Faster chat and Browse", desc: "Busy chats render about twice as fast, the emote picker opens and searches several times faster, and Browse no longer stutters as you scroll further down." },
+      { kind: "improved", title: "Less CPU while idle", desc: "Hype train glows now pulse on the graphics card. Animated 7TV name paints are now off by default, because they kept redrawing chat; turn them back on in Settings › Chat › Animate name paints." },
+      { kind: "improved", title: "Less memory", desc: "While Mosaic waits in the tray or minimized with nothing playing, it hands memory back to Windows. New Settings › Player › Live rewind sets how much live video is kept for rewinding (2 minutes of 1080p is about 90 MB); Kick streams now follow it too instead of keeping unlimited video." },
+      { kind: "improved", title: "Fewer requests", desc: "The channel list checks who's live with half as many Twitch requests, skips Recommended while Mosaic is hidden, and long lists load images only as they scroll into view." },
+      { kind: "improved", title: "Calmer play button", desc: "The play button in the middle of a paused stream or VOD no longer turns purple when you hover it." },
+      { kind: "fixed", title: "Ready for newer streamlink", desc: "Newer streamlink always blocks Twitch ads by itself and is retiring the old ad-blocking option; Mosaic now only passes that option to versions that still need it, so a future streamlink can't stop streams from starting." },
+      { kind: "fixed", title: "Enabling pinned messages", desc: "Twitch stopped accepting the sign-in Mosaic used for pinned messages, sub emotes and channel points, so turning them on failed with \"invalid client\". Mosaic now signs in the way Twitch still allows; if you already had them on, nothing changes." },
+      { kind: "fixed", title: "Your emotes in the picker", desc: "Twitch changed how it lists the emotes you can use, so sub emotes from other channels stopped showing in the emote picker. They're back." },
+    ],
+  },
+  {
     version: "1.5.2",
     items: [
       { kind: "improved", title: "Safer sign-ins", desc: "On Windows, your Twitch and Kick logins are now kept in Windows Credential Manager instead of plain files. Existing logins move over by themselves." },

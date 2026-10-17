@@ -1,3 +1,4 @@
+import { getSetting } from "./settings.js";
 // feeds a continuous fMP4 byte stream from the local Rust relay (stream_relay.rs) into a
 // <video> via Media Source Extensions. hls.js is wrong here: it wants an .m3u8 + segment URLs
 // it fetches itself, but browser JS is subject to CORS and Twitch's CDN won't allow this
@@ -7,6 +8,16 @@
 // walk the fMP4 box tree for a box type ("avcC"/"hvcC"), returning its payload or null. used
 // to build the exact codec string: isTypeSupported() needs an exact match, and addSourceBuffer()
 // accepts a wrong-but-constructible string that then fails as MEDIA_ERR_DECODE
+// live rewind window in seconds (Settings > Player > Live rewind), read once per stream
+function liveRewindSeconds() {
+  const v = Number(getSetting("liveRewindSecs"));
+  return v === 30 || v === 60 || v === 120 ? v : 120;
+}
+
+// per-chunk logging (several lines a second for as long as a stream plays, each kept by the console) only on
+// request: localStorage "mosaic.verbosePlayer" = "1", then reload. startup and error logging is unaffected
+const VERBOSE = (() => { try { return localStorage.getItem("mosaic.verbosePlayer") === "1"; } catch { return false; } })();
+
 function findBoxPayload(bytes, boxType) {
   const typeBytes = [...boxType].map((c) => c.charCodeAt(0));
 
@@ -132,6 +143,7 @@ function buildCodecStringFromInitSegment(bytes) {
 // old fetch runs forever. callbacks.isVod skips the live-edge jump; onFatalError fires when the
 // stream can't play at all
 export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
+  const trailingWindow = liveRewindSeconds();
   const {
     isVod = false,
     onFatalError = () => {},
@@ -266,7 +278,7 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
       _invalidStateRetries = 0; // success clears the WKWebView retry counter
       if (_bytesAppended === 0) _firstAppendAt = performance.now();
       _bytesAppended += chunk.byteLength;
-      console.log("[stream-player] appendBuffer called with", chunk.byteLength, "bytes, queue remaining:", pendingChunks.length);
+      if (VERBOSE) console.log("[stream-player] appendBuffer called with", chunk.byteLength, "bytes, queue remaining:", pendingChunks.length);
     } catch (err) {
       if (err.name === "QuotaExceededError") {
         // SourceBuffer full. put the chunk back at the FRONT (dropping it gaps the byte stream ->
@@ -388,8 +400,8 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
     const currentTime = videoEl.currentTime;
 
     // keep TRAILING_WINDOW behind the playhead (for live rewinding, see seekRelative, clamped to this
-    // range). 120s trades a little memory for more rewind room; emergencyTrim() handles QuotaExceededError
-    const TRAILING_WINDOW = 120;
+    // range). Settings > Player > Live rewind: 120s by default, about 90 MB at 1080p; emergencyTrim() handles QuotaExceededError
+    const TRAILING_WINDOW = trailingWindow;
     const removeEnd = currentTime - TRAILING_WINDOW;
     if (removeEnd > buffered.start(0) + 2) {
       try {
@@ -522,7 +534,7 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
         // bytes flowing again, re-arm the early-silence probe (it's once-per-spell)
         _silenceSignaled = false;
         if (stopped) break;
-        console.log("[stream-player] read chunk from relay:", value.byteLength, "bytes");
+        if (VERBOSE) console.log("[stream-player] read chunk from relay:", value.byteLength, "bytes");
 
         if (!codecResolved) {
           initSegmentChunks.push(value);

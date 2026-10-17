@@ -1,6 +1,7 @@
 import { showAppToast } from "./app-toast.js";
 import "./titlebar.js";
 import { invoke } from "@tauri-apps/api/core";
+import { initStreamlinkUpdate } from "./streamlink-update.js";
 import { listen } from "@tauri-apps/api/event";
 
 import { getCurrentWindow, currentMonitor, availableMonitors, cursorPosition } from "@tauri-apps/api/window";
@@ -541,6 +542,7 @@ const sidebar = new ChannelsSidebar({
 sidebar.init();
 // the channel info bar can start a stream, change page, and write the status line, app-shell concerns it can't import without a cycle, so they're handed to it here
 checkStreamDeps();
+initStreamlinkUpdate(); // a newer streamlink (what blocks Twitch ads): checked daily, one-click update
 // Windows-only in practice (the check no-ops on other platforms). fires once at startup; shows the update banner if a newer release exists
 checkForUpdate();
 
@@ -832,8 +834,11 @@ initCommandPalette({
 // everywhere (video: loop / save frame / picture in picture; text boxes: cut / copy / paste / inspect).
 // Mosaic's own right-click menus (chat messages, channel cards, ...) are unaffected: they still run and show
 // themselves. keyboard shortcuts (Ctrl+C / V / X / A, Win+. for emoji) keep working in text boxes
+// the chat box is the exception while Spell check is on: that menu is where spelling suggestions appear
 document.addEventListener("contextmenu", (e) => {
-  if (!getSetting("videoContextMenu")) e.preventDefault();
+  if (getSetting("videoContextMenu")) return;
+  if (getSetting("chatSpellcheck") && e.target?.id === "chat-input") return;
+  e.preventDefault();
 }, true);
 
 // VOD downloads (vod-downloads.js / downloads.rs): the player bar button and the palette action
@@ -2261,6 +2266,40 @@ listen("kick-oauth-result", (event) => {
 })();
 
 applyPlatformUi();
+
+// a streamlink update (streamlink-update.js) replaces files the running streamlink has open, so a live Twitch
+// stream playing through it pauses for the install and restarts afterwards. VODs, Kick and native-HLS live don't
+// keep a streamlink running
+let restartAfterStreamlinkUpdate = false;
+window.addEventListener("mosaic:streamlink-update", async (e) => {
+  const phase = e.detail?.phase;
+  if (phase === "start") {
+    const cur = session.intendedChannel || "";
+    restartAfterStreamlinkUpdate = session.playing && !!cur && !cur.startsWith("vod:")
+      && !session.useNativeHlsForLive && !session.kickFailover && !playbackControls._isKickSession;
+    if (restartAfterStreamlinkUpdate) {
+      playbackControls.expectRelayTeardown(); // a planned stop, not a dead stream (no Kick failover)
+      await invoke("stop_stream").catch(() => {});
+    }
+  } else if (phase === "done" && restartAfterStreamlinkUpdate) {
+    restartAfterStreamlinkUpdate = false;
+    restartStreamWithQuality(session.currentQuality);
+  }
+});
+
+// WebView2's memory saver (app_extras.rs set_memory_saver): on while the window is hidden (tray, minimized) and
+// no video is playing anywhere in it, so WebView2 gives back memory it doesn't need; off the moment it's back
+let memorySaverOn = false;
+function syncMemorySaver() {
+  const playing = [...document.querySelectorAll("video")].some((v) => !v.paused && !v.ended);
+  const on = document.hidden && !playing;
+  if (on === memorySaverOn) return;
+  memorySaverOn = on;
+  invoke("set_memory_saver", { on }).catch(() => {});
+}
+document.addEventListener("visibilitychange", syncMemorySaver);
+// hiding to the tray stops playback just before the window hides; a video paused while minimized counts too
+document.addEventListener("pause", () => { if (document.hidden) syncMemorySaver(); }, true);
 
 // macOS native-HLS toggle: whether Twitch LIVE plays via native HLS/hls.js (get_live_m3u8_url +
 // attachHlsDvr) instead of the fMP4 byte-relay + MSE. defaults ON for macOS (WebKit MSE is unreliable),

@@ -176,6 +176,9 @@ fn main() {
         .setup(|app| {
             tray::setup_tray(app).map_err(|e| e.to_string())?;
 
+            // which streamlink is installed decides whether it still needs --twitch-disable-ads (stream_relay.rs)
+            tauri::async_runtime::spawn(stream_relay::probe_streamlink_version());
+
             // maximize the still-hidden main window before its first paint, so the webview paints at final size
             // and there's no resize when the frontend reveals it. the window is created hidden (visible:false)
             // and shown from JS only after the dark UI has painted; that, not a background color, is what actually
@@ -293,6 +296,8 @@ fn main() {
             link_preview::fetch_storyboard_json,
             deps_check::check_stream_deps,
             deps_check::install_stream_deps,
+            deps_check::check_streamlink_update,
+            deps_check::update_streamlink,
             chat_commands::ban_user,
             chat_commands::unban_user,
             chat_commands::delete_chat_message,
@@ -328,6 +333,7 @@ fn main() {
             downloads::cancel_vod_download,
             downloads::reveal_download,
             app_extras::launched_at_startup,
+            app_extras::set_memory_saver,
             app_extras::save_backup_file,
             app_extras::set_app_fullscreen,
             helix::create_clip,

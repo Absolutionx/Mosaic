@@ -165,7 +165,8 @@ export class BrowsePage {
     if (this.loadingMoreGames || !this.hasMoreGames) return;
     this.loadingMoreGames = true;
     let pageAddedNothing = false;
-    this.render(); // shows the loading indicator immediately
+    const before0 = this.games.length;
+    this._updateMore("categories", before0); // shows the loading indicator immediately
     try {
       const { games, cursor } = JSON.parse(
         await feedInvoke("get_top_games", { cursor: this.nextGamesCursor })
@@ -189,7 +190,7 @@ export class BrowsePage {
       // leave hasMoreGames as-is so a transient failure doesn't permanently stop future scroll attempts
     }
     this.loadingMoreGames = false;
-    this.render();
+    this._updateMore("categories", before0);
     // an all-dup page re-renders identical DOM, so no new 'scroll' fires, chain into the next page
     // to hop the expected overlap, bounded by the dup-stop and page cap
     if (pageAddedNothing && this.hasMoreGames) this.loadMoreGames();
@@ -199,7 +200,8 @@ export class BrowsePage {
   async loadMoreLiveStreams() {
     if (this.loadingMoreLive || !this.hasMoreLive) return;
     this.loadingMoreLive = true;
-    this.render();
+    const before0 = this.topLiveStreams.length;
+    this._updateMore("live", before0);
     try {
       const { streams, cursor } = JSON.parse(
         await feedInvoke("get_live_streams_page", { cursor: this.nextLiveCursor })
@@ -212,7 +214,30 @@ export class BrowsePage {
       console.error("Failed to load more live streams:", err);
     }
     this.loadingMoreLive = false;
-    this.render();
+    this._updateMore("live", before0);
+  }
+
+  // a page of results loading or arriving: add just the new cards and swap the footer, instead of
+  // rebuilding the whole page (every card and image already on screen, twice per page, growing with each
+  // page you scroll through). anything else on screen (another tab, a search, sorted by viewers, a category
+  // opened) gets the normal full render
+  _updateMore(tab, prevCount) {
+    const live = tab === "live";
+    const grid = this.containerEl.querySelector(live ? ":scope > .home-grid" : ":scope > .browse-games-grid");
+    const footer = this.containerEl.querySelector(":scope > .browse-pagination-footer");
+    const simple = !this.activeGame && this.activeTab === tab && this.sortMode !== "viewers"
+      && (live || this.searchResults === null);
+    if (!simple || !grid || !footer) { this.render(); return; }
+    const all = live ? this.topLiveStreams : this.games;
+    if (all.length > prevCount) {
+      const added = live ? filterHidden(all.slice(prevCount)) : all.slice(prevCount);
+      const frag = document.createDocumentFragment();
+      for (const item of added) frag.appendChild(live ? this.buildStreamCard(item) : this.buildGameCard(item));
+      grid.appendChild(frag);
+    }
+    footer.replaceWith(live
+      ? this._buildPaginationFooter(this.hasMoreLive, this.loadingMoreLive, this.topLiveStreams.length)
+      : this._buildPaginationFooter(this.hasMoreGames, this.loadingMoreGames, this.games.length));
   }
 
   // loads the next page within SCROLL_TRIGGER_PX of the bottom for whichever grid is showing.
@@ -640,6 +665,7 @@ export class BrowsePage {
 
     const art = document.createElement("img");
     art.className = "browse-game-art";
+    art.loading = "lazy"; art.decoding = "async";
     art.src = boxArtUrl(game.box_art_url, 188, 250);
     art.alt = "";
     card.appendChild(art);
@@ -678,6 +704,7 @@ export class BrowsePage {
 
     const thumb = document.createElement("img");
     thumb.className = "home-grid-thumb";
+    thumb.loading = "lazy"; thumb.decoding = "async";
     thumb.src = thumbnailUrl(s.thumbnail_url, 320, 180);
     thumb.alt = "";
     thumbWrap.appendChild(thumb);
@@ -709,6 +736,7 @@ export class BrowsePage {
 
     const avatar = document.createElement("img");
     avatar.className = "home-grid-avatar";
+    avatar.loading = "lazy"; avatar.decoding = "async";
     avatar.src = smallAvatar(this.avatars.get(s.user_id)) || blankAvatarDataUri();
     avatar.alt = "";
     meta.appendChild(avatar);

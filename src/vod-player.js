@@ -3,8 +3,14 @@
 // the segments)
 
 import Hls from "hls.js";
+import { getSetting } from "./settings.js";
 
 export { Hls };
+
+function liveRewindSeconds() {
+  const v = Number(getSetting("liveRewindSecs"));
+  return v === 30 || v === 60 || v === 120 ? v : 120;
+}
 
 export function attachHlsVod(videoEl, m3u8Url, {
   startPosition = 0,
@@ -39,7 +45,9 @@ export function attachHlsVod(videoEl, m3u8Url, {
 
     // 30s back for smooth backward scrubs, 60s ahead for instant in-range seeks. smallPlayer
     // trims all of it (PiP doesn't scrub); liveEdge keeps as much back buffer as Kick's window allows
-    backBufferLength:   smallPlayer ? 10 : (liveEdge ? Infinity : 30),
+    // live (Kick): as far back as Settings > Player > Live rewind, like Twitch's relay. it used to be unlimited,
+    // growing until the browser's own cap (~150 MB of video); seeking further back within Kick's window refetches
+    backBufferLength:   smallPlayer ? 10 : (liveEdge ? liveRewindSeconds() : 30),
     maxBufferLength:    smallPlayer ? 20 : 60,
     maxMaxBufferLength: smallPlayer ? 40 : 120,
 

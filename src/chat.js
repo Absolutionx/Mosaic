@@ -21,6 +21,7 @@ import { chatAutocompleteMixin } from "./chat/chat-autocomplete.js";
 import { countOwnMessage, noteOwnChatState } from "./channel-you.js";
 import { chatEventsMixin } from "./chat/chat-events.js";
 import { looksLikeUrl, USER_CARD_HISTORY_LIMIT } from "./chat/shared.js";
+import { chatClock, fmtNum } from "./format.js";
 // most recently active chatters whose user-card history + message count are kept per channel
 const CHATTER_HISTORY_CAP = 3000;
 import { chatLiveEventsMixin } from "./chat/chat-live-events.js";
@@ -31,11 +32,15 @@ const CHAT_INPUT_MAX_HEIGHT_PX = 120;
 // ASCII-art detection helpers (see _isAsciiArt)
 const ASCII_ART_MIN_GRAPHEMES = 40;
 const ART_SYMBOL_RE = /[\p{So}\p{Sk}]/u;
+// the same symbols minus U+2800, for counting (see _isAsciiArt)
+const ART_SYMBOL_ANY_RE = /(?!\u2800)[\p{So}\p{Sk}]/gu;
 // NOT art on their own: the blank Braille cell (U+2800) that spammers use as padding to force line breaks
 // (it counts as a symbol, so a padded emote spam crossed the threshold, rendered as text rows with no
 // emotes), and emoji (40 emoji in a row is spam, not a picture)
 const ART_IGNORE_RE = /^(?:\u2800|\p{Extended_Pictographic}.*)$/u;
 let _graphemeSegmenter = null;
+// emote image URLs that failed to load, logged once each (see _onEmoteImgError)
+const _loggedEmoteUrlFailures = new Set();
 function graphemeSegmenter() {
   if (!_graphemeSegmenter) _graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
   return _graphemeSegmenter;
@@ -333,6 +338,33 @@ export class TwitchChat {
           this.updateJumpToLatestVisibility();
         }
       });
+      // one listener each for every chat line, instead of two or three per line: username click opens the
+      // user card, the reply header opens the thread, right-click opens the message menu. each line carries
+      // what they need in line._m (set in renderMessage); lines without it (system lines, events) are skipped
+      this.container.addEventListener("click", (e) => {
+        const t = e.target instanceof Element ? e.target : null;
+        const line = t?.closest(".chat-line");
+        const m = line?._m;
+        if (!m || !this.container.contains(line)) return;
+        const name = t.closest(".chat-username-clickable");
+        if (name && line.contains(name)) {
+          e.stopPropagation();
+          this._showUserCard(name, m.userId, m.username, m.badgesTag, m.msgId, m.message);
+          return;
+        }
+        const reply = t.closest(".reply-header");
+        if (reply && line.contains(reply)) {
+          e.stopPropagation();
+          if (m.threadRootId) this.openThread(m.threadRootId);
+          else reply.classList.toggle("expanded");
+        }
+      });
+      this.container.addEventListener("contextmenu", (e) => {
+        const line = e.target instanceof Element ? e.target.closest(".chat-line") : null;
+        if (!line?._m || !this.container.contains(line)) return;
+        e.preventDefault();
+        this._showMessageContextMenu(e.clientX, e.clientY, line);
+      });
     }
   }
 
@@ -587,19 +619,32 @@ export class TwitchChat {
     if (this.userScrolledUp && this.container.children.length > this.maxLines * 6) {
       this.scrollToLatest();
     }
-    const heightBefore = this.container.scrollHeight;
-    const viewTop = this.userScrolledUp ? this.container.getBoundingClientRect().top : 0;
-    while (this.container.children.length > this.maxLines) {
-      const first = this.container.firstElementChild;
-      if (!first) break;
-      if (this.userScrolledUp && first.getBoundingClientRect().bottom > viewTop) break; // on screen: keep it
-      this.container.removeChild(first);
-    }
-    const removedHeight = heightBefore - this.container.scrollHeight;
-    if (removedHeight > 0 && this.userScrolledUp) {
-      // suppress the scroll event this assignment fires, our adjustment, not the user scrolling
-      this._suppressNextScrollEvent = true;
-      this.container.scrollTop -= removedHeight;
+    const c = this.container;
+    const excess = c.children.length - this.maxLines;
+    if (this.userScrolledUp) {
+      // reading older lines: trim only lines fully above the view, and keep the view where it is
+      if (excess > 0) {
+        const heightBefore = c.scrollHeight;
+        const viewTop = c.getBoundingClientRect().top;
+        while (c.children.length > this.maxLines) {
+          const first = c.firstElementChild;
+          if (!first || first.getBoundingClientRect().bottom > viewTop) break; // on screen: keep it
+          first.remove();
+        }
+        const removedHeight = heightBefore - c.scrollHeight;
+        if (removedHeight > 0) {
+          // suppress the scroll event this assignment fires, our adjustment, not the user scrolling
+          this._suppressNextScrollEvent = true;
+          c.scrollTop -= removedHeight;
+        }
+      }
+    } else if (excess > 0) {
+      // following live chat: drop the oldest lines in one go, with no measuring (the scroll below goes to
+      // the bottom anyway). a Range removes the whole run with one DOM operation
+      const r = document.createRange();
+      r.setStartBefore(c.firstElementChild);
+      r.setEndAfter(c.children[excess - 1]);
+      r.deleteContents();
     }
     if (!this.userScrolledUp) {
       // suppress the scroll event this assignment will fire so it doesn't falsely flip userScrolledUp on the next tick
@@ -2085,12 +2130,7 @@ export class TwitchChat {
       replyHeader.className = "reply-header";
       replyHeader.textContent = `↩ ${replyParentUser}: ${replyParentBody}`;
       replyHeader.title = `Replying to ${replyParentUser}: ${replyParentBody}`;
-      replyHeader.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const rootId = replyThreadParentMsgId || replyParentMsgId;
-        if (rootId) this.openThread(rootId);
-        else replyHeader.classList.toggle("expanded");
-      });
+      // click: opens the thread, or expands the header (the container's click listener, see the constructor)
       line.appendChild(replyHeader);
     }
 
@@ -2099,9 +2139,14 @@ export class TwitchChat {
     if (mentionLogin) {
       const login = mentionLogin.toLowerCase();
       // escape regex metacharacters defensively, Twitch logins are [a-z0-9_] but Kick usernames can carry characters like '-'
-      const escaped = login.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      // match with OR without the "@", Twitch highlights a bare "Name," like "@Name". the branches need different left edges: @ is non-word, while the bare name needs a word boundary so "xName"/"Name8" don't light up
-      const bodyMention = new RegExp(`(?:@|\\b)${escaped}\\b`, "i").test(message);
+      // match with OR without the "@", Twitch highlights a bare "Name," like "@Name". the branches need different left edges: @ is non-word, while the bare name needs a word boundary so "xName"/"Name8" don't light up.
+      // built once per login, not per message
+      if (this._ownMentionLogin !== login) {
+        this._ownMentionLogin = login;
+        const escaped = login.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        this._ownMentionRe = new RegExp(`(?:@|\\b)${escaped}\\b`, "i");
+      }
+      const bodyMention = this._ownMentionRe.test(message);
       const replyToMe = replyParentUser &&
         replyParentUser.toLowerCase() === login;
       if (bodyMention || replyToMe) {
@@ -2119,7 +2164,7 @@ export class TwitchChat {
     // (a body class), so toggling it applies instantly to chat already on screen
     const ts = document.createElement("span");
     ts.className = "chat-ts";
-    ts.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    ts.textContent = chatClock();
     line.appendChild(ts);
     line.appendChild(badgeSlot);
 
@@ -2129,13 +2174,7 @@ export class TwitchChat {
     nameSpan.textContent = username + ":";
     if (userId) this._applyPaint(nameSpan, userId);
     // clicking the username opens the user card (avatar, account age, timeout/ban, delete); the same mod actions are also in the message's right-click menu. needs the sender's userId, absent only for the local echo. VOD lines have a real userId, so their cards work; timeout/ban stay disabled there (no roomId)
-    if (userId) {
-      nameSpan.classList.add("chat-username-clickable");
-      nameSpan.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this._showUserCard(nameSpan, userId, username, badgesTag, msgId, message);
-      });
-    }
+    if (userId) nameSpan.classList.add("chat-username-clickable"); // click: the container's listener (constructor)
     if (userId) { const sb = this._seventvBadgeEl(userId); if (sb) line.appendChild(sb); }
     line.appendChild(nameSpan);
     if (userId && this._noteUserIds && this._noteUserIds.has(userId)) {
@@ -2178,17 +2217,17 @@ export class TwitchChat {
         bits >= 100   ? "purple" : "gray";
       const badge = document.createElement("span");
       badge.className = `bits-total-badge cheer-${tier}`;
-      badge.title = `${bits.toLocaleString()} bits cheered`;
-      badge.textContent = `⬧ ${bits.toLocaleString()}`;
+      badge.title = `${fmtNum(bits)} bits cheered`;
+      badge.textContent = `⬧ ${fmtNum(bits)}`;
       line.appendChild(badge);
     }
 
-    // right-click: reply / copy / profile, plus delete / timeout / ban for mods (see _showMessageContextMenu).
-    // these used to be a row of buttons shown on hover, which cluttered chat and covered message text
-    line.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      this._showMessageContextMenu(e.clientX, e.clientY, line);
-    });
+    // what the container's click / right-click listeners need (constructor). right-click: reply / copy / profile,
+    // plus delete / timeout / ban for mods (see _showMessageContextMenu)
+    line._m = {
+      userId, username, badgesTag, msgId, message,
+      threadRootId: replyThreadParentMsgId || replyParentMsgId || null,
+    };
 
     this.container.appendChild(line);
     this.trimAndScroll();
@@ -2226,7 +2265,7 @@ export class TwitchChat {
 
     const costEl = document.createElement("span");
     costEl.className = "redeem-cost";
-    costEl.textContent = ` · ${reward_cost.toLocaleString()} pts`;
+    costEl.textContent = ` · ${fmtNum(reward_cost)} pts`;
     redeemInfo.appendChild(costEl);
 
     if (user_input) {
@@ -2242,15 +2281,18 @@ export class TwitchChat {
   }
 
   // zero-width emotes (7TV/BTTV overlays like Fog0) stack onto the emote before them into one glyph. finds the last emote image, wraps it in a positioned container, and layers this one centered over it. returns false if there's no preceding emote
+  // see _emoteImg. `this` is the image
+  _onEmoteImgError() {
+    const url = this.getAttribute("src") || "";
+    if (_loggedEmoteUrlFailures.has(url)) return;
+    _loggedEmoteUrlFailures.add(url);
+    console.warn(`[emotes] Image failed to load for "${this.alt}": ${url}`);
+  }
+
+  // overlays a zero-width emote on the element the fragment ends with (renderMessageBody only calls this when
+  // nothing but a space separates them). false when that isn't an emote, so the caller shows it normally
   _overlayZeroWidthEmote(fragment, emoteUrl, word) {
-    // the last node is usually a separator space; the emote is before it. walk back past trailing text nodes to the last element (an <img.chat-emote> or an existing overlay container)
-    let anchor = fragment.lastChild;
-    while (anchor && anchor.nodeType === Node.TEXT_NODE) {
-      const prev = anchor.previousSibling;
-      // drop the separating space we appended after the previous emote, so the overlay sits flush on it rather than a space away
-      fragment.removeChild(anchor);
-      anchor = prev;
-    }
+    const anchor = fragment.lastChild;
     if (!anchor || anchor.nodeType !== Node.ELEMENT_NODE) return false;
 
     let container;
@@ -2273,13 +2315,7 @@ export class TwitchChat {
     layer.alt = word;
     layer.title = word;
     layer.loading = "lazy";
-    layer.onerror = () => {
-      this._loggedEmoteUrlFailures ??= new Set();
-      if (!this._loggedEmoteUrlFailures.has(emoteUrl)) {
-        this._loggedEmoteUrlFailures.add(emoteUrl);
-        console.warn(`[emotes] Image failed to load for "${word}": ${emoteUrl}`);
-      }
-    };
+    layer.onerror = this._onEmoteImgError;
     container.appendChild(layer);
     return true;
   }
@@ -2291,11 +2327,12 @@ export class TwitchChat {
   // does a message mention you (login / display name, as a whole word, with or without @) or one of your
   // highlight keywords? the regex is rebuilt only when the names or keywords change
   _mentionsMe(message) {
-    const names = [this.ownLogin, this.ownDisplayName, this._kickLogin].filter(Boolean).map((n) => String(n).toLowerCase());
-    const kws = String(getSetting("highlightKeywords") || "").split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
-    const key = names.join("|") + "#" + kws.join("|");
+    const rawKws = String(getSetting("highlightKeywords") || "");
+    const key = `${this.ownLogin}|${this.ownDisplayName}|${this._kickLogin}#${rawKws}`;
     if (this._mentionKey !== key) {
       this._mentionKey = key;
+      const names = [this.ownLogin, this.ownDisplayName, this._kickLogin].filter(Boolean).map((n) => String(n).toLowerCase());
+      const kws = rawKws.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
       const terms = [...new Set([...names, ...kws])].map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
       this._mentionRe = terms.length ? new RegExp(`(^|[^\\p{L}\\p{N}_])@?(${terms.join("|")})(?=$|[^\\p{L}\\p{N}_])`, "iu") : null;
     }
@@ -2346,6 +2383,12 @@ export class TwitchChat {
   _isAsciiArt(message) {
     if (!getSetting("asciiArt")) return false; // Settings > Chat > ASCII art
     if (!message || message.length < ASCII_ART_MIN_GRAPHEMES) return false;
+    // quick reject before splitting into graphemes (the slow part): every grapheme that counts holds at least
+    // one symbol other than the blank Braille cell, so fewer such symbols than the threshold can't be art
+    let symbols = 0;
+    ART_SYMBOL_ANY_RE.lastIndex = 0;
+    while (ART_SYMBOL_ANY_RE.exec(message) && ++symbols < ASCII_ART_MIN_GRAPHEMES) { /* counting */ }
+    if (symbols < ASCII_ART_MIN_GRAPHEMES) return false;
     let n = 0;
     for (const { segment } of graphemeSegmenter().segment(message)) {
       if (ART_SYMBOL_RE.test(segment) && !ART_IGNORE_RE.test(segment) && ++n >= ASCII_ART_MIN_GRAPHEMES) return true;
@@ -2435,111 +2478,101 @@ export class TwitchChat {
     const twitchEmotes = this.parseTwitchEmotesTag(message, emotesTag);
     const words = message.split(" ");
     let charPos = 0;
+    // plain words and the spaces between them are collected into one text node per run, instead of a node
+    // per word and per space (a 20-word message was ~40 nodes, now 1): less to create, lay out and keep
+    let text = "";
+    const flush = () => {
+      if (text) { fragment.appendChild(document.createTextNode(text)); text = ""; }
+    };
+    const addEl = (el) => { flush(); fragment.appendChild(el); };
+    const last = words.length - 1;
 
-    words.forEach((word, i) => {
+    for (let i = 0; i <= last; i++) {
+      const word = words[i];
+      const sep = i < last ? " " : "";
+      const twitch = twitchEmotes.get(charPos);
+      charPos += word.length + 1;
       // strip blocked emotes: omit any word that renders as a blocked emote (and its trailing space),
       // keeping the rest of the message. the "only blocked emotes" case is hidden upstream in renderMessage
       if (stripEmotes) {
-        const blockedName = this._emoteNameForWord(word, twitchEmotes.get(charPos));
-        if (blockedName && this._compiledFilter?.emotes.has(blockedName)) {
-          charPos += word.length + 1;
-          return;
-        }
+        const blockedName = this._emoteNameForWord(word, twitch);
+        if (blockedName && this._compiledFilter?.emotes.has(blockedName)) continue;
       }
       // id-carrying marker from kick_chat.rs's flatten_emote_tokens. rendered from the id, not a name lookup, so a subscriber's cross-channel emote works too. checked first, the marker can't coincide with a Twitch emote or word
       const kickEmote = this.parseKickEmoteMarker(word);
       if (kickEmote) {
         const emoteUrl = `https://files.kick.com/emotes/${kickEmote.id}/fullsize`;
-        const img = document.createElement("img");
-        img.className = "chat-emote";
-        img.src = emoteUrl;
-        img.alt = kickEmote.name;
-        this._tagEmote(img, kickEmote.name, { provider: "kick", big: emoteUrl });
-        img.loading = "lazy";
-        img.onerror = () => {
-          this._loggedEmoteUrlFailures ??= new Set();
-          if (!this._loggedEmoteUrlFailures.has(emoteUrl)) {
-            this._loggedEmoteUrlFailures.add(emoteUrl);
-            console.warn(`[emotes] Image failed to load for "${kickEmote.name}": ${emoteUrl}`);
-          }
-        };
-        fragment.appendChild(img);
-        if (i < words.length - 1) fragment.appendChild(document.createTextNode(" "));
-        charPos += word.length + 1;
-        return;
+        addEl(this._emoteImg(emoteUrl, kickEmote.name, { provider: "kick", big: emoteUrl }));
+        text += sep;
+        continue;
       }
 
       // Twitch native emote, matched by character position from the IRC tag
-      const twitch = twitchEmotes.get(charPos);
       if (twitch) {
-        const img = document.createElement("img");
-        img.className = "chat-emote";
-        img.src = `https://static-cdn.jtvnw.net/emoticons/v2/${twitch.id}/default/dark/2.0`;
-        img.alt = word;
-        this._tagEmote(img, word, { provider: "twitch", big: `https://static-cdn.jtvnw.net/emoticons/v2/${twitch.id}/default/dark/3.0` });
-        img.loading = "lazy";
-        fragment.appendChild(img);
-      } else {
-        // 7TV / BTTV emote, matched by name; Twitch native, name fallback
-        const emote        = this.sevenTvEmotes.get(word);
-        const twitchByName = !emote ? (this.twitchNativeEmotes?.get(word) ?? null) : null;
-        const emoteUrl     = emote?.url
-          ?? (twitchByName ? `https://static-cdn.jtvnw.net/emoticons/v2/${twitchByName.id}/default/dark/2.0` : null);
-        if (emoteUrl) {
-          // zero-width emotes (Fog0, cvHazmat) render ON TOP OF the preceding emote, not beside it. detect the flag and wrap the previous emote and this one in an overlay container
-          if (emote?.zeroWidth) {
-            const overlaid = this._overlayZeroWidthEmote(fragment, emoteUrl, word);
-            if (overlaid) {
-              // a zero-width emote consumes no horizontal space and needs no separator, skip the space and advance charPos
-              charPos += word.length + 1;
-              return;
-            }
-            // if there was no preceding emote to overlay onto (zero-width at message start), fall through and render it as a normal image rather than dropping it
-          }
-          const img = document.createElement("img");
-          img.className = "chat-emote";
-          img.src = emoteUrl;
-          img.alt = word;
-          this._tagEmote(img, word, emote
-            ? emote
-            : { provider: "twitch", big: `https://static-cdn.jtvnw.net/emoticons/v2/${twitchByName.id}/default/dark/3.0` });
-          img.loading = "lazy";
-          // a failed emote image collapses to its alt text, identical to it never loading, which made "emote shows as its name" undiagnosable. log each failing URL once so a dead CDN link is distinguishable from a missing emote
-          img.onerror = () => {
-            this._loggedEmoteUrlFailures ??= new Set();
-            if (!this._loggedEmoteUrlFailures.has(emoteUrl)) {
-              this._loggedEmoteUrlFailures.add(emoteUrl);
-              console.warn(`[emotes] Image failed to load for "${word}": ${emoteUrl}`);
-            }
-          };
-          fragment.appendChild(img);
-        } else if (looksLikeUrl(word)) {
-          fragment.appendChild(this._createChatLink(word));
-        } else {
-          const cheer = this.parseCheermote(word);
-          if (cheer) {
-            const img = document.createElement("img");
-            img.className = "chat-emote cheermote";
-            img.src = cheer.tier.url;
-            img.alt = word;
-            img.title = word;
-            img.loading = "lazy";
-            fragment.appendChild(img);
-            const amt = document.createElement("span");
-            amt.className = "bits-amount";
-            amt.style.color = cheer.tier.color;
-            amt.textContent = cheer.amount.toLocaleString();
-            fragment.appendChild(amt);
-          } else if (word.length > 0) {
-            fragment.appendChild(document.createTextNode(word));
-          }
-        }
+        const img = this._emoteImg(`https://static-cdn.jtvnw.net/emoticons/v2/${twitch.id}/default/dark/2.0`, word,
+          { provider: "twitch", big: `https://static-cdn.jtvnw.net/emoticons/v2/${twitch.id}/default/dark/3.0` }, false);
+        addEl(img);
+        text += sep;
+        continue;
       }
-      if (i < words.length - 1) fragment.appendChild(document.createTextNode(" "));
-      charPos += word.length + 1;
-    });
-
+      // 7TV / BTTV emote, matched by name; Twitch native, name fallback
+      const emote        = this.sevenTvEmotes.get(word);
+      const twitchByName = !emote ? (this.twitchNativeEmotes?.get(word) ?? null) : null;
+      const emoteUrl     = emote?.url
+        ?? (twitchByName ? `https://static-cdn.jtvnw.net/emoticons/v2/${twitchByName.id}/default/dark/2.0` : null);
+      if (emoteUrl) {
+        // zero-width emotes (Fog0, cvHazmat) render ON TOP OF the emote right before them, not beside it. only
+        // when nothing but the separating space sits between them: after text, it shows as a normal emote
+        if (emote?.zeroWidth && !text.trim() && this._overlayZeroWidthEmote(fragment, emoteUrl, word)) {
+          text = ""; // the space before it is dropped: the layer sits flush on the base emote. a zero-width emote takes no room, so no space after it either
+          continue;
+        }
+        addEl(this._emoteImg(emoteUrl, word, emote
+          ? emote
+          : { provider: "twitch", big: `https://static-cdn.jtvnw.net/emoticons/v2/${twitchByName.id}/default/dark/3.0` }));
+        text += sep;
+        continue;
+      }
+      if (looksLikeUrl(word)) {
+        addEl(this._createChatLink(word));
+        text += sep;
+        continue;
+      }
+      const cheer = this.parseCheermote(word);
+      if (cheer) {
+        const img = document.createElement("img");
+        img.className = "chat-emote cheermote";
+        img.src = cheer.tier.url;
+        img.alt = word;
+        img.title = word;
+        img.loading = "lazy";
+        addEl(img);
+        const amt = document.createElement("span");
+        amt.className = "bits-amount";
+        amt.style.color = cheer.tier.color;
+        amt.textContent = fmtNum(cheer.amount);
+        fragment.appendChild(amt);
+        text += sep;
+        continue;
+      }
+      text += word + sep;
+    }
+    flush();
     return fragment;
+  }
+
+  // an emote image. logFailures: a failed image collapses to its alt text, identical to it never loading, which
+  // made "emote shows as its name" undiagnosable, so each failing URL is logged once (one shared handler, not a
+  // new function per image)
+  _emoteImg(url, name, info, logFailures = true) {
+    const img = document.createElement("img");
+    img.className = "chat-emote";
+    img.loading = "lazy"; // before src, so the image is never fetched eagerly
+    img.src = url;
+    img.alt = name;
+    this._tagEmote(img, name, info);
+    if (logFailures) img.onerror = this._onEmoteImgError;
+    return img;
   }
 
   // shows a reply indicator bar above the input and stores the message ID so the next send goes as a reply

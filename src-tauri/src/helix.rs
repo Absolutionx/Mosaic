@@ -920,7 +920,6 @@ pub async fn get_pinned_chat_messages(
     };
 
     const GQL_URL: &str = "https://gql.twitch.tv/gql";
-    const ANDROID_CLIENT_ID: &str = "kd1unb4b3q4t58fwlpcbzcbnm76a8fp";
     const HASH: &str = "2d099d4c9b6af80a07d8440140c4f3dbb04d516b35c401aab7ce8f60765308d5";
 
     let body = serde_json::json!({
@@ -932,7 +931,7 @@ pub async fn get_pinned_chat_messages(
     let client = crate::http::client();
     let response = client
         .post(GQL_URL)
-        .header("Client-Id", ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .header("Accept", "*/*")
         .header("Content-Type", "application/json")
@@ -1151,7 +1150,7 @@ async fn device_gql(
     };
     let resp = crate::http::client()
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({ "operationName": operation, "query": query, "variables": variables }))
         .send()
@@ -1750,7 +1749,7 @@ pub async fn get_channel_points(
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "ChannelPointsContext",
@@ -1778,7 +1777,7 @@ pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Va
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "Inventory",
@@ -1920,7 +1919,7 @@ pub async fn claim_drop(drop_instance_id: String, app: tauri::AppHandle) -> Resu
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "DropsPage_ClaimDropRewards",
@@ -1985,7 +1984,7 @@ pub(crate) async fn resolve_broadcaster_id(login: &str, token: &str) -> Result<S
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "query": "query R($login:String!){ user(login:$login){ id } }",
@@ -2093,7 +2092,7 @@ pub async fn get_channel_rewards(
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "ChannelPointsContext",
@@ -2214,35 +2213,84 @@ pub async fn get_available_emotes(
         None => return Ok(serde_json::json!([])),
     };
     let channel_id = resolve_broadcaster_id(&channel_login, &token).await?;
+    // Twitch renamed this persisted query to AvailableEmotesForChannelPaginated (same hash) and made
+    // pageLimit required (10-16-26: the old name answered "Variable $pageLimit ... was not provided", so
+    // sub emotes from other channels quietly stopped loading). pages are followed by cursor while Twitch
+    // says there are more; a later page failing keeps what the earlier ones returned
     const HASH: &str = "6c45e0ecaa823cc7db3ecdd1502af2223c775bdcfb0f18a3a0ce9a0b7db8ef6c";
+    const PAGE_LIMIT: u32 = 350;
+    const MAX_PAGES: usize = 10;
     let client = crate::http::client();
-    let resp = client
-        .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
-        .header("Authorization", format!("OAuth {token}"))
-        .json(&serde_json::json!({
-            "operationName": "AvailableEmotesForChannel",
-            "variables": { "channelID": channel_id, "withOwner": true },
-            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
-        }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    // surface a GQL error (wrong hash/variables) instead of silently returning nothing
-    if let Some(errs) = json.get("errors").and_then(|v| v.as_array()) {
-        if !errs.is_empty() {
-            let msg = errs[0]
-                .pointer("/message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("GraphQL error");
-            return Err(format!("AvailableEmotesForChannel: {msg}"));
-        }
-    }
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    collect_emotes(&json, &mut out, &mut seen);
+    let mut cursor: Option<String> = None;
+    for page in 0..MAX_PAGES {
+        let mut variables = serde_json::json!({ "channelID": channel_id, "withOwner": true, "pageLimit": PAGE_LIMIT });
+        if let Some(c) = &cursor {
+            variables["cursor"] = serde_json::json!(c);
+        }
+        let resp = client
+            .post("https://gql.twitch.tv/gql")
+            .header("Client-Id", crate::twitch_device_auth::device_client_id())
+            .header("Authorization", format!("OAuth {token}"))
+            .json(&serde_json::json!({
+                "operationName": "AvailableEmotesForChannelPaginated",
+                "variables": variables,
+                "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+            }))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        // surface a GQL error (wrong hash/variables) on the first page instead of silently returning nothing
+        if let Some(errs) = json.get("errors").and_then(|v| v.as_array()) {
+            if !errs.is_empty() {
+                if page > 0 {
+                    break;
+                }
+                let msg = errs[0]
+                    .pointer("/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("GraphQL error");
+                return Err(format!("AvailableEmotesForChannel: {msg}"));
+            }
+        }
+        collect_emotes(&json, &mut out, &mut seen);
+        match next_emote_page_cursor(&json) {
+            Some(c) if cursor.as_deref() != Some(c.as_str()) => cursor = Some(c),
+            _ => break,
+        }
+    }
     Ok(serde_json::json!(out))
+}
+
+// the cursor for the next page of availableEmoteSetsPaginated, when Twitch says there is one: a connection's
+// pageInfo.hasNextPage plus the last edge's cursor. None when there are no more pages or the shape differs
+fn next_emote_page_cursor(json: &serde_json::Value) -> Option<String> {
+    let conn = json.pointer("/data/channel/self/availableEmoteSetsPaginated")?;
+    if conn.pointer("/pageInfo/hasNextPage").and_then(|v| v.as_bool()) != Some(true) {
+        return None;
+    }
+    let cursor = conn.get("edges")?.as_array()?.last()?.get("cursor")?.as_str()?;
+    (!cursor.is_empty() && cursor.len() <= 1024).then(|| cursor.to_string())
+}
+
+#[cfg(test)]
+mod emote_page_tests {
+    use super::next_emote_page_cursor;
+    use serde_json::json;
+
+    #[test]
+    fn follows_pages_only_when_twitch_says_more() {
+        let more = json!({"data":{"channel":{"self":{"availableEmoteSetsPaginated":{
+            "edges":[{"cursor":"a","node":{}},{"cursor":"b","node":{}}],"pageInfo":{"hasNextPage":true}}}}}});
+        assert_eq!(next_emote_page_cursor(&more).as_deref(), Some("b"));
+        let last = json!({"data":{"channel":{"self":{"availableEmoteSetsPaginated":{
+            "edges":[{"cursor":"c"}],"pageInfo":{"hasNextPage":false}}}}}});
+        assert_eq!(next_emote_page_cursor(&last), None);
+        let anon = json!({"data":{"channel":{"self":{"availableEmoteSetsPaginated":null}}}});
+        assert_eq!(next_emote_page_cursor(&anon), None);
+    }
 }
 
 fn collect_emotes(
@@ -2364,7 +2412,7 @@ async fn post_redeem_json(token: &str, payload: serde_json::Value) -> Result<ser
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .header("X-Device-Id", did.as_str())
         .header("Client-Session-Id", &did[..16])
@@ -2411,7 +2459,7 @@ pub async fn get_channel_emotes(
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "ChannelPointsContext",
@@ -2555,7 +2603,7 @@ pub async fn redeem_reward(
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .header("X-Device-Id", device_id.as_str())
         .header("Client-Session-Id", &session_id[..16])
@@ -3064,7 +3112,7 @@ pub async fn get_resub_notification(
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "Chat_ShareResub_ChannelData",
@@ -3110,7 +3158,7 @@ pub async fn share_resub(
     let client = crate::http::client();
     let resp = client
         .post("https://gql.twitch.tv/gql")
-        .header("Client-Id", crate::twitch_device_auth::ANDROID_CLIENT_ID)
+        .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({
             "operationName": "Chat_ShareResub_UseResubToken",
