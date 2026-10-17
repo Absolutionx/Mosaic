@@ -315,7 +315,7 @@ export class TwitchChat {
     if (this.container) {
       this.container.addEventListener("scroll", () => {
         // ignore scroll events from our own scrollTop writes (auto-scroll, Jump to latest, connect() reset),
-        // checked FIRST. this used to run after dismissing the link preview, so every auto-scroll cancelled an
+        // checked FIRST. this used to run after dismissing the link preview, so every auto-scroll canceled an
         // open preview and re-fired mouseenter/leave under a stationary cursor, which read as chat "vibrating"
         if (this._suppressNextScrollEvent) {
           this._suppressNextScrollEvent = false;
@@ -1953,7 +1953,7 @@ export class TwitchChat {
           if (view.mode !== "ended") view.showApproaching(model);
           next = ACTIVE;
         } else {
-          // the train vanished without an "ended" record: summarise what we last saw
+          // the train vanished without an "ended" record: summarize what we last saw
           if (view.mode === "active") view.showEnded({ ...view.model, ended: true });
           else if (view.mode !== "ended") view.clear();
           next = IDLE;

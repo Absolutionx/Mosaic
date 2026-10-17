@@ -1,4 +1,4 @@
-// A themed dropdown to use instead of a native <select>, whose open list is drawn by the OS (Windows' grey
+// A themed dropdown to use instead of a native <select>, whose open list is drawn by the OS (Windows' gray
 // highlight, light borders) and can't be styled to match the app. Keyboard works like a select: Up/Down
 // move, Enter/Space pick, Escape closes (focus back on the button), Tab moves on.
 

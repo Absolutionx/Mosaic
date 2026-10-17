@@ -2832,7 +2832,7 @@ fn subscription_summary(
 // Unofficial GraphQL, like get_subscription_info: currentUser.subscriptionBenefits, one page of 100. null
 // without the device login; Err (with Twitch's message) when Twitch rejects the query, so the caller can tell
 // "no subscriptions" from "couldn't ask". { user_id, subs: [{ login, name, tier, prime, is_gift, renews_at,
-// ends_at }] }. renews_at is null for a subscription that won't renew (gifted, Prime, cancelled); ends_at
+// ends_at }] }. renews_at is null for a subscription that won't renew (gifted, Prime, canceled); ends_at
 // is then the day it runs out
 #[tauri::command]
 pub async fn get_my_subscriptions(app: tauri::AppHandle) -> Result<serde_json::Value, String> {

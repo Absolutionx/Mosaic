@@ -385,7 +385,7 @@ async fn finish_login(
     let Some(pending) = pending else {
         return Err("no login in progress".into());
     };
-    let code = code.ok_or("authorization was denied or cancelled")?;
+    let code = code.ok_or("authorization was denied or canceled")?;
     // CSRF: the state we get back must equal the one we sent
     if state.as_deref() != Some(pending.state.as_str()) {
         return Err("state mismatch (possible CSRF) - login aborted".into());

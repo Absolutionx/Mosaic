@@ -1319,7 +1319,7 @@ header #login-btn.logged-in { border-radius: 7px; }
 }
 /* VOD chat heatmap (vod-heatmap.js / renderChatHeatmap): a soft area chart of chat activity just above
    the seek bar, spikes marked with dots. It's a child of the seek track, so clicking it seeks and
-   hovering shows the time preview (labelled "Chat spike" near a peak). Fades in once data arrives. */
+   hovering shows the time preview (labeled "Chat spike" near a peak). Fades in once data arrives. */
 .seek-bar-heatmap {
   position: absolute;
   left: 0;
@@ -4439,7 +4439,7 @@ body.kick-mode .channel-info-follow-btn.is-following:hover {
 }
 .multiview-icon-btn:hover { background: #2e2e35; color: #fff; }
 /* Custom tooltips for the command-bar buttons - native title tooltips get
-   cancelled when the bar re-renders/auto-hides, so they'd flicker or not show.
+   canceled when the bar re-renders/auto-hides, so they'd flicker or not show.
    These render reliably on hover. */
 .mv-tip { position: relative; }
 .mv-tip::after {
@@ -4789,7 +4789,7 @@ body.multiview-active .deps-banner {
 .multiview-tile-mute.audible { color: #fff; }
 .multiview-tile-remove:hover { background: rgba(235, 87, 87, 0.28); color: #ffb0b0; }
 /* volume: thin track, accent fill up to the level (--vol, set in _updateTileAudioUi), small white handle;
-   greyed while muted so the saved level still shows */
+   grayed while muted so the saved level still shows */
 .multiview-tile-volume {
   -webkit-appearance: none;
   appearance: none;
@@ -8673,7 +8673,7 @@ body.reduce-motion *::after { animation: none !important; transition: none !impo
 /* ==== Scrollbars everywhere ====
    Every scrollable area gets the app's slim themed scrollbar by default: Mod Actions / chat filter /
    Twitch connection / rewards modals and anything added later, which otherwise fell back to the
-   browser's default (thick, grey, with arrows). :where() has zero specificity, so every element that styles
+   browser's default (thick, gray, with arrows). :where() has zero specificity, so every element that styles
    its own scrollbar still wins. WebView2 honors the standard properties; the -webkit- rules cover older
    runtimes */
 :where(*) {
@@ -8686,7 +8686,7 @@ body.reduce-motion *::after { animation: none !important; transition: none !impo
 ::-webkit-scrollbar-thumb:hover { background: var(--m-border, #29313d); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* the shared modal box (Mod Actions, chat filter, Twitch connection, rewards): app surface, not the old greys */
+/* the shared modal box (Mod Actions, chat filter, Twitch connection, rewards): app surface, not the old grays */
 .chat-filter-modal {
   background: var(--m-surface, #161b22);
   border-color: var(--m-border, #29313d);
@@ -8932,7 +8932,7 @@ body.reduce-motion *::after { animation: none !important; transition: none !impo
 .clip-card.error .clip-card-title { color: #ff9c9c; }
 .clip-card-note { margin-top: 6px; font-size: 11.5px; line-height: 1.4; color: #ffd28f; }
 
-/* ==== Link preview on hover (chat-link-preview.js): app theme, not the old greys ==== */
+/* ==== Link preview on hover (chat-link-preview.js): app theme, not the old grays ==== */
 .link-preview-popup {
   width: 300px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 45%), var(--m-surface, #161b22);
@@ -9856,7 +9856,7 @@ header .titlebar-action-buttons #login-btn { position: relative; overflow: hidde
 .home-carousel-card > .live-hover-video { border-radius: 11px 11px 0 0; }
 
 /* accessibility: text only screen readers see (the page's h1); chat status and carousel names at a readable
-   contrast (4.5:1 on their backgrounds; the status was ~3.6:1, accent-coloured names ~3.7:1) */
+   contrast (4.5:1 on their backgrounds; the status was ~3.6:1, accent-colored names ~3.7:1) */
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
@@ -9864,7 +9864,7 @@ header .titlebar-action-buttons #login-btn { position: relative; overflow: hidde
 #chat-pane .chat-status { color: var(--m-muted, #9aa5b4); }
 .home-carousel-name { color: color-mix(in srgb, var(--m-accent) 68%, #fff); }
 
-/* app-wide toast (app-toast.js): bottom centre, neutral surface like the panels, red-tinted text for errors */
+/* app-wide toast (app-toast.js): bottom center, neutral surface like the panels, red-tinted text for errors */
 .app-toast {
   position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); z-index: 13000;
   max-width: min(560px, calc(100vw - 32px)); padding: 10px 16px; border-radius: 10px;

@@ -27,7 +27,7 @@ export async function openModMenu(anchorBtn, chat) {
 
   // Anchor to the shield button. The button now lives in the chat-mode row near the bottom of the
   // window, so opening straight down would push the menu off-screen (the original always-below
-  // behaviour). positionModMenu flips it above the button when there isn't room below. Called now with
+  // behavior). positionModMenu flips it above the button when there isn't room below. Called now with
   // the "Loading…" body and again after the real content renders, since the height changes.
   positionModMenu(menu, anchorBtn);
 

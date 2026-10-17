@@ -578,7 +578,7 @@ async fn handle_irc_line<S>(
             //   CLEARCHAT #channel :username  - one user's messages cleared (ban-duration tag present = timeout for
             //     that many seconds; absent = permanent ban)
             //   CLEARCHAT #channel            - entire chat cleared (the "Clear Chat" action; no trailing text)
-            // emitted regardless of whether THIS client's user did it, any mod/the broadcaster clearing a user (via this app, the website, or any client) should grey out/remove that user's lines here too, same as twitch.tv
+            // emitted regardless of whether THIS client's user did it, any mod/the broadcaster clearing a user (via this app, the website, or any client) should gray out/remove that user's lines here too, same as twitch.tv
             if trailing.is_empty() {
                 let _ = app.emit("chat-clearchat", ChatClearChatEvent {
                     target_user_id: None,

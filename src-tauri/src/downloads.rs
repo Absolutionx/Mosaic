@@ -149,7 +149,7 @@ pub async fn start_vod_download(
                 let last = err_text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
                 let _ = app3.emit("vod-download-done", serde_json::json!({
                     "id": id3, "ok": false, "cancelled": cancelled,
-                    "error": if cancelled { "Cancelled".to_string() } else if last.is_empty() { "ffmpeg stopped unexpectedly".to_string() } else { last },
+                    "error": if cancelled { "Canceled".to_string() } else if last.is_empty() { "ffmpeg stopped unexpectedly".to_string() } else { last },
                 }));
             }
         }

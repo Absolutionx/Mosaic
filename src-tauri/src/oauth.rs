@@ -257,7 +257,7 @@ const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
   }
 
   if (!token) {
-    show('Login cancelled', 'No token received. You can close this tab.', 'err');
+    show('Login canceled', 'No token received. You can close this tab.', 'err');
     return;
   }
 

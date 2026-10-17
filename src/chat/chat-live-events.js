@@ -606,7 +606,7 @@ export const chatLiveEventsMixin = {
         : `${bet ? "Add" : "Predict"} ${fmt(amt)} on ${o.title}`;
       const cap = this._leBetCap();
       betBox.querySelectorAll(".le-chip[data-v]").forEach((c) => {
-        // + chips grey out once you're at the cap; Max lights up while you're on it
+        // + chips gray out once you're at the cap; Max lights up while you're on it
         c.disabled = amt >= cap;
         if (c.dataset.v === "max") c.classList.toggle("on", amt > 0 && amt === cap);
       });

@@ -803,7 +803,7 @@ export class MultiView {
     }
     const slider = rec.tileEl.querySelector(".multiview-tile-volume");
     // show the saved level even when muted, so it can be pre-set. --vol drives the themed fill; the
-    // "muted" class greys it out
+    // "muted" class grays it out
     if (slider) {
       slider.value = String(rec.volumeLevel ?? 0);
       slider.style.setProperty("--vol", `${Math.round((rec.volumeLevel ?? 0) * 100)}%`);

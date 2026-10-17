@@ -167,7 +167,7 @@ export const chatModActionsMixin = {
   },
 
   // disable the btn while in flight so a slow connection doesn't invite a second click
-  // btn (optional): greyed out while the request runs. the right-click menu closes itself instead, so passes none
+  // btn (optional): grayed out while the request runs. the right-click menu closes itself instead, so passes none
   async _deleteMessage(msgId, btn = null) {
     if (!msgId || !this.roomId) return;
     const original = btn ? btn.innerHTML : "";

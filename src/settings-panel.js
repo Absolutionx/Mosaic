@@ -115,7 +115,7 @@ const SECTIONS = [
     { kind: "toggle", id: "notifyCategory", title: "Category notifications", desc: "When a channel switches to a category you asked about." },
     { kind: "toggle", id: "notifyWhispers", title: "Whisper notifications", desc: "When a whisper arrives while Mosaic isn't the focused window." },
     { kind: "toggle", id: "hypeTrainNotify", title: "Hype train notifications", desc: "When a channel you follow starts a hype train." },
-    { kind: "toggle", id: "notifySubExpiry", title: "Subscription ending reminders", desc: "Before a Twitch subscription that won't renew runs out (gifted, Prime or cancelled). Needs the Twitch device login." },
+    { kind: "toggle", id: "notifySubExpiry", title: "Subscription ending reminders", desc: "Before a Twitch subscription that won't renew runs out (gifted, Prime or canceled). Needs the Twitch device login." },
     { kind: "select", id: "subExpiryDays", title: "Remind me", desc: "How far ahead. A second reminder comes on the last day.",
       options: [1, 3, 7, 14].map((v) => ({ value: v, label: v === 1 ? "1 day before" : `${v} days before` })) },
     { kind: "toggle", id: "subEndingNotice", title: "Show it on the channel", desc: "Watching a channel whose subscription ends within 3 days and won't renew: the Subscribed button says how long is left, and a line in chat when you open it." },

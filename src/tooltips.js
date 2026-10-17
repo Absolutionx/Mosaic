@@ -121,7 +121,7 @@ export function initTooltips() {
   document.addEventListener("mouseover", onOver, true);
   document.addEventListener("mouseout", onOut, true);
   // anything that normally dismisses a tooltip. NOT "scroll": live chat auto-scrolls several times a second,
-  // so hiding on any scroll cancelled every pending tooltip before it could appear (tooltips never showed
+  // so hiding on any scroll canceled every pending tooltip before it could appear (tooltips never showed
   // in the app). the user scrolling is covered by "wheel", and content moving out from under a still
   // cursor fires mouseout (Chromium re-dispatches boundary events after a scroll), which releases it
   for (const ev of ["mousedown", "wheel", "keydown", "dragstart"]) document.addEventListener(ev, hideTip, true);

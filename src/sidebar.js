@@ -352,7 +352,7 @@ export class ChannelsSidebar {
     }
   }
 
-  // local follow list + one batched kick_followed_status lookup. live first, offline greyed
+  // local follow list + one batched kick_followed_status lookup. live first, offline grayed
   // after, same rows buildChannelRow draws for Twitch. a failed lookup falls back to the stored
   // name/avatar and renders offline
   async refreshKickFollowing() {

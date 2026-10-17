@@ -13,9 +13,9 @@ const win = getCurrentWindow();
 //
 // In THEATER mode the top header is hidden (visibility:hidden, squeezed to a thin strip), so it can't
 // be grabbed to move the window. To keep the window draggable there, the same drag/double-click
-// behaviour is also attached to the chat pane's header bar ("Chat") and the empty strip above the
+// behavior is also attached to the chat pane's header bar ("Chat") and the empty strip above the
 // video. Those surfaces exist in every mode; the shared handlers below ignore clicks on real controls,
-// so adding them changes nothing about normal button/scroll behaviour.
+// so adding them changes nothing about normal button/scroll behavior.
 const dragEls = [
   document.querySelector("header"),
   document.querySelector(".chat-header"),

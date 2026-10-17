@@ -1,5 +1,5 @@
 // Reminders before a Twitch subscription runs out (Settings > Notifications > Subscription ending reminders).
-// Only subscriptions that won't renew count: gifted, Prime, or cancelled ones, where Twitch gives an end date
+// Only subscriptions that won't renew count: gifted, Prime, or canceled ones, where Twitch gives an end date
 // and no renewal date. A subscription that renews is never mentioned.
 //
 // what Mosaic knows comes from two places, both Twitch's web data (unofficial, needs the device login):

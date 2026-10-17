@@ -158,7 +158,7 @@ function parseModerate(ev) {
     case "vip": text = `added ${target(ev.vip)} as VIP`; break;
     case "unvip": text = `removed VIP from ${target(ev.unvip)}`; break;
     case "raid": text = `raided ${(ev.raid && ev.raid.user_name) || "a channel"}`; break;
-    case "unraid": text = "cancelled the raid"; break;
+    case "unraid": text = "canceled the raid"; break;
     case "warn": text = `warned ${target(ev.warn)}${ev.warn && ev.warn.reason ? ` — ${ev.warn.reason}` : ""}`; break;
     case "add_blocked_term": text = "added a blocked term"; break;
     case "remove_blocked_term": text = "removed a blocked term"; break;

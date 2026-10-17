@@ -20,7 +20,7 @@ function normalizeColorUncached(hex) {
   };
   // 4.5:1 (readable small text) against the chat background. chat sits on the theme surface (#161b22,
   // luminance ~0.0103), not the old #0e0e10 this was tuned for, so the old 0.193 left some names at ~4:1.
-  // (L+0.05)/(0.0103+0.05) = 4.5 -> L ~= 0.222, plus a little margin for the rounding to a hex colour
+  // (L+0.05)/(0.0103+0.05) = 4.5 -> L ~= 0.222, plus a little margin for the rounding to a hex color
   const MIN_LUM = 0.228;
   if (relLum(r, g, b) >= MIN_LUM) return hex;
 

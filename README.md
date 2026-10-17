@@ -74,7 +74,7 @@ memory, with no ads SDK and no browser chrome.
   timeout presets and ban, and slash commands. A **shield menu** exposes room
   controls, emote-only, followers-only (with minimum follow time), subscriber-only,
   slow mode, unique-chat (r9k), and clear chat.
-- **Mod action log**, a live, colour-coded feed of bans, timeouts, and deletions
+- **Mod action log**, a live, color-coded feed of bans, timeouts, and deletions
   on any channel (with richer "who did what" detail on channels you moderate),
   plus a **Mod Chat** tab that filters chat down to just moderators and the
   broadcaster.
@@ -144,7 +144,7 @@ in-app the first time you use them).
   on Twitch. The button reads "Subscribed" when you are. Mosaic never buys or
   changes a subscription. Tier and renewal details use the Twitch device login.
 - **Subscription ending reminders**, a desktop notification before a Twitch
-  subscription that won't renew runs out (gifted, Prime or cancelled): once a
+  subscription that won't renew runs out (gifted, Prime or canceled): once a
   chosen number of days ahead and once on the last day, for any channel, not just
   the one you're watching. The panel shows the end date and days left, and the
   Subscribe button gets a dot when the end is near. Within 3 days, the button on

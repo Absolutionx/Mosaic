@@ -274,7 +274,7 @@ export const chatEventsMixin = {
     const outcomeHtml = outcomes.map((o) => {
       const pts = Number(o.channel_points) || 0;
       const pct = totalPoints > 0 ? Math.round(pts / totalPoints * 100) : 0;
-      // Twitch's outcome colours are BLUE / PINK; anything else falls back to blue rather than reaching the class
+      // Twitch's outcome colors are BLUE / PINK; anything else falls back to blue rather than reaching the class
       const color = /^[a-z]+$/i.test(o.color || "") ? o.color.toLowerCase() : "blue";
       return `
         <div class="prediction-outcome outcome-${color}" data-id="${this._escape(o.id)}">
