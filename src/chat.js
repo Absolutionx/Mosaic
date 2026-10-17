@@ -1405,15 +1405,20 @@ export class TwitchChat {
   _paintCss(paint) {
     const data = paint && paint.data;
     if (!data || !Array.isArray(data.layers) || !data.layers.length) return null;
-    const rgba = (c) => (c ? `rgba(${c.r || 0},${c.g || 0},${c.b || 0},${(c.a == null ? 255 : c.a) / 255})` : "rgba(0,0,0,1)");
-    const stopsStr = (stops) => (stops || []).map((s) => `${rgba(s.color)} ${Math.round((s.at || 0) * 100)}%`).join(", ");
+    // every value from 7TV is forced to a number before it reaches CSS: a string there could close the
+    // gradient and add its own url(...) (an outside image, revealing your IP)
+    const num = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || 0));
+    const rgba = (c) => (c
+      ? `rgba(${num(c.r, 0, 255)},${num(c.g, 0, 255)},${num(c.b, 0, 255)},${num(c.a == null ? 255 : c.a, 0, 255) / 255})`
+      : "rgba(0,0,0,1)");
+    const stopsStr = (stops) => (stops || []).map((s) => `${rgba(s.color)} ${Math.round(num(s.at, 0, 1) * 100)}%`).join(", ");
     const images = [];
     for (const layer of data.layers) {
       const ty = layer.ty || {};
       switch (ty.__typename) {
         case "PaintLayerTypeLinearGradient": {
           const s = stopsStr(ty.stops);
-          if (s) images.push(`${ty.repeating ? "repeating-" : ""}linear-gradient(${ty.angle || 0}deg, ${s})`);
+          if (s) images.push(`${ty.repeating ? "repeating-" : ""}linear-gradient(${num(ty.angle, -3600, 3600)}deg, ${s})`);
           break;
         }
         case "PaintLayerTypeRadialGradient": {
@@ -1433,7 +1438,7 @@ export class TwitchChat {
     let filter = "";
     if (Array.isArray(data.shadows) && data.shadows.length) {
       filter = data.shadows
-        .map((s) => `drop-shadow(${s.offsetX || 0}px ${s.offsetY || 0}px ${s.blur || 0}px ${rgba(s.color)})`)
+        .map((s) => `drop-shadow(${num(s.offsetX, -50, 50)}px ${num(s.offsetY, -50, 50)}px ${num(s.blur, 0, 50)}px ${rgba(s.color)})`)
         .join(" ");
     }
     return { backgroundImage: images.join(", "), filter };

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-take-is-fresh-launch"
+description = "Enables the take_is_fresh_launch command without any pre-configured scope."
+commands.allow = ["take_is_fresh_launch"]
+
+[[permission]]
+identifier = "deny-take-is-fresh-launch"
+description = "Denies the take_is_fresh_launch command without any pre-configured scope."
+commands.deny = ["take_is_fresh_launch"]

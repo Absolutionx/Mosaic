@@ -345,6 +345,1992 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "All of Mosaic's app commands, for the main window only.\n#### This permission set includes:\n\n- `allow-take-is-fresh-launch`\n- `allow-identify-song`\n- `allow-get-user-note`\n- `allow-set-user-note`\n- `allow-get-user-note-ids`\n- `allow-pubsub-set-channel`\n- `allow-pubsub-clear`\n- `allow-seventv-cosmetics-set-channel`\n- `allow-seventv-cosmetics-clear`\n- `allow-get-all-seventv-paints`\n- `allow-get-all-seventv-badges`\n- `allow-send-whisper`\n- `allow-whisper-get-threads`\n- `allow-whisper-get-thread`\n- `allow-whisper-record`\n- `allow-whisper-mark-read`\n- `allow-whisper-total-unread`\n- `allow-get-hidden-drops`\n- `allow-set-drop-hidden`\n- `allow-heartbeat-set-target`\n- `allow-heartbeat-clear-target`\n- `allow-heartbeat-set-playing`\n- `allow-start-stream`\n- `allow-get-kick-stream`\n- `allow-get-kick-channel-chat-info`\n- `allow-get-kick-live-dvr`\n- `allow-kick-followed-status`\n- `allow-kick-top-live-streams`\n- `allow-kick-live-streams-page`\n- `allow-kick-top-games`\n- `allow-kick-streams-for-category`\n- `allow-kick-streams-for-game-names`\n- `allow-kick-search-categories`\n- `allow-kick-category-viewer-counts`\n- `allow-kick-channel-emotes`\n- `allow-kick-channel-videos`\n- `allow-kick-vod-playback`\n- `allow-kick-oauth-configured`\n- `allow-start-kick-oauth-login`\n- `allow-restore-kick-session`\n- `allow-kick-logout`\n- `allow-kick-send-chat-message`\n- `allow-start-kick-chat`\n- `allow-stop-kick-chat`\n- `allow-get-vod-m3u8-url`\n- `allow-resolve-clip-url`\n- `allow-get-live-m3u8-url`\n- `allow-get-live-preview-url`\n- `allow-get-vod-preview-url`\n- `allow-stop-stream`\n- `allow-get-available-qualities`\n- `allow-get-available-vod-qualities`\n- `allow-start-chat`\n- `allow-stop-chat`\n- `allow-start-oauth-login`\n- `allow-get-notify-channels`\n- `allow-set-notify-channels`\n- `allow-get-notify-category-targets`\n- `allow-set-notify-category-targets`\n- `allow-get-all-vod-progress`\n- `allow-get-vod-progress`\n- `allow-save-vod-progress`\n- `allow-backfill-vod-progress-metadata`\n- `allow-dismiss-vod-from-continue`\n- `allow-restore-session`\n- `allow-logout`\n- `allow-fetch-global-badges`\n- `allow-fetch-global-emotes`\n- `allow-fetch-channel-badges`\n- `allow-fetch-cheermotes`\n- `allow-fetch-link-preview`\n- `allow-fetch-storyboard-json`\n- `allow-check-stream-deps`\n- `allow-install-stream-deps`\n- `allow-check-streamlink-update`\n- `allow-update-streamlink`\n- `allow-ban-user`\n- `allow-unban-user`\n- `allow-delete-chat-message`\n- `allow-get-chat-settings`\n- `allow-update-chat-settings`\n- `allow-automod-process-message`\n- `allow-get-user-id-for-login`\n- `allow-start-eventsub`\n- `allow-stop-eventsub`\n- `allow-start-account-eventsub`\n- `allow-stop-account-eventsub`\n- `allow-set-close-to-tray`\n- `allow-start-seventv-events`\n- `allow-stop-seventv-events`\n- `allow-send-chat-message`\n- `allow-get-followed-channels`\n- `allow-get-pinned-chat-messages`\n- `allow-get-hype-train`\n- `allow-get-channel-prediction`\n- `allow-get-channel-poll`\n- `allow-make-prediction`\n- `allow-vote-on-poll`\n- `allow-get-prediction-result`\n- `allow-get-badge-options`\n- `allow-set-chat-badge`\n- `allow-follow-channel`\n- `allow-search-twitch-channels`\n- `allow-get-channel-clips`\n- `allow-get-drop-campaigns`\n- `allow-channel-points-tick`\n- `allow-heartbeat-status`\n- `allow-start-vod-download`\n- `allow-cancel-vod-download`\n- `allow-reveal-download`\n- `allow-launched-at-startup`\n- `allow-set-memory-saver`\n- `allow-context-menu-choose`\n- `allow-spell-suggest`\n- `allow-set-devtools-enabled`\n- `allow-open-devtools`\n- `allow-save-backup-file`\n- `allow-set-app-fullscreen`\n- `allow-create-clip`\n- `allow-get-channel-points`\n- `allow-get-drops-inventory`\n- `allow-claim-drop`\n- `allow-get-watch-streak`\n- `allow-share-watch-streak`\n- `allow-get-channel-rewards`\n- `allow-redeem-reward`\n- `allow-redeem-highlight-message`\n- `allow-redeem-random-emote`\n- `allow-get-channel-emotes`\n- `allow-get-available-emotes`\n- `allow-get-active-hype-trains`\n- `allow-get-follow-info`\n- `allow-get-subscription-info`\n- `allow-get-my-subscriptions`\n- `allow-get-onsite-notifications`\n- `allow-notifications-action`\n- `allow-get-prime-offers`\n- `allow-claim-prime-offer`\n- `allow-get-resub-notification`\n- `allow-share-resub`\n- `allow-unlock-chosen-emote`\n- `allow-unlock-modified-emote`\n- `allow-twitch-device-start`\n- `allow-twitch-device-poll`\n- `allow-twitch-device-connected`\n- `allow-twitch-device-logout`\n- `allow-get-chatters`\n- `allow-get-streams-for-users`\n- `allow-get-stream-for-login`\n- `allow-get-user-by-login`\n- `allow-get-users-info`\n- `allow-get-top-live-streams`\n- `allow-get-live-streams-page`\n- `allow-get-streams-for-game-names`\n- `allow-get-top-games`\n- `allow-get-streams-for-game-id`\n- `allow-search-categories`\n- `allow-get-vod-chat-density`\n- `allow-get-vod-top-clips`\n- `allow-get-clip-info`\n- `allow-get-category-viewer-counts`\n- `allow-get-videos-for-login`\n- `allow-get-vod-muted-segments`\n- `allow-get-live-vod-info`\n- `allow-get-vod-chat`",
+          "type": "string",
+          "const": "main-window",
+          "markdownDescription": "All of Mosaic's app commands, for the main window only.\n#### This permission set includes:\n\n- `allow-take-is-fresh-launch`\n- `allow-identify-song`\n- `allow-get-user-note`\n- `allow-set-user-note`\n- `allow-get-user-note-ids`\n- `allow-pubsub-set-channel`\n- `allow-pubsub-clear`\n- `allow-seventv-cosmetics-set-channel`\n- `allow-seventv-cosmetics-clear`\n- `allow-get-all-seventv-paints`\n- `allow-get-all-seventv-badges`\n- `allow-send-whisper`\n- `allow-whisper-get-threads`\n- `allow-whisper-get-thread`\n- `allow-whisper-record`\n- `allow-whisper-mark-read`\n- `allow-whisper-total-unread`\n- `allow-get-hidden-drops`\n- `allow-set-drop-hidden`\n- `allow-heartbeat-set-target`\n- `allow-heartbeat-clear-target`\n- `allow-heartbeat-set-playing`\n- `allow-start-stream`\n- `allow-get-kick-stream`\n- `allow-get-kick-channel-chat-info`\n- `allow-get-kick-live-dvr`\n- `allow-kick-followed-status`\n- `allow-kick-top-live-streams`\n- `allow-kick-live-streams-page`\n- `allow-kick-top-games`\n- `allow-kick-streams-for-category`\n- `allow-kick-streams-for-game-names`\n- `allow-kick-search-categories`\n- `allow-kick-category-viewer-counts`\n- `allow-kick-channel-emotes`\n- `allow-kick-channel-videos`\n- `allow-kick-vod-playback`\n- `allow-kick-oauth-configured`\n- `allow-start-kick-oauth-login`\n- `allow-restore-kick-session`\n- `allow-kick-logout`\n- `allow-kick-send-chat-message`\n- `allow-start-kick-chat`\n- `allow-stop-kick-chat`\n- `allow-get-vod-m3u8-url`\n- `allow-resolve-clip-url`\n- `allow-get-live-m3u8-url`\n- `allow-get-live-preview-url`\n- `allow-get-vod-preview-url`\n- `allow-stop-stream`\n- `allow-get-available-qualities`\n- `allow-get-available-vod-qualities`\n- `allow-start-chat`\n- `allow-stop-chat`\n- `allow-start-oauth-login`\n- `allow-get-notify-channels`\n- `allow-set-notify-channels`\n- `allow-get-notify-category-targets`\n- `allow-set-notify-category-targets`\n- `allow-get-all-vod-progress`\n- `allow-get-vod-progress`\n- `allow-save-vod-progress`\n- `allow-backfill-vod-progress-metadata`\n- `allow-dismiss-vod-from-continue`\n- `allow-restore-session`\n- `allow-logout`\n- `allow-fetch-global-badges`\n- `allow-fetch-global-emotes`\n- `allow-fetch-channel-badges`\n- `allow-fetch-cheermotes`\n- `allow-fetch-link-preview`\n- `allow-fetch-storyboard-json`\n- `allow-check-stream-deps`\n- `allow-install-stream-deps`\n- `allow-check-streamlink-update`\n- `allow-update-streamlink`\n- `allow-ban-user`\n- `allow-unban-user`\n- `allow-delete-chat-message`\n- `allow-get-chat-settings`\n- `allow-update-chat-settings`\n- `allow-automod-process-message`\n- `allow-get-user-id-for-login`\n- `allow-start-eventsub`\n- `allow-stop-eventsub`\n- `allow-start-account-eventsub`\n- `allow-stop-account-eventsub`\n- `allow-set-close-to-tray`\n- `allow-start-seventv-events`\n- `allow-stop-seventv-events`\n- `allow-send-chat-message`\n- `allow-get-followed-channels`\n- `allow-get-pinned-chat-messages`\n- `allow-get-hype-train`\n- `allow-get-channel-prediction`\n- `allow-get-channel-poll`\n- `allow-make-prediction`\n- `allow-vote-on-poll`\n- `allow-get-prediction-result`\n- `allow-get-badge-options`\n- `allow-set-chat-badge`\n- `allow-follow-channel`\n- `allow-search-twitch-channels`\n- `allow-get-channel-clips`\n- `allow-get-drop-campaigns`\n- `allow-channel-points-tick`\n- `allow-heartbeat-status`\n- `allow-start-vod-download`\n- `allow-cancel-vod-download`\n- `allow-reveal-download`\n- `allow-launched-at-startup`\n- `allow-set-memory-saver`\n- `allow-context-menu-choose`\n- `allow-spell-suggest`\n- `allow-set-devtools-enabled`\n- `allow-open-devtools`\n- `allow-save-backup-file`\n- `allow-set-app-fullscreen`\n- `allow-create-clip`\n- `allow-get-channel-points`\n- `allow-get-drops-inventory`\n- `allow-claim-drop`\n- `allow-get-watch-streak`\n- `allow-share-watch-streak`\n- `allow-get-channel-rewards`\n- `allow-redeem-reward`\n- `allow-redeem-highlight-message`\n- `allow-redeem-random-emote`\n- `allow-get-channel-emotes`\n- `allow-get-available-emotes`\n- `allow-get-active-hype-trains`\n- `allow-get-follow-info`\n- `allow-get-subscription-info`\n- `allow-get-my-subscriptions`\n- `allow-get-onsite-notifications`\n- `allow-notifications-action`\n- `allow-get-prime-offers`\n- `allow-claim-prime-offer`\n- `allow-get-resub-notification`\n- `allow-share-resub`\n- `allow-unlock-chosen-emote`\n- `allow-unlock-modified-emote`\n- `allow-twitch-device-start`\n- `allow-twitch-device-poll`\n- `allow-twitch-device-connected`\n- `allow-twitch-device-logout`\n- `allow-get-chatters`\n- `allow-get-streams-for-users`\n- `allow-get-stream-for-login`\n- `allow-get-user-by-login`\n- `allow-get-users-info`\n- `allow-get-top-live-streams`\n- `allow-get-live-streams-page`\n- `allow-get-streams-for-game-names`\n- `allow-get-top-games`\n- `allow-get-streams-for-game-id`\n- `allow-search-categories`\n- `allow-get-vod-chat-density`\n- `allow-get-vod-top-clips`\n- `allow-get-clip-info`\n- `allow-get-category-viewer-counts`\n- `allow-get-videos-for-login`\n- `allow-get-vod-muted-segments`\n- `allow-get-live-vod-info`\n- `allow-get-vod-chat`"
+        },
+        {
+          "description": "Enables the automod_process_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-automod-process-message",
+          "markdownDescription": "Enables the automod_process_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the backfill_vod_progress_metadata command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-backfill-vod-progress-metadata",
+          "markdownDescription": "Enables the backfill_vod_progress_metadata command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ban_user command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ban-user",
+          "markdownDescription": "Enables the ban_user command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_vod_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-vod-download",
+          "markdownDescription": "Enables the cancel_vod_download command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the channel_points_tick command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-channel-points-tick",
+          "markdownDescription": "Enables the channel_points_tick command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_stream_deps command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-stream-deps",
+          "markdownDescription": "Enables the check_stream_deps command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_streamlink_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-streamlink-update",
+          "markdownDescription": "Enables the check_streamlink_update command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the claim_drop command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claim-drop",
+          "markdownDescription": "Enables the claim_drop command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the claim_prime_offer command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-claim-prime-offer",
+          "markdownDescription": "Enables the claim_prime_offer command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the context_menu_choose command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-context-menu-choose",
+          "markdownDescription": "Enables the context_menu_choose command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_clip command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-clip",
+          "markdownDescription": "Enables the create_clip command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_chat_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-chat-message",
+          "markdownDescription": "Enables the delete_chat_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the dismiss_vod_from_continue command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-dismiss-vod-from-continue",
+          "markdownDescription": "Enables the dismiss_vod_from_continue command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_channel_badges command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-channel-badges",
+          "markdownDescription": "Enables the fetch_channel_badges command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_cheermotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-cheermotes",
+          "markdownDescription": "Enables the fetch_cheermotes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_global_badges command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-global-badges",
+          "markdownDescription": "Enables the fetch_global_badges command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_global_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-global-emotes",
+          "markdownDescription": "Enables the fetch_global_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_link_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-link-preview",
+          "markdownDescription": "Enables the fetch_link_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the fetch_storyboard_json command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-fetch-storyboard-json",
+          "markdownDescription": "Enables the fetch_storyboard_json command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the follow_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-follow-channel",
+          "markdownDescription": "Enables the follow_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_active_hype_trains command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-active-hype-trains",
+          "markdownDescription": "Enables the get_active_hype_trains command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_all_seventv_badges command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-all-seventv-badges",
+          "markdownDescription": "Enables the get_all_seventv_badges command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_all_seventv_paints command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-all-seventv-paints",
+          "markdownDescription": "Enables the get_all_seventv_paints command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_all_vod_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-all-vod-progress",
+          "markdownDescription": "Enables the get_all_vod_progress command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_available_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-available-emotes",
+          "markdownDescription": "Enables the get_available_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_available_qualities command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-available-qualities",
+          "markdownDescription": "Enables the get_available_qualities command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_available_vod_qualities command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-available-vod-qualities",
+          "markdownDescription": "Enables the get_available_vod_qualities command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_badge_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-badge-options",
+          "markdownDescription": "Enables the get_badge_options command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_category_viewer_counts command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-category-viewer-counts",
+          "markdownDescription": "Enables the get_category_viewer_counts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_channel_clips command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-channel-clips",
+          "markdownDescription": "Enables the get_channel_clips command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_channel_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-channel-emotes",
+          "markdownDescription": "Enables the get_channel_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_channel_points command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-channel-points",
+          "markdownDescription": "Enables the get_channel_points command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_channel_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-channel-poll",
+          "markdownDescription": "Enables the get_channel_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_channel_prediction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-channel-prediction",
+          "markdownDescription": "Enables the get_channel_prediction command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_channel_rewards command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-channel-rewards",
+          "markdownDescription": "Enables the get_channel_rewards command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_chat_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-chat-settings",
+          "markdownDescription": "Enables the get_chat_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_chatters command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-chatters",
+          "markdownDescription": "Enables the get_chatters command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_clip_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-clip-info",
+          "markdownDescription": "Enables the get_clip_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_drop_campaigns command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-drop-campaigns",
+          "markdownDescription": "Enables the get_drop_campaigns command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_drops_inventory command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-drops-inventory",
+          "markdownDescription": "Enables the get_drops_inventory command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_follow_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-follow-info",
+          "markdownDescription": "Enables the get_follow_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_followed_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-followed-channels",
+          "markdownDescription": "Enables the get_followed_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_hidden_drops command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-hidden-drops",
+          "markdownDescription": "Enables the get_hidden_drops command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_hype_train command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-hype-train",
+          "markdownDescription": "Enables the get_hype_train command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_kick_channel_chat_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-kick-channel-chat-info",
+          "markdownDescription": "Enables the get_kick_channel_chat_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_kick_live_dvr command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-kick-live-dvr",
+          "markdownDescription": "Enables the get_kick_live_dvr command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_kick_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-kick-stream",
+          "markdownDescription": "Enables the get_kick_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_live_m3u8_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-live-m3u8-url",
+          "markdownDescription": "Enables the get_live_m3u8_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_live_preview_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-live-preview-url",
+          "markdownDescription": "Enables the get_live_preview_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_live_streams_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-live-streams-page",
+          "markdownDescription": "Enables the get_live_streams_page command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_live_vod_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-live-vod-info",
+          "markdownDescription": "Enables the get_live_vod_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_my_subscriptions command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-my-subscriptions",
+          "markdownDescription": "Enables the get_my_subscriptions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_notify_category_targets command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-notify-category-targets",
+          "markdownDescription": "Enables the get_notify_category_targets command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_notify_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-notify-channels",
+          "markdownDescription": "Enables the get_notify_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_onsite_notifications command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-onsite-notifications",
+          "markdownDescription": "Enables the get_onsite_notifications command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_pinned_chat_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-pinned-chat-messages",
+          "markdownDescription": "Enables the get_pinned_chat_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_prediction_result command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-prediction-result",
+          "markdownDescription": "Enables the get_prediction_result command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_prime_offers command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-prime-offers",
+          "markdownDescription": "Enables the get_prime_offers command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_resub_notification command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-resub-notification",
+          "markdownDescription": "Enables the get_resub_notification command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_stream_for_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-stream-for-login",
+          "markdownDescription": "Enables the get_stream_for_login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_streams_for_game_id command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-streams-for-game-id",
+          "markdownDescription": "Enables the get_streams_for_game_id command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_streams_for_game_names command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-streams-for-game-names",
+          "markdownDescription": "Enables the get_streams_for_game_names command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_streams_for_users command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-streams-for-users",
+          "markdownDescription": "Enables the get_streams_for_users command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_subscription_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-subscription-info",
+          "markdownDescription": "Enables the get_subscription_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_top_games command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-top-games",
+          "markdownDescription": "Enables the get_top_games command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_top_live_streams command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-top-live-streams",
+          "markdownDescription": "Enables the get_top_live_streams command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_user_by_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-user-by-login",
+          "markdownDescription": "Enables the get_user_by_login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_user_id_for_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-user-id-for-login",
+          "markdownDescription": "Enables the get_user_id_for_login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_user_note command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-user-note",
+          "markdownDescription": "Enables the get_user_note command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_user_note_ids command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-user-note-ids",
+          "markdownDescription": "Enables the get_user_note_ids command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_users_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-users-info",
+          "markdownDescription": "Enables the get_users_info command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_videos_for_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-videos-for-login",
+          "markdownDescription": "Enables the get_videos_for_login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-chat",
+          "markdownDescription": "Enables the get_vod_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_chat_density command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-chat-density",
+          "markdownDescription": "Enables the get_vod_chat_density command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_m3u8_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-m3u8-url",
+          "markdownDescription": "Enables the get_vod_m3u8_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_muted_segments command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-muted-segments",
+          "markdownDescription": "Enables the get_vod_muted_segments command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_preview_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-preview-url",
+          "markdownDescription": "Enables the get_vod_preview_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-progress",
+          "markdownDescription": "Enables the get_vod_progress command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_vod_top_clips command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-vod-top-clips",
+          "markdownDescription": "Enables the get_vod_top_clips command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_watch_streak command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-watch-streak",
+          "markdownDescription": "Enables the get_watch_streak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the heartbeat_clear_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-heartbeat-clear-target",
+          "markdownDescription": "Enables the heartbeat_clear_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the heartbeat_set_playing command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-heartbeat-set-playing",
+          "markdownDescription": "Enables the heartbeat_set_playing command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the heartbeat_set_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-heartbeat-set-target",
+          "markdownDescription": "Enables the heartbeat_set_target command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the heartbeat_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-heartbeat-status",
+          "markdownDescription": "Enables the heartbeat_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the identify_song command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-identify-song",
+          "markdownDescription": "Enables the identify_song command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_stream_deps command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-stream-deps",
+          "markdownDescription": "Enables the install_stream_deps command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_category_viewer_counts command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-category-viewer-counts",
+          "markdownDescription": "Enables the kick_category_viewer_counts command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_channel_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-channel-emotes",
+          "markdownDescription": "Enables the kick_channel_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_channel_videos command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-channel-videos",
+          "markdownDescription": "Enables the kick_channel_videos command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_followed_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-followed-status",
+          "markdownDescription": "Enables the kick_followed_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_live_streams_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-live-streams-page",
+          "markdownDescription": "Enables the kick_live_streams_page command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-logout",
+          "markdownDescription": "Enables the kick_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_oauth_configured command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-oauth-configured",
+          "markdownDescription": "Enables the kick_oauth_configured command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_search_categories command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-search-categories",
+          "markdownDescription": "Enables the kick_search_categories command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_send_chat_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-send-chat-message",
+          "markdownDescription": "Enables the kick_send_chat_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_streams_for_category command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-streams-for-category",
+          "markdownDescription": "Enables the kick_streams_for_category command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_streams_for_game_names command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-streams-for-game-names",
+          "markdownDescription": "Enables the kick_streams_for_game_names command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_top_games command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-top-games",
+          "markdownDescription": "Enables the kick_top_games command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_top_live_streams command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-top-live-streams",
+          "markdownDescription": "Enables the kick_top_live_streams command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the kick_vod_playback command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-kick-vod-playback",
+          "markdownDescription": "Enables the kick_vod_playback command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the launched_at_startup command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-launched-at-startup",
+          "markdownDescription": "Enables the launched_at_startup command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-logout",
+          "markdownDescription": "Enables the logout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the make_prediction command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-make-prediction",
+          "markdownDescription": "Enables the make_prediction command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the notifications_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-notifications-action",
+          "markdownDescription": "Enables the notifications_action command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_devtools command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-devtools",
+          "markdownDescription": "Enables the open_devtools command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pubsub_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pubsub-clear",
+          "markdownDescription": "Enables the pubsub_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pubsub_set_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pubsub-set-channel",
+          "markdownDescription": "Enables the pubsub_set_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the redeem_highlight_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-redeem-highlight-message",
+          "markdownDescription": "Enables the redeem_highlight_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the redeem_random_emote command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-redeem-random-emote",
+          "markdownDescription": "Enables the redeem_random_emote command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the redeem_reward command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-redeem-reward",
+          "markdownDescription": "Enables the redeem_reward command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resolve_clip_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resolve-clip-url",
+          "markdownDescription": "Enables the resolve_clip_url command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restore_kick_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restore-kick-session",
+          "markdownDescription": "Enables the restore_kick_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restore_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restore-session",
+          "markdownDescription": "Enables the restore_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reveal_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-reveal-download",
+          "markdownDescription": "Enables the reveal_download command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_backup_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-backup-file",
+          "markdownDescription": "Enables the save_backup_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_vod_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-vod-progress",
+          "markdownDescription": "Enables the save_vod_progress command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the search_categories command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-search-categories",
+          "markdownDescription": "Enables the search_categories command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the search_twitch_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-search-twitch-channels",
+          "markdownDescription": "Enables the search_twitch_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_chat_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-chat-message",
+          "markdownDescription": "Enables the send_chat_message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the send_whisper command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-send-whisper",
+          "markdownDescription": "Enables the send_whisper command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_app_fullscreen command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-app-fullscreen",
+          "markdownDescription": "Enables the set_app_fullscreen command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_chat_badge command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-chat-badge",
+          "markdownDescription": "Enables the set_chat_badge command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_close_to_tray command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-close-to-tray",
+          "markdownDescription": "Enables the set_close_to_tray command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_devtools_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-devtools-enabled",
+          "markdownDescription": "Enables the set_devtools_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_drop_hidden command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-drop-hidden",
+          "markdownDescription": "Enables the set_drop_hidden command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_memory_saver command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-memory-saver",
+          "markdownDescription": "Enables the set_memory_saver command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_notify_category_targets command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-notify-category-targets",
+          "markdownDescription": "Enables the set_notify_category_targets command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_notify_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-notify-channels",
+          "markdownDescription": "Enables the set_notify_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_user_note command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-user-note",
+          "markdownDescription": "Enables the set_user_note command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the seventv_cosmetics_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-seventv-cosmetics-clear",
+          "markdownDescription": "Enables the seventv_cosmetics_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the seventv_cosmetics_set_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-seventv-cosmetics-set-channel",
+          "markdownDescription": "Enables the seventv_cosmetics_set_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the share_resub command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-share-resub",
+          "markdownDescription": "Enables the share_resub command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the share_watch_streak command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-share-watch-streak",
+          "markdownDescription": "Enables the share_watch_streak command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the spell_suggest command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-spell-suggest",
+          "markdownDescription": "Enables the spell_suggest command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_account_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-account-eventsub",
+          "markdownDescription": "Enables the start_account_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-chat",
+          "markdownDescription": "Enables the start_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-eventsub",
+          "markdownDescription": "Enables the start_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_kick_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-kick-chat",
+          "markdownDescription": "Enables the start_kick_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_kick_oauth_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-kick-oauth-login",
+          "markdownDescription": "Enables the start_kick_oauth_login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_oauth_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-oauth-login",
+          "markdownDescription": "Enables the start_oauth_login command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_seventv_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-seventv-events",
+          "markdownDescription": "Enables the start_seventv_events command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-stream",
+          "markdownDescription": "Enables the start_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the start_vod_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-vod-download",
+          "markdownDescription": "Enables the start_vod_download command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_account_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-account-eventsub",
+          "markdownDescription": "Enables the stop_account_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-chat",
+          "markdownDescription": "Enables the stop_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-eventsub",
+          "markdownDescription": "Enables the stop_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_kick_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-kick-chat",
+          "markdownDescription": "Enables the stop_kick_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_seventv_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-seventv-events",
+          "markdownDescription": "Enables the stop_seventv_events command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the stop_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-stop-stream",
+          "markdownDescription": "Enables the stop_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the take_is_fresh_launch command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-take-is-fresh-launch",
+          "markdownDescription": "Enables the take_is_fresh_launch command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the twitch_device_connected command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-twitch-device-connected",
+          "markdownDescription": "Enables the twitch_device_connected command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the twitch_device_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-twitch-device-logout",
+          "markdownDescription": "Enables the twitch_device_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the twitch_device_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-twitch-device-poll",
+          "markdownDescription": "Enables the twitch_device_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the twitch_device_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-twitch-device-start",
+          "markdownDescription": "Enables the twitch_device_start command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unban_user command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-unban-user",
+          "markdownDescription": "Enables the unban_user command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unlock_chosen_emote command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-unlock-chosen-emote",
+          "markdownDescription": "Enables the unlock_chosen_emote command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unlock_modified_emote command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-unlock-modified-emote",
+          "markdownDescription": "Enables the unlock_modified_emote command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_chat_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-chat-settings",
+          "markdownDescription": "Enables the update_chat_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the update_streamlink command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-update-streamlink",
+          "markdownDescription": "Enables the update_streamlink command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the vote_on_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-vote-on-poll",
+          "markdownDescription": "Enables the vote_on_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the whisper_get_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-whisper-get-thread",
+          "markdownDescription": "Enables the whisper_get_thread command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the whisper_get_threads command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-whisper-get-threads",
+          "markdownDescription": "Enables the whisper_get_threads command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the whisper_mark_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-whisper-mark-read",
+          "markdownDescription": "Enables the whisper_mark_read command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the whisper_record command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-whisper-record",
+          "markdownDescription": "Enables the whisper_record command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the whisper_total_unread command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-whisper-total-unread",
+          "markdownDescription": "Enables the whisper_total_unread command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the automod_process_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-automod-process-message",
+          "markdownDescription": "Denies the automod_process_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the backfill_vod_progress_metadata command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-backfill-vod-progress-metadata",
+          "markdownDescription": "Denies the backfill_vod_progress_metadata command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ban_user command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ban-user",
+          "markdownDescription": "Denies the ban_user command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_vod_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-vod-download",
+          "markdownDescription": "Denies the cancel_vod_download command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the channel_points_tick command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-channel-points-tick",
+          "markdownDescription": "Denies the channel_points_tick command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_stream_deps command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-stream-deps",
+          "markdownDescription": "Denies the check_stream_deps command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_streamlink_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-streamlink-update",
+          "markdownDescription": "Denies the check_streamlink_update command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claim_drop command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claim-drop",
+          "markdownDescription": "Denies the claim_drop command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the claim_prime_offer command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-claim-prime-offer",
+          "markdownDescription": "Denies the claim_prime_offer command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the context_menu_choose command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-context-menu-choose",
+          "markdownDescription": "Denies the context_menu_choose command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_clip command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-clip",
+          "markdownDescription": "Denies the create_clip command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_chat_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-chat-message",
+          "markdownDescription": "Denies the delete_chat_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the dismiss_vod_from_continue command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-dismiss-vod-from-continue",
+          "markdownDescription": "Denies the dismiss_vod_from_continue command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_channel_badges command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-channel-badges",
+          "markdownDescription": "Denies the fetch_channel_badges command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_cheermotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-cheermotes",
+          "markdownDescription": "Denies the fetch_cheermotes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_global_badges command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-global-badges",
+          "markdownDescription": "Denies the fetch_global_badges command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_global_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-global-emotes",
+          "markdownDescription": "Denies the fetch_global_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_link_preview command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-link-preview",
+          "markdownDescription": "Denies the fetch_link_preview command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the fetch_storyboard_json command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-fetch-storyboard-json",
+          "markdownDescription": "Denies the fetch_storyboard_json command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the follow_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-follow-channel",
+          "markdownDescription": "Denies the follow_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_active_hype_trains command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-active-hype-trains",
+          "markdownDescription": "Denies the get_active_hype_trains command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_all_seventv_badges command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-all-seventv-badges",
+          "markdownDescription": "Denies the get_all_seventv_badges command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_all_seventv_paints command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-all-seventv-paints",
+          "markdownDescription": "Denies the get_all_seventv_paints command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_all_vod_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-all-vod-progress",
+          "markdownDescription": "Denies the get_all_vod_progress command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_available_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-available-emotes",
+          "markdownDescription": "Denies the get_available_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_available_qualities command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-available-qualities",
+          "markdownDescription": "Denies the get_available_qualities command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_available_vod_qualities command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-available-vod-qualities",
+          "markdownDescription": "Denies the get_available_vod_qualities command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_badge_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-badge-options",
+          "markdownDescription": "Denies the get_badge_options command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_category_viewer_counts command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-category-viewer-counts",
+          "markdownDescription": "Denies the get_category_viewer_counts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_channel_clips command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-channel-clips",
+          "markdownDescription": "Denies the get_channel_clips command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_channel_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-channel-emotes",
+          "markdownDescription": "Denies the get_channel_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_channel_points command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-channel-points",
+          "markdownDescription": "Denies the get_channel_points command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_channel_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-channel-poll",
+          "markdownDescription": "Denies the get_channel_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_channel_prediction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-channel-prediction",
+          "markdownDescription": "Denies the get_channel_prediction command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_channel_rewards command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-channel-rewards",
+          "markdownDescription": "Denies the get_channel_rewards command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_chat_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-chat-settings",
+          "markdownDescription": "Denies the get_chat_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_chatters command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-chatters",
+          "markdownDescription": "Denies the get_chatters command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_clip_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-clip-info",
+          "markdownDescription": "Denies the get_clip_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_drop_campaigns command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-drop-campaigns",
+          "markdownDescription": "Denies the get_drop_campaigns command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_drops_inventory command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-drops-inventory",
+          "markdownDescription": "Denies the get_drops_inventory command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_follow_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-follow-info",
+          "markdownDescription": "Denies the get_follow_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_followed_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-followed-channels",
+          "markdownDescription": "Denies the get_followed_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_hidden_drops command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-hidden-drops",
+          "markdownDescription": "Denies the get_hidden_drops command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_hype_train command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-hype-train",
+          "markdownDescription": "Denies the get_hype_train command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_kick_channel_chat_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-kick-channel-chat-info",
+          "markdownDescription": "Denies the get_kick_channel_chat_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_kick_live_dvr command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-kick-live-dvr",
+          "markdownDescription": "Denies the get_kick_live_dvr command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_kick_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-kick-stream",
+          "markdownDescription": "Denies the get_kick_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_live_m3u8_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-live-m3u8-url",
+          "markdownDescription": "Denies the get_live_m3u8_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_live_preview_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-live-preview-url",
+          "markdownDescription": "Denies the get_live_preview_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_live_streams_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-live-streams-page",
+          "markdownDescription": "Denies the get_live_streams_page command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_live_vod_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-live-vod-info",
+          "markdownDescription": "Denies the get_live_vod_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_my_subscriptions command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-my-subscriptions",
+          "markdownDescription": "Denies the get_my_subscriptions command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_notify_category_targets command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-notify-category-targets",
+          "markdownDescription": "Denies the get_notify_category_targets command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_notify_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-notify-channels",
+          "markdownDescription": "Denies the get_notify_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_onsite_notifications command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-onsite-notifications",
+          "markdownDescription": "Denies the get_onsite_notifications command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_pinned_chat_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-pinned-chat-messages",
+          "markdownDescription": "Denies the get_pinned_chat_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_prediction_result command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-prediction-result",
+          "markdownDescription": "Denies the get_prediction_result command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_prime_offers command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-prime-offers",
+          "markdownDescription": "Denies the get_prime_offers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_resub_notification command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-resub-notification",
+          "markdownDescription": "Denies the get_resub_notification command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_stream_for_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-stream-for-login",
+          "markdownDescription": "Denies the get_stream_for_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_streams_for_game_id command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-streams-for-game-id",
+          "markdownDescription": "Denies the get_streams_for_game_id command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_streams_for_game_names command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-streams-for-game-names",
+          "markdownDescription": "Denies the get_streams_for_game_names command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_streams_for_users command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-streams-for-users",
+          "markdownDescription": "Denies the get_streams_for_users command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_subscription_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-subscription-info",
+          "markdownDescription": "Denies the get_subscription_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_top_games command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-top-games",
+          "markdownDescription": "Denies the get_top_games command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_top_live_streams command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-top-live-streams",
+          "markdownDescription": "Denies the get_top_live_streams command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_user_by_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-user-by-login",
+          "markdownDescription": "Denies the get_user_by_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_user_id_for_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-user-id-for-login",
+          "markdownDescription": "Denies the get_user_id_for_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_user_note command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-user-note",
+          "markdownDescription": "Denies the get_user_note command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_user_note_ids command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-user-note-ids",
+          "markdownDescription": "Denies the get_user_note_ids command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_users_info command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-users-info",
+          "markdownDescription": "Denies the get_users_info command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_videos_for_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-videos-for-login",
+          "markdownDescription": "Denies the get_videos_for_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-chat",
+          "markdownDescription": "Denies the get_vod_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_chat_density command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-chat-density",
+          "markdownDescription": "Denies the get_vod_chat_density command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_m3u8_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-m3u8-url",
+          "markdownDescription": "Denies the get_vod_m3u8_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_muted_segments command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-muted-segments",
+          "markdownDescription": "Denies the get_vod_muted_segments command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_preview_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-preview-url",
+          "markdownDescription": "Denies the get_vod_preview_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-progress",
+          "markdownDescription": "Denies the get_vod_progress command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_vod_top_clips command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-vod-top-clips",
+          "markdownDescription": "Denies the get_vod_top_clips command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_watch_streak command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-watch-streak",
+          "markdownDescription": "Denies the get_watch_streak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the heartbeat_clear_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-heartbeat-clear-target",
+          "markdownDescription": "Denies the heartbeat_clear_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the heartbeat_set_playing command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-heartbeat-set-playing",
+          "markdownDescription": "Denies the heartbeat_set_playing command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the heartbeat_set_target command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-heartbeat-set-target",
+          "markdownDescription": "Denies the heartbeat_set_target command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the heartbeat_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-heartbeat-status",
+          "markdownDescription": "Denies the heartbeat_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the identify_song command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-identify-song",
+          "markdownDescription": "Denies the identify_song command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_stream_deps command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-stream-deps",
+          "markdownDescription": "Denies the install_stream_deps command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_category_viewer_counts command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-category-viewer-counts",
+          "markdownDescription": "Denies the kick_category_viewer_counts command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_channel_emotes command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-channel-emotes",
+          "markdownDescription": "Denies the kick_channel_emotes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_channel_videos command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-channel-videos",
+          "markdownDescription": "Denies the kick_channel_videos command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_followed_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-followed-status",
+          "markdownDescription": "Denies the kick_followed_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_live_streams_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-live-streams-page",
+          "markdownDescription": "Denies the kick_live_streams_page command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-logout",
+          "markdownDescription": "Denies the kick_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_oauth_configured command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-oauth-configured",
+          "markdownDescription": "Denies the kick_oauth_configured command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_search_categories command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-search-categories",
+          "markdownDescription": "Denies the kick_search_categories command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_send_chat_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-send-chat-message",
+          "markdownDescription": "Denies the kick_send_chat_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_streams_for_category command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-streams-for-category",
+          "markdownDescription": "Denies the kick_streams_for_category command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_streams_for_game_names command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-streams-for-game-names",
+          "markdownDescription": "Denies the kick_streams_for_game_names command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_top_games command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-top-games",
+          "markdownDescription": "Denies the kick_top_games command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_top_live_streams command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-top-live-streams",
+          "markdownDescription": "Denies the kick_top_live_streams command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the kick_vod_playback command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-kick-vod-playback",
+          "markdownDescription": "Denies the kick_vod_playback command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the launched_at_startup command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-launched-at-startup",
+          "markdownDescription": "Denies the launched_at_startup command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-logout",
+          "markdownDescription": "Denies the logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the make_prediction command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-make-prediction",
+          "markdownDescription": "Denies the make_prediction command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the notifications_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-notifications-action",
+          "markdownDescription": "Denies the notifications_action command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_devtools command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-devtools",
+          "markdownDescription": "Denies the open_devtools command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pubsub_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pubsub-clear",
+          "markdownDescription": "Denies the pubsub_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pubsub_set_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pubsub-set-channel",
+          "markdownDescription": "Denies the pubsub_set_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the redeem_highlight_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-redeem-highlight-message",
+          "markdownDescription": "Denies the redeem_highlight_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the redeem_random_emote command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-redeem-random-emote",
+          "markdownDescription": "Denies the redeem_random_emote command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the redeem_reward command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-redeem-reward",
+          "markdownDescription": "Denies the redeem_reward command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resolve_clip_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resolve-clip-url",
+          "markdownDescription": "Denies the resolve_clip_url command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_kick_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restore-kick-session",
+          "markdownDescription": "Denies the restore_kick_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restore_session command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restore-session",
+          "markdownDescription": "Denies the restore_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reveal_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-reveal-download",
+          "markdownDescription": "Denies the reveal_download command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_backup_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-backup-file",
+          "markdownDescription": "Denies the save_backup_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_vod_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-vod-progress",
+          "markdownDescription": "Denies the save_vod_progress command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the search_categories command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-search-categories",
+          "markdownDescription": "Denies the search_categories command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the search_twitch_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-search-twitch-channels",
+          "markdownDescription": "Denies the search_twitch_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_chat_message command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-chat-message",
+          "markdownDescription": "Denies the send_chat_message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the send_whisper command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-send-whisper",
+          "markdownDescription": "Denies the send_whisper command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_app_fullscreen command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-app-fullscreen",
+          "markdownDescription": "Denies the set_app_fullscreen command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_chat_badge command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-chat-badge",
+          "markdownDescription": "Denies the set_chat_badge command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_close_to_tray command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-close-to-tray",
+          "markdownDescription": "Denies the set_close_to_tray command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_devtools_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-devtools-enabled",
+          "markdownDescription": "Denies the set_devtools_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_drop_hidden command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-drop-hidden",
+          "markdownDescription": "Denies the set_drop_hidden command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_memory_saver command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-memory-saver",
+          "markdownDescription": "Denies the set_memory_saver command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_notify_category_targets command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-notify-category-targets",
+          "markdownDescription": "Denies the set_notify_category_targets command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_notify_channels command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-notify-channels",
+          "markdownDescription": "Denies the set_notify_channels command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_user_note command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-user-note",
+          "markdownDescription": "Denies the set_user_note command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the seventv_cosmetics_clear command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-seventv-cosmetics-clear",
+          "markdownDescription": "Denies the seventv_cosmetics_clear command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the seventv_cosmetics_set_channel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-seventv-cosmetics-set-channel",
+          "markdownDescription": "Denies the seventv_cosmetics_set_channel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the share_resub command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-share-resub",
+          "markdownDescription": "Denies the share_resub command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the share_watch_streak command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-share-watch-streak",
+          "markdownDescription": "Denies the share_watch_streak command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the spell_suggest command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-spell-suggest",
+          "markdownDescription": "Denies the spell_suggest command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_account_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-account-eventsub",
+          "markdownDescription": "Denies the start_account_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-chat",
+          "markdownDescription": "Denies the start_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-eventsub",
+          "markdownDescription": "Denies the start_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_kick_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-kick-chat",
+          "markdownDescription": "Denies the start_kick_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_kick_oauth_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-kick-oauth-login",
+          "markdownDescription": "Denies the start_kick_oauth_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_oauth_login command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-oauth-login",
+          "markdownDescription": "Denies the start_oauth_login command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_seventv_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-seventv-events",
+          "markdownDescription": "Denies the start_seventv_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-stream",
+          "markdownDescription": "Denies the start_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_vod_download command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-vod-download",
+          "markdownDescription": "Denies the start_vod_download command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_account_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-account-eventsub",
+          "markdownDescription": "Denies the stop_account_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-chat",
+          "markdownDescription": "Denies the stop_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_eventsub command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-eventsub",
+          "markdownDescription": "Denies the stop_eventsub command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_kick_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-kick-chat",
+          "markdownDescription": "Denies the stop_kick_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_seventv_events command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-seventv-events",
+          "markdownDescription": "Denies the stop_seventv_events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the stop_stream command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-stop-stream",
+          "markdownDescription": "Denies the stop_stream command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_is_fresh_launch command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-take-is-fresh-launch",
+          "markdownDescription": "Denies the take_is_fresh_launch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the twitch_device_connected command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-twitch-device-connected",
+          "markdownDescription": "Denies the twitch_device_connected command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the twitch_device_logout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-twitch-device-logout",
+          "markdownDescription": "Denies the twitch_device_logout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the twitch_device_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-twitch-device-poll",
+          "markdownDescription": "Denies the twitch_device_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the twitch_device_start command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-twitch-device-start",
+          "markdownDescription": "Denies the twitch_device_start command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unban_user command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-unban-user",
+          "markdownDescription": "Denies the unban_user command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unlock_chosen_emote command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-unlock-chosen-emote",
+          "markdownDescription": "Denies the unlock_chosen_emote command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unlock_modified_emote command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-unlock-modified-emote",
+          "markdownDescription": "Denies the unlock_modified_emote command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_chat_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-chat-settings",
+          "markdownDescription": "Denies the update_chat_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the update_streamlink command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-update-streamlink",
+          "markdownDescription": "Denies the update_streamlink command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the vote_on_poll command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-vote-on-poll",
+          "markdownDescription": "Denies the vote_on_poll command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the whisper_get_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-whisper-get-thread",
+          "markdownDescription": "Denies the whisper_get_thread command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the whisper_get_threads command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-whisper-get-threads",
+          "markdownDescription": "Denies the whisper_get_threads command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the whisper_mark_read command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-whisper-mark-read",
+          "markdownDescription": "Denies the whisper_mark_read command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the whisper_record command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-whisper-record",
+          "markdownDescription": "Denies the whisper_record command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the whisper_total_unread command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-whisper-total-unread",
+          "markdownDescription": "Denies the whisper_total_unread command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures if your\napplication can enable or disable auto\nstarting the application on boot.\n\n#### Granted Permissions\n\nIt allows all to check, enable and\ndisable the automatic start on boot.\n\n\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-disable`\n- `allow-is-enabled`",
           "type": "string",
           "const": "autostart:default",

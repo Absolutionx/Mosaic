@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-heartbeat-clear-target"
+description = "Enables the heartbeat_clear_target command without any pre-configured scope."
+commands.allow = ["heartbeat_clear_target"]
+
+[[permission]]
+identifier = "deny-heartbeat-clear-target"
+description = "Denies the heartbeat_clear_target command without any pre-configured scope."
+commands.deny = ["heartbeat_clear_target"]

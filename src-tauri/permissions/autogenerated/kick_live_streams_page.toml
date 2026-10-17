@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-live-streams-page"
+description = "Enables the kick_live_streams_page command without any pre-configured scope."
+commands.allow = ["kick_live_streams_page"]
+
+[[permission]]
+identifier = "deny-kick-live-streams-page"
+description = "Denies the kick_live_streams_page command without any pre-configured scope."
+commands.deny = ["kick_live_streams_page"]

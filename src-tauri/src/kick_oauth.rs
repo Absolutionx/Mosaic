@@ -391,7 +391,10 @@ async fn finish_login(
         return Err("state mismatch (possible CSRF) - login aborted".into());
     }
 
-    let tok = exchange_code(&code, &pending.verifier).await?;
+    let tok = exchange_code(&code, &pending.verifier).await.map_err(|e| match e {
+        TokenError::AppUnavailable(_) => APP_UNAVAILABLE_MSG.to_string(),
+        other => format!("Kick login failed: {other}"),
+    })?;
     save_token(app, &tok);
     // best-effort username; login still counts as successful if this read fails (send works off broadcaster_user_id, not our name)
     let login = fetch_username(&tok.access_token).await.unwrap_or_default();
@@ -405,23 +408,71 @@ struct TokenResponse {
     refresh_token: String,
 }
 
-async fn post_form(url: &str, form: &[(&str, &str)]) -> Result<TokenResponse, String> {
+// why a token request failed, because each needs a different response:
+//   Rejected       - Kick turned down this login itself (revoked, or a refresh token already spent): sign out
+//   AppUnavailable - Kick turned down Mosaic's app (invalid_client: secret rotated or app suspended; 429: app
+//                    rate-limited). nobody can log in until that's fixed; say so plainly so it gets reported
+//   Transient      - network trouble or a Kick server error: keep the login and try again later
+#[derive(Debug)]
+enum TokenError {
+    Rejected(String),
+    AppUnavailable(String),
+    Transient(String),
+}
+
+const APP_UNAVAILABLE_MSG: &str = "Kick login is unavailable right now: Kick refused Mosaic's app (it may be \
+rate-limited or suspended). Please report this on Mosaic's GitHub.";
+
+impl TokenError {
+    fn user_message(&self) -> String {
+        match self {
+            TokenError::Rejected(e) => format!("Kick session expired, please log in again ({e})"),
+            TokenError::AppUnavailable(_) => APP_UNAVAILABLE_MSG.to_string(),
+            TokenError::Transient(e) => format!("Couldn't reach Kick to renew your login, try again in a moment ({e})"),
+        }
+    }
+}
+
+impl std::fmt::Display for TokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenError::Rejected(e) | TokenError::AppUnavailable(e) | TokenError::Transient(e) => f.write_str(e),
+        }
+    }
+}
+
+// sorts a failed token-endpoint answer into the kinds above
+fn classify_token_failure(status: reqwest::StatusCode, body: &str) -> TokenError {
+    let detail = format!("token endpoint returned {status}: {body}");
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || body.contains("invalid_client") {
+        TokenError::AppUnavailable(detail)
+    } else if status.is_server_error() {
+        TokenError::Transient(detail)
+    } else {
+        TokenError::Rejected(detail)
+    }
+}
+
+async fn post_form(url: &str, form: &[(&str, &str)]) -> Result<TokenResponse, TokenError> {
     let client = crate::http::client();
     let resp = client
         .post(url)
         .form(form)
         .send()
         .await
-        .map_err(|e| format!("token request failed: {e}"))?;
+        .map_err(|e| TokenError::Transient(format!("token request failed: {e}")))?;
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        return Err(format!("token endpoint returned {status}: {body}"));
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS || body.contains("invalid_client") {
+            eprintln!("[kick-oauth] Kick refused Mosaic's app ({status}); the client secret may need rotating, see README");
+        }
+        return Err(classify_token_failure(status, &body));
     }
-    serde_json::from_str(&body).map_err(|e| format!("bad token response: {e}"))
+    serde_json::from_str(&body).map_err(|e| TokenError::Transient(format!("bad token response: {e}")))
 }
 
-async fn exchange_code(code: &str, verifier: &str) -> Result<PersistedToken, String> {
+async fn exchange_code(code: &str, verifier: &str) -> Result<PersistedToken, TokenError> {
     let t = post_form(
         TOKEN_URL,
         &[
@@ -440,9 +491,9 @@ async fn exchange_code(code: &str, verifier: &str) -> Result<PersistedToken, Str
     })
 }
 
-async fn refresh(refresh_token: &str) -> Result<PersistedToken, String> {
+async fn refresh(refresh_token: &str) -> Result<PersistedToken, TokenError> {
     if refresh_token.is_empty() {
-        return Err("no refresh token stored".into());
+        return Err(TokenError::Rejected("no refresh token stored".into()));
     }
     let t = post_form(
         TOKEN_URL,
@@ -463,6 +514,34 @@ async fn refresh(refresh_token: &str) -> Result<PersistedToken, String> {
             t.refresh_token
         },
     })
+}
+
+// Kick refresh tokens are single-use: spending one invalidates it. two refreshes at once (a chat send and the
+// startup check, two sends right at expiry) would both spend the SAME token and the loser would be rejected,
+// which used to sign the user out. so refreshes run one at a time, and one that queued behind another first
+// checks whether the stored token already changed and, if so, uses that instead of spending again.
+// only a real rejection signs out; a network hiccup or an app-level refusal keeps the login for later
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn refresh_session(app: &AppHandle, spent_refresh_token: &str) -> Result<PersistedToken, TokenError> {
+    let _guard = REFRESH_LOCK.lock().await;
+    if let Some(current) = load_token(app) {
+        if current.refresh_token != spent_refresh_token {
+            return Ok(current); // another caller refreshed while this one waited
+        }
+    }
+    match refresh(spent_refresh_token).await {
+        Ok(fresh) => {
+            save_token(app, &fresh);
+            Ok(fresh)
+        }
+        Err(e) => {
+            if matches!(e, TokenError::Rejected(_)) {
+                clear_token_file(app);
+            }
+            Err(e)
+        }
+    }
 }
 
 async fn fetch_username(access_token: &str) -> Result<String, String> {
@@ -495,22 +574,17 @@ pub async fn restore_kick_session(app: AppHandle) -> Result<serde_json::Value, S
     if let Ok(login) = fetch_username(&tok.access_token).await {
         return Ok(serde_json::json!({ "login": login }));
     }
-    match refresh(&tok.refresh_token).await {
+    match refresh_session(&app, &tok.refresh_token).await {
         Ok(fresh) => {
             tok = fresh;
-            save_token(&app, &tok);
             match fetch_username(&tok.access_token).await {
                 Ok(login) => Ok(serde_json::json!({ "login": login })),
-                Err(_) => {
-                    clear_token_file(&app);
-                    Ok(serde_json::Value::Null)
-                }
+                // a fresh token that still can't read the user: Kick is having trouble; keep it for next time
+                Err(_) => Ok(serde_json::Value::Null),
             }
         }
-        Err(_) => {
-            clear_token_file(&app);
-            Ok(serde_json::Value::Null)
-        }
+        // Rejected already signed out; otherwise the login is kept and tried again next start
+        Err(_) => Ok(serde_json::Value::Null),
     }
 }
 
@@ -542,13 +616,8 @@ pub async fn kick_send_chat_message(
     match post_chat(&tok.access_token, broadcaster_user_id, text).await {
         Ok(()) => Ok(()),
         Err(SendError::Unauthorized) => {
-            // access token likely expired, refresh and retry once
-            tok = refresh(&tok.refresh_token).await.map_err(|e| {
-                // refresh failed too: the session is dead. clear it so the UI drops to logged-out on its next check
-                clear_token_file(&app);
-                format!("Kick session expired, please log in again ({e})")
-            })?;
-            save_token(&app, &tok);
+            // access token likely expired: refresh (one at a time, see refresh_session) and retry once
+            tok = refresh_session(&app, &tok.refresh_token).await.map_err(|e| e.user_message())?;
             post_chat(&tok.access_token, broadcaster_user_id, text)
                 .await
                 .map_err(|e| e.to_string())
@@ -687,5 +756,19 @@ mod pending_tests {
         assert!(!super::pending_state_is(Some("abd")) && !super::pending_state_is(None) && !super::pending_state_is(Some("")));
         *super::PENDING.lock().unwrap() = None;
         assert!(!super::pending_state_is(Some("abc")));
+    }
+}
+
+#[cfg(test)]
+mod token_error_tests {
+    use super::{classify_token_failure, TokenError};
+    use reqwest::StatusCode;
+
+    #[test]
+    fn failures_are_sorted() {
+        assert!(matches!(classify_token_failure(StatusCode::BAD_REQUEST, r#"{"error":"invalid_grant"}"#), TokenError::Rejected(_)));
+        assert!(matches!(classify_token_failure(StatusCode::UNAUTHORIZED, r#"{"error":"invalid_client"}"#), TokenError::AppUnavailable(_)));
+        assert!(matches!(classify_token_failure(StatusCode::TOO_MANY_REQUESTS, ""), TokenError::AppUnavailable(_)));
+        assert!(matches!(classify_token_failure(StatusCode::BAD_GATEWAY, ""), TokenError::Transient(_)));
     }
 }

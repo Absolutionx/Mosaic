@@ -100,20 +100,6 @@ pub fn send_chat_message(
         .map_err(|e| format!("Chat connection closed: {e}"))
 }
 
-// stores validated OAuth credentials in state for the next start_chat call. doesn't affect an
-// already-running anonymous session: the user Stops and Watches again for a login to take effect on an already-playing stream's chat
-#[tauri::command]
-pub fn set_oauth_credentials(
-    state: State<ChatState>,
-    access_token: String,
-    login: String,
-    user_id: String,
-) -> Result<(), String> {
-    let mut guard = state.auth.lock().map_err(|e| e.to_string())?;
-    *guard = Some(chat::AuthCredentials { access_token, login, user_id });
-    Ok(())
-}
-
 // fetches Twitch global chat emotes (Kappa, PogChamp, LUL, etc.). returns raw Helix JSON for chat.js to parse and store by name+id
 #[tauri::command]
 pub async fn fetch_global_emotes(state: State<'_, ChatState>) -> Result<String, String> {

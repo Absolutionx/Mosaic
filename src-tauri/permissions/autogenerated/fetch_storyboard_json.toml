@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fetch-storyboard-json"
+description = "Enables the fetch_storyboard_json command without any pre-configured scope."
+commands.allow = ["fetch_storyboard_json"]
+
+[[permission]]
+identifier = "deny-fetch-storyboard-json"
+description = "Denies the fetch_storyboard_json command without any pre-configured scope."
+commands.deny = ["fetch_storyboard_json"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-drop-campaigns"
+description = "Enables the get_drop_campaigns command without any pre-configured scope."
+commands.allow = ["get_drop_campaigns"]
+
+[[permission]]
+identifier = "deny-get-drop-campaigns"
+description = "Denies the get_drop_campaigns command without any pre-configured scope."
+commands.deny = ["get_drop_campaigns"]

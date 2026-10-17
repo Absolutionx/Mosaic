@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-kick-session"
+description = "Enables the restore_kick_session command without any pre-configured scope."
+commands.allow = ["restore_kick_session"]
+
+[[permission]]
+identifier = "deny-restore-kick-session"
+description = "Denies the restore_kick_session command without any pre-configured scope."
+commands.deny = ["restore_kick_session"]

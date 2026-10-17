@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-notify-category-targets"
+description = "Enables the get_notify_category_targets command without any pre-configured scope."
+commands.allow = ["get_notify_category_targets"]
+
+[[permission]]
+identifier = "deny-get-notify-category-targets"
+description = "Denies the get_notify_category_targets command without any pre-configured scope."
+commands.deny = ["get_notify_category_targets"]

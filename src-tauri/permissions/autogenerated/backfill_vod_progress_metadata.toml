@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-backfill-vod-progress-metadata"
+description = "Enables the backfill_vod_progress_metadata command without any pre-configured scope."
+commands.allow = ["backfill_vod_progress_metadata"]
+
+[[permission]]
+identifier = "deny-backfill-vod-progress-metadata"
+description = "Denies the backfill_vod_progress_metadata command without any pre-configured scope."
+commands.deny = ["backfill_vod_progress_metadata"]

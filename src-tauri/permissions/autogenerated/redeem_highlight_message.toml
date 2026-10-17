@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-redeem-highlight-message"
+description = "Enables the redeem_highlight_message command without any pre-configured scope."
+commands.allow = ["redeem_highlight_message"]
+
+[[permission]]
+identifier = "deny-redeem-highlight-message"
+description = "Denies the redeem_highlight_message command without any pre-configured scope."
+commands.deny = ["redeem_highlight_message"]

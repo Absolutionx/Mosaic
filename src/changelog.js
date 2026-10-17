@@ -3,6 +3,16 @@
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
 export const CHANGELOG = [
   {
+    version: "1.5.6",
+    items: [
+      { kind: "improved", title: "Safer Twitch login", desc: "Your Twitch login now stays inside Mosaic's core instead of being handed to the app's interface, so nothing running in the interface can read it. Each window can also only do what it needs: the picture-in-picture window can play video and nothing else." },
+      { kind: "new", title: "Developer tools setting", desc: "Inspect and Ctrl+Shift+I are now off by default. Turn them on in Settings > App > Developer tools if you need them, and never paste code someone sent you into them." },
+      { kind: "fixed", title: "Staying logged in to Kick", desc: "Sending Kick chat right as your login renewed could sign you out, and so could a brief network drop. Mosaic now renews one at a time and only signs you out when Kick actually rejects the login. If Kick ever refuses Mosaic itself, you'll see a clear message instead of a vague failure." },
+      { kind: "improved", title: "Hardening", desc: "Stricter handling of 7TV name paints, prediction overlays and link previews, and the Twitch login now also guards the IPv6 address it listens on." },
+      { kind: "improved", title: "Cleaner picture-in-picture", desc: "Right-clicking the picture-in-picture window no longer shows the browser's Back / Refresh / Print menu." },
+    ],
+  },
+  {
     version: "1.5.5",
     items: [
       { kind: "fixed", title: "Drop progress", desc: "Twitch changed how it counts drop minutes, so watching in Mosaic stopped advancing drops even though channel points kept coming. Mosaic now reports watching the way Twitch's own player does, and drop progress counts again." },

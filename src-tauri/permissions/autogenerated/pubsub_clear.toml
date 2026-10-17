@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pubsub-clear"
+description = "Enables the pubsub_clear command without any pre-configured scope."
+commands.allow = ["pubsub_clear"]
+
+[[permission]]
+identifier = "deny-pubsub-clear"
+description = "Denies the pubsub_clear command without any pre-configured scope."
+commands.deny = ["pubsub_clear"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-watch-streak"
+description = "Enables the get_watch_streak command without any pre-configured scope."
+commands.allow = ["get_watch_streak"]
+
+[[permission]]
+identifier = "deny-get-watch-streak"
+description = "Denies the get_watch_streak command without any pre-configured scope."
+commands.deny = ["get_watch_streak"]

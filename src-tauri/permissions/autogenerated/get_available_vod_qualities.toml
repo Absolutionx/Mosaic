@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-available-vod-qualities"
+description = "Enables the get_available_vod_qualities command without any pre-configured scope."
+commands.allow = ["get_available_vod_qualities"]
+
+[[permission]]
+identifier = "deny-get-available-vod-qualities"
+description = "Denies the get_available_vod_qualities command without any pre-configured scope."
+commands.deny = ["get_available_vod_qualities"]

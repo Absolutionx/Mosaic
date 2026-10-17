@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-stream-deps"
+description = "Enables the check_stream_deps command without any pre-configured scope."
+commands.allow = ["check_stream_deps"]
+
+[[permission]]
+identifier = "deny-check-stream-deps"
+description = "Denies the check_stream_deps command without any pre-configured scope."
+commands.deny = ["check_stream_deps"]

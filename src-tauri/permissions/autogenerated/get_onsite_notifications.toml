@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-onsite-notifications"
+description = "Enables the get_onsite_notifications command without any pre-configured scope."
+commands.allow = ["get_onsite_notifications"]
+
+[[permission]]
+identifier = "deny-get-onsite-notifications"
+description = "Denies the get_onsite_notifications command without any pre-configured scope."
+commands.deny = ["get_onsite_notifications"]

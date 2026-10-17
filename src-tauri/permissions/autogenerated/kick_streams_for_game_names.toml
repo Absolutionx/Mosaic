@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-streams-for-game-names"
+description = "Enables the kick_streams_for_game_names command without any pre-configured scope."
+commands.allow = ["kick_streams_for_game_names"]
+
+[[permission]]
+identifier = "deny-kick-streams-for-game-names"
+description = "Denies the kick_streams_for_game_names command without any pre-configured scope."
+commands.deny = ["kick_streams_for_game_names"]

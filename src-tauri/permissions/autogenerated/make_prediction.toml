@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-make-prediction"
+description = "Enables the make_prediction command without any pre-configured scope."
+commands.allow = ["make_prediction"]
+
+[[permission]]
+identifier = "deny-make-prediction"
+description = "Denies the make_prediction command without any pre-configured scope."
+commands.deny = ["make_prediction"]

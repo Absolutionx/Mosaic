@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-followed-channels"
+description = "Enables the get_followed_channels command without any pre-configured scope."
+commands.allow = ["get_followed_channels"]
+
+[[permission]]
+identifier = "deny-get-followed-channels"
+description = "Denies the get_followed_channels command without any pre-configured scope."
+commands.deny = ["get_followed_channels"]

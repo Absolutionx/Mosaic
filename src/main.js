@@ -842,6 +842,20 @@ document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
 }, true);
 
+// Settings > App > Developer tools (off by default): release builds start with them switched off in Rust
+// (app_extras::set_devtools_enabled); this turns them on only when asked. dev builds always have them
+invoke("set_devtools_enabled", { on: !!getSetting("devTools") }).catch(() => {});
+onSettingChange((id, value) => {
+  if (id === "devTools") invoke("set_devtools_enabled", { on: !!value }).catch(() => {});
+});
+// Ctrl+Shift+I / F12: Rust opens them only while the setting is on (app_extras::open_devtools)
+document.addEventListener("keydown", (e) => {
+  const combo = e.key === "F12" || (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyI");
+  if (!combo || !getSetting("devTools")) return;
+  e.preventDefault();
+  invoke("open_devtools").catch(() => {});
+});
+
 // VOD downloads (vod-downloads.js / downloads.rs): the player bar button and the palette action
 function currentVodForDownload() {
   const cur = String(playbackControls.currentChannel || "");

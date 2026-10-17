@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-streams-for-game-id"
+description = "Enables the get_streams_for_game_id command without any pre-configured scope."
+commands.allow = ["get_streams_for_game_id"]
+
+[[permission]]
+identifier = "deny-get-streams-for-game-id"
+description = "Denies the get_streams_for_game_id command without any pre-configured scope."
+commands.deny = ["get_streams_for_game_id"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-streams-for-users"
+description = "Enables the get_streams_for_users command without any pre-configured scope."
+commands.allow = ["get_streams_for_users"]
+
+[[permission]]
+identifier = "deny-get-streams-for-users"
+description = "Denies the get_streams_for_users command without any pre-configured scope."
+commands.deny = ["get_streams_for_users"]

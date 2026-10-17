@@ -173,6 +173,8 @@ fn main() {
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
 
     builder
+        // every page load (main window, picture-in-picture) gets the developer-tools policy, see app_extras
+        .on_page_load(|webview, _payload| app_extras::apply_devtools_policy(webview))
         .setup(|app| {
             tray::setup_tray(app).map_err(|e| e.to_string())?;
 
@@ -189,6 +191,8 @@ fn main() {
 
             // WebView2's native right-click menu (spelling suggestions) drawn in the app's style instead
             app_extras::install_skinned_context_menu(app.handle());
+            // developer tools off in release builds unless Settings > App > Developer tools turns them on
+            app_extras::apply_devtools_policy_all(app.handle());
 
             // installers left in the temp folder by earlier updates (see app_extras::remove_old_update_files)
             let app_name = app.package_info().name.clone();
@@ -288,7 +292,6 @@ fn main() {
             vod_progress::save_vod_progress,
             vod_progress::backfill_vod_progress_metadata,
             vod_progress::dismiss_vod_from_continue,
-            oauth::validate_oauth_token,
             oauth::restore_session,
             oauth::logout,
             chat_commands::fetch_global_badges,
@@ -316,7 +319,6 @@ fn main() {
             chat_commands::start_seventv_events,
             chat_commands::stop_seventv_events,
             chat_commands::send_chat_message,
-            chat_commands::set_oauth_credentials,
             helix::get_followed_channels,
             helix::get_pinned_chat_messages,
             helix::get_hype_train,
@@ -340,6 +342,8 @@ fn main() {
             app_extras::set_memory_saver,
             app_extras::context_menu_choose,
             app_extras::spell_suggest,
+            app_extras::set_devtools_enabled,
+            app_extras::open_devtools,
             app_extras::save_backup_file,
             app_extras::set_app_fullscreen,
             helix::create_clip,
@@ -435,4 +439,43 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod command_manifest_tests {
+    // build.rs declares every app command for Tauri's per-window permissions, and a command left out is refused
+    // in every window. this keeps that list, the invoke_handler list above and the main window's permission set
+    // in step
+    fn handler_commands() -> Vec<String> {
+        let src = include_str!("main.rs");
+        let start = src.find("tauri::generate_handler![").expect("handler list") + "tauri::generate_handler![".len();
+        let end = start + src[start..].find("])").expect("handler list end");
+        src[start..end]
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.rsplit("::").next().unwrap().to_string())
+            .collect()
+    }
+
+    fn quoted(src: &str, after: &str) -> Vec<String> {
+        let start = src.find(after).expect("list start") + after.len();
+        let end = start + src[start..].find(']').expect("list end");
+        src[start..end].split('"').skip(1).step_by(2).map(str::to_string).collect()
+    }
+
+    #[test]
+    fn manifest_lists_every_command() {
+        let mut handlers = handler_commands();
+        let mut manifest = quoted(include_str!("../build.rs"), "APP_COMMANDS: &[&str] = &[");
+        let mut granted: Vec<String> = quoted(include_str!("../permissions/main-window.toml"), "permissions = [")
+            .into_iter()
+            .map(|p| p.trim_start_matches("allow-").replace('-', "_"))
+            .collect();
+        handlers.sort();
+        manifest.sort();
+        granted.sort();
+        assert_eq!(handlers, manifest, "build.rs APP_COMMANDS must match the invoke_handler list");
+        assert_eq!(handlers, granted, "permissions/main-window.toml must allow every command");
+    }
 }

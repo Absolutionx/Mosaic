@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-identify-song"
+description = "Enables the identify_song command without any pre-configured scope."
+commands.allow = ["identify_song"]
+
+[[permission]]
+identifier = "deny-identify-song"
+description = "Denies the identify_song command without any pre-configured scope."
+commands.deny = ["identify_song"]

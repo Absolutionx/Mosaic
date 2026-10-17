@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-claim-drop"
+description = "Enables the claim_drop command without any pre-configured scope."
+commands.allow = ["claim_drop"]
+
+[[permission]]
+identifier = "deny-claim-drop"
+description = "Denies the claim_drop command without any pre-configured scope."
+commands.deny = ["claim_drop"]

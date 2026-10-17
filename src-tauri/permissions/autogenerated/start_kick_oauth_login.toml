@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-kick-oauth-login"
+description = "Enables the start_kick_oauth_login command without any pre-configured scope."
+commands.allow = ["start_kick_oauth_login"]
+
+[[permission]]
+identifier = "deny-start-kick-oauth-login"
+description = "Denies the start_kick_oauth_login command without any pre-configured scope."
+commands.deny = ["start_kick_oauth_login"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-stream-deps"
+description = "Enables the install_stream_deps command without any pre-configured scope."
+commands.allow = ["install_stream_deps"]
+
+[[permission]]
+identifier = "deny-install-stream-deps"
+description = "Denies the install_stream_deps command without any pre-configured scope."
+commands.deny = ["install_stream_deps"]

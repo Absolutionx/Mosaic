@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-seventv-cosmetics-clear"
+description = "Enables the seventv_cosmetics_clear command without any pre-configured scope."
+commands.allow = ["seventv_cosmetics_clear"]
+
+[[permission]]
+identifier = "deny-seventv-cosmetics-clear"
+description = "Denies the seventv_cosmetics_clear command without any pre-configured scope."
+commands.deny = ["seventv_cosmetics_clear"]

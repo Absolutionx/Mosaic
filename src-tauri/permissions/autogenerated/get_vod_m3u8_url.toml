@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-vod-m3u8-url"
+description = "Enables the get_vod_m3u8_url command without any pre-configured scope."
+commands.allow = ["get_vod_m3u8_url"]
+
+[[permission]]
+identifier = "deny-get-vod-m3u8-url"
+description = "Denies the get_vod_m3u8_url command without any pre-configured scope."
+commands.deny = ["get_vod_m3u8_url"]

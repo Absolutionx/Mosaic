@@ -133,7 +133,7 @@ function openCard() {
   setTimeout(() => document.addEventListener("mousedown", onOutside, true), 0);
 }
 
-function onOutside(e) { if (card && !card.contains(e.target) && e.target !== btn) closeCard(); }
+function onOutside(e) { if (card && !card.contains(e.target) && !btn.contains(e.target)) closeCard(); }
 
 function closeCard() {
   card?.remove();

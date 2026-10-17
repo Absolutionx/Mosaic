@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-category-viewer-counts"
+description = "Enables the kick_category_viewer_counts command without any pre-configured scope."
+commands.allow = ["kick_category_viewer_counts"]
+
+[[permission]]
+identifier = "deny-kick-category-viewer-counts"
+description = "Denies the kick_category_viewer_counts command without any pre-configured scope."
+commands.deny = ["kick_category_viewer_counts"]

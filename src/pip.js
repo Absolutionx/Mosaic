@@ -6,6 +6,7 @@ import { getCurrentWindow, currentMonitor, availableMonitors, primaryMonitor, Ph
 import { invoke } from "@tauri-apps/api/core";
 import { attachMseStream } from "./stream-player.js";
 import { attachHlsVod } from "./vod-player.js";
+import { getSetting } from "./settings.js";
 
 const params  = new URLSearchParams(location.search);
 // body.kick-mode flips --accent to Kick green (the slider uses it). applied at parse time
@@ -20,6 +21,12 @@ const channel = params.get("channel") || "";
 const lowSrc  = params.get("lowsrc") || "";
 const mvChannel = params.get("mvchannel") || "";
 const mvQuality = params.get("mvquality") || "best";
+
+// the webview's own right-click menu (Back, Refresh, Save as, Print) does nothing useful in a PiP window, and
+// Refresh would drop the stream. it stays available while Settings > App > Developer tools is on, for Inspect
+document.addEventListener("contextmenu", (e) => {
+  if (!getSetting("devTools")) e.preventDefault();
+});
 
 const videoEl   = document.getElementById("pip-video");
 const playBtn   = document.querySelector('[data-act="playpause"]');

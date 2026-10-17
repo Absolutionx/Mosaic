@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-hidden-drops"
+description = "Enables the get_hidden_drops command without any pre-configured scope."
+commands.allow = ["get_hidden_drops"]
+
+[[permission]]
+identifier = "deny-get-hidden-drops"
+description = "Denies the get_hidden_drops command without any pre-configured scope."
+commands.deny = ["get_hidden_drops"]

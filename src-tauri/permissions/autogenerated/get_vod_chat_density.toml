@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-vod-chat-density"
+description = "Enables the get_vod_chat_density command without any pre-configured scope."
+commands.allow = ["get_vod_chat_density"]
+
+[[permission]]
+identifier = "deny-get-vod-chat-density"
+description = "Denies the get_vod_chat_density command without any pre-configured scope."
+commands.deny = ["get_vod_chat_density"]

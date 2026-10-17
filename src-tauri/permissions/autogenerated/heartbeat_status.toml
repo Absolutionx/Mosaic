@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-heartbeat-status"
+description = "Enables the heartbeat_status command without any pre-configured scope."
+commands.allow = ["heartbeat_status"]
+
+[[permission]]
+identifier = "deny-heartbeat-status"
+description = "Denies the heartbeat_status command without any pre-configured scope."
+commands.deny = ["heartbeat_status"]

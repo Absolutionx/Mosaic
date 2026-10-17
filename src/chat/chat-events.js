@@ -228,9 +228,10 @@ export const chatEventsMixin = {
       return;
     }
     const overlay = this._ensureOverlay("hype-train-overlay");
-    const level = ev.level || 1;
-    const total = ev.total || 0;
-    const goal = ev.goal || 0;
+    // numbers only from here on: these land in the overlay's HTML
+    const level = Number(ev.level) || 1;
+    const total = Number(ev.total) || 0;
+    const goal = Number(ev.goal) || 0;
     const pct = goal > 0 ? Math.min(100, Math.round((ev.progress || 0) / goal * 100)) : 0;
     const expires = ev.expires_at ? new Date(ev.expires_at).getTime() : 0;
 
@@ -271,11 +272,12 @@ export const chatEventsMixin = {
     const expires = ev.locks_at ? new Date(ev.locks_at).getTime() : 0;
 
     const outcomeHtml = outcomes.map((o) => {
-      const pts = o.channel_points || 0;
+      const pts = Number(o.channel_points) || 0;
       const pct = totalPoints > 0 ? Math.round(pts / totalPoints * 100) : 0;
-      const color = (o.color || "BLUE").toLowerCase();
+      // Twitch's outcome colours are BLUE / PINK; anything else falls back to blue rather than reaching the class
+      const color = /^[a-z]+$/i.test(o.color || "") ? o.color.toLowerCase() : "blue";
       return `
-        <div class="prediction-outcome outcome-${color}" data-id="${o.id}">
+        <div class="prediction-outcome outcome-${color}" data-id="${this._escape(o.id)}">
           <div class="prediction-outcome-fill" style="width:${pct}%"></div>
           <span class="prediction-outcome-title">${this._escape(o.title || "")}</span>
           <span class="prediction-outcome-pct">${pct}%</span>
@@ -320,10 +322,9 @@ export const chatEventsMixin = {
     this.trimAndScroll();
   },
 
+  // safe in text AND inside quoted attributes (the old textContent/innerHTML trick left quotes as they were)
   _escape(str) {
-    const d = document.createElement("div");
-    d.textContent = String(str);
-    return d.innerHTML;
+    return String(str ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   },
 
   // persistent overlay pinned above chat, they stack

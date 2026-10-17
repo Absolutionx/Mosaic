@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-account-eventsub"
+description = "Enables the start_account_eventsub command without any pre-configured scope."
+commands.allow = ["start_account_eventsub"]
+
+[[permission]]
+identifier = "deny-start-account-eventsub"
+description = "Denies the start_account_eventsub command without any pre-configured scope."
+commands.deny = ["start_account_eventsub"]

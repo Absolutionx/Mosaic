@@ -159,14 +159,29 @@ fn is_local_ip(ip: std::net::IpAddr) -> bool {
         std::net::IpAddr::V4(v4) => {
             let o = v4.octets();
             v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified() || v4.is_broadcast()
-                || (o[0] == 100 && (o[1] & 0xC0) == 64) // 100.64.0.0/10, carrier-grade NAT
+                || v4.is_multicast()
+                || o[0] == 0                                  // 0.0.0.0/8, "this network": can reach this computer
+                || (o[0] == 100 && (o[1] & 0xC0) == 64)       // 100.64.0.0/10, carrier-grade NAT
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)    // 192.0.0.0/24, protocol assignments
+                || (o[0] == 198 && (o[1] & 0xFE) == 18)       // 198.18.0.0/15, benchmarking
+                || o[0] >= 240                                // 240.0.0.0/4, reserved
         }
         std::net::IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
-            v6.is_loopback() || v6.is_unspecified()
+            let seg = v6.segments();
+            let first = seg[0];
+            // an IPv4 address carried inside IPv6 is judged as that IPv4 address
+            let embedded_v4 = |a: u16, b: u16| {
+                std::net::Ipv4Addr::new((a >> 8) as u8, a as u8, (b >> 8) as u8, b as u8)
+            };
+            v6.is_loopback() || v6.is_unspecified() || v6.is_multicast()
                 || (first & 0xfe00) == 0xfc00 // fc00::/7, unique local
                 || (first & 0xffc0) == 0xfe80 // fe80::/10, link-local
                 || v6.to_ipv4_mapped().map(|v4| is_local_ip(std::net::IpAddr::V4(v4))).unwrap_or(false)
+                // 64:ff9b::/96, NAT64: the last 32 bits are an IPv4 address
+                || (seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
+                    && is_local_ip(std::net::IpAddr::V4(embedded_v4(seg[6], seg[7]))))
+                // ::a.b.c.d, the old IPv4-compatible form
+                || (seg[..6] == [0, 0, 0, 0, 0, 0] && is_local_ip(std::net::IpAddr::V4(embedded_v4(seg[6], seg[7]))))
         }
     }
 }
@@ -319,6 +334,19 @@ fn storyboard_host_ok(url: &str) -> bool {
 mod preview_resolver_tests {
     use super::{public_addrs, PublicOnlyResolver};
     use reqwest::dns::Resolve;
+
+    #[test]
+    fn more_local_ranges_are_local() {
+        for ip in [
+            "0.1.2.3", "198.18.0.1", "198.19.255.255", "224.0.0.1", "240.0.0.1", "192.0.0.8",
+            "ff02::1", "64:ff9b::192.168.1.1", "64:ff9b::7f00:1", "::127.0.0.1", "::ffff:10.0.0.1",
+        ] {
+            assert!(super::is_local_ip(ip.parse().unwrap()), "{ip} should count as local");
+        }
+        for ip in ["8.8.8.8", "198.20.0.1", "64:ff9b::808:808", "2606:4700::1111"] {
+            assert!(!super::is_local_ip(ip.parse().unwrap()), "{ip} should count as public");
+        }
+    }
 
     #[test]
     fn private_addresses_are_dropped() {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-vod-download"
+description = "Enables the start_vod_download command without any pre-configured scope."
+commands.allow = ["start_vod_download"]
+
+[[permission]]
+identifier = "deny-start-vod-download"
+description = "Denies the start_vod_download command without any pre-configured scope."
+commands.deny = ["start_vod_download"]

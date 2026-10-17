@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-devtools-enabled"
+description = "Enables the set_devtools_enabled command without any pre-configured scope."
+commands.allow = ["set_devtools_enabled"]
+
+[[permission]]
+identifier = "deny-set-devtools-enabled"
+description = "Denies the set_devtools_enabled command without any pre-configured scope."
+commands.deny = ["set_devtools_enabled"]

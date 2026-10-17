@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-my-subscriptions"
+description = "Enables the get_my_subscriptions command without any pre-configured scope."
+commands.allow = ["get_my_subscriptions"]
+
+[[permission]]
+identifier = "deny-get-my-subscriptions"
+description = "Denies the get_my_subscriptions command without any pre-configured scope."
+commands.deny = ["get_my_subscriptions"]

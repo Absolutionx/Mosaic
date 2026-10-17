@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fetch-global-badges"
+description = "Enables the fetch_global_badges command without any pre-configured scope."
+commands.allow = ["fetch_global_badges"]
+
+[[permission]]
+identifier = "deny-fetch-global-badges"
+description = "Denies the fetch_global_badges command without any pre-configured scope."
+commands.deny = ["fetch_global_badges"]

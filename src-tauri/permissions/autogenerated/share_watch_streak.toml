@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-share-watch-streak"
+description = "Enables the share_watch_streak command without any pre-configured scope."
+commands.allow = ["share_watch_streak"]
+
+[[permission]]
+identifier = "deny-share-watch-streak"
+description = "Denies the share_watch_streak command without any pre-configured scope."
+commands.deny = ["share_watch_streak"]

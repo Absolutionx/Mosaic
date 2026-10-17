@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-streams-for-category"
+description = "Enables the kick_streams_for_category command without any pre-configured scope."
+commands.allow = ["kick_streams_for_category"]
+
+[[permission]]
+identifier = "deny-kick-streams-for-category"
+description = "Denies the kick_streams_for_category command without any pre-configured scope."
+commands.deny = ["kick_streams_for_category"]

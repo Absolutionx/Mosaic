@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-logout"
+description = "Enables the kick_logout command without any pre-configured scope."
+commands.allow = ["kick_logout"]
+
+[[permission]]
+identifier = "deny-kick-logout"
+description = "Denies the kick_logout command without any pre-configured scope."
+commands.deny = ["kick_logout"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-dismiss-vod-from-continue"
+description = "Enables the dismiss_vod_from_continue command without any pre-configured scope."
+commands.allow = ["dismiss_vod_from_continue"]
+
+[[permission]]
+identifier = "deny-dismiss-vod-from-continue"
+description = "Denies the dismiss_vod_from_continue command without any pre-configured scope."
+commands.deny = ["dismiss_vod_from_continue"]

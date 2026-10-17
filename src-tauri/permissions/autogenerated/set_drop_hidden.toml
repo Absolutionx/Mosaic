@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-drop-hidden"
+description = "Enables the set_drop_hidden command without any pre-configured scope."
+commands.allow = ["set_drop_hidden"]
+
+[[permission]]
+identifier = "deny-set-drop-hidden"
+description = "Denies the set_drop_hidden command without any pre-configured scope."
+commands.deny = ["set_drop_hidden"]

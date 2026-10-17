@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-search-categories"
+description = "Enables the kick_search_categories command without any pre-configured scope."
+commands.allow = ["kick_search_categories"]
+
+[[permission]]
+identifier = "deny-kick-search-categories"
+description = "Denies the kick_search_categories command without any pre-configured scope."
+commands.deny = ["kick_search_categories"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pubsub-set-channel"
+description = "Enables the pubsub_set_channel command without any pre-configured scope."
+commands.allow = ["pubsub_set_channel"]
+
+[[permission]]
+identifier = "deny-pubsub-set-channel"
+description = "Denies the pubsub_set_channel command without any pre-configured scope."
+commands.deny = ["pubsub_set_channel"]

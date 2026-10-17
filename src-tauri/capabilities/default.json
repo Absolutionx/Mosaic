@@ -40,6 +40,8 @@
     "os:default",
     "autostart:default",
     "core:window:allow-hide",
-    "core:webview:allow-set-webview-zoom"
+    "core:webview:allow-set-webview-zoom",
+    "main-window",
+    "core:webview:deny-internal-toggle-devtools"
   ]
 }

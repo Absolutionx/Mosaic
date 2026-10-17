@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-subscription-info"
+description = "Enables the get_subscription_info command without any pre-configured scope."
+commands.allow = ["get_subscription_info"]
+
+[[permission]]
+identifier = "deny-get-subscription-info"
+description = "Denies the get_subscription_info command without any pre-configured scope."
+commands.deny = ["get_subscription_info"]

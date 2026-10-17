@@ -604,3 +604,54 @@ fn spell_suggest_blocking(word: &str, lang: &str, max: usize) -> Vec<String> {
     }
     out
 }
+
+// Settings > App > Developer tools. Release builds start with WebView2's developer tools switched off in every
+// window (main and picture-in-picture), so Inspect and Ctrl+Shift+I do nothing: "paste this into Inspect" is how
+// scammers take over accounts. The setting turns them back on. Debug builds always have them.
+// Tauri also injects its own Ctrl+Shift+I handler that calls internal_toggle_devtools, which opens them whatever
+// WebView2's switch says; capabilities/*.json deny that command, leaving WebView2's own shortcut (which obeys it)
+static DEVTOOLS_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// applies the current policy to one webview. also run for every page load (main.rs on_page_load), so windows
+// opened later (picture-in-picture) start with it too
+pub fn apply_devtools_policy<R: tauri::Runtime>(webview: &tauri::Webview<R>) {
+    let _ = webview.with_webview(set_devtools_on_platform);
+}
+
+fn set_devtools_on_platform(wv: tauri::webview::PlatformWebview) {
+    #[cfg(windows)]
+    unsafe {
+        let on = DEVTOOLS_ON.load(std::sync::atomic::Ordering::Relaxed) || cfg!(debug_assertions);
+        let Ok(core) = wv.controller().CoreWebView2() else { return };
+        let Ok(settings) = core.Settings() else { return };
+        let _ = settings.SetAreDevToolsEnabled(on.into());
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = wv;
+    }
+}
+
+// every open window now (startup, or the setting changed)
+pub fn apply_devtools_policy_all(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    for win in app.webview_windows().values() {
+        let _ = win.with_webview(set_devtools_on_platform);
+    }
+}
+
+#[tauri::command]
+pub fn set_devtools_enabled(app: tauri::AppHandle, on: bool) {
+    DEVTOOLS_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+    apply_devtools_policy_all(&app);
+}
+
+// Ctrl+Shift+I / F12 (main.js). Release builds turn off WebView2's own shortcuts, and Tauri's built-in
+// toggle is denied in capabilities/*.json because it ignores the setting, so this is the one way in from
+// the keyboard: it opens the developer tools for the window it came from, only while the setting is on
+#[tauri::command]
+pub fn open_devtools(webview: tauri::Webview) {
+    if DEVTOOLS_ON.load(std::sync::atomic::Ordering::Relaxed) || cfg!(debug_assertions) {
+        webview.open_devtools();
+    }
+}

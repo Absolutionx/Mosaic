@@ -480,3 +480,34 @@ token, and are refreshed automatically when they expire (~1 hour).
 > as a semi-public app identifier; if it's ever abused, rotate it in the Kick
 > developer console. To keep it out of a public repo entirely, supply it via the
 > `KICK_CLIENT_SECRET` build-time env var instead of hardcoding it.
+
+#### What the secret can and can't be used for
+
+Your users' Kick accounts stay safe even if someone extracts the secret: every
+login is protected by PKCE and a random `state`, and Kick only delivers the login
+result to the registered redirect (`http://localhost:17544/`, on the user's own
+PC). Keep that the **only** redirect URI registered for the app. What someone
+*can* do is make Kick API calls as "Mosaic", burning the app's rate limit or
+getting it suspended, which would break Kick login for everyone.
+
+#### Signs of abuse
+
+- Kick emails the account that registered the app, or suspends the app.
+- Kick login or sending Kick chat fails for **everyone** at once. Mosaic shows
+  "Kick login is unavailable right now: Kick refused Mosaic's app" when Kick's
+  token endpoint answers `invalid_client` or `429`, and logs
+  `[kick-oauth] Kick refused Mosaic's app` to stderr.
+- The client ID (`01M51TR1P2VSHYHGRNKWGT4ZTP`) or the secret turns up in
+  someone else's code on GitHub.
+
+#### Rotating the secret
+
+1. At <https://kick.com/settings/developer>, open the app and generate a new
+   client secret. The old one stops working at once, so installed copies can't
+   log in to Kick until they update.
+2. In the GitHub repo, go to **Settings > Secrets and variables > Actions** and
+   replace `KICK_CLIENT_SECRET` with the new value.
+3. Bump the version and push a `v*` tag so the release workflow builds and
+   publishes an update. Users who update can use Kick login again; if Kick
+   rejects a login saved under the old secret, Mosaic signs them out and they
+   log in once more.

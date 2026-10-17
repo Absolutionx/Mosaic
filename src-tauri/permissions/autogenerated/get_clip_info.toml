@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-clip-info"
+description = "Enables the get_clip_info command without any pre-configured scope."
+commands.allow = ["get_clip_info"]
+
+[[permission]]
+identifier = "deny-get-clip-info"
+description = "Denies the get_clip_info command without any pre-configured scope."
+commands.deny = ["get_clip_info"]

@@ -52,9 +52,14 @@ export class TwitchAuth {
   }
 
   async setupListener() {
-    await listen("oauth-token", async (event) => {
-      const { access_token } = event.payload;
-      await this.handleToken(access_token);
+    // the token never reaches the page: Rust validates and keeps it, and only says who logged in
+    await listen("oauth-login", async (event) => {
+      await this.handleLogin(event.payload || {});
+    });
+    await listen("oauth-login-failed", (event) => {
+      console.error("Token validation failed:", event.payload);
+      this._setLoginLabel("Log in with Twitch");
+      this.loginBtn.disabled = false;
     });
   }
 
@@ -105,8 +110,7 @@ export class TwitchAuth {
 
       const result = await invoke("restore_session");
       if (result) {
-        const { access_token, login, user_id, missing_scopes } = result;
-        await invoke("set_oauth_credentials", { accessToken: access_token, login, userId: user_id });
+        const { login, user_id, missing_scopes } = result;
         this.login = login;
         const displayName = await this._resolveDisplayName(login, user_id);
         this._setLoginLabel(displayName);
@@ -141,8 +145,7 @@ export class TwitchAuth {
 
   async logout() {
     try {
-      await invoke("logout");
-      await invoke("set_oauth_credentials", { accessToken: "", login: "", userId: "" });
+      await invoke("logout"); // also clears the session's credentials in Rust
       // tear down the persistent whisper connection — no account to receive whispers for anymore
       await invoke("stop_account_eventsub").catch(() => {});
     } catch (err) {
@@ -156,10 +159,8 @@ export class TwitchAuth {
     this.statusCallback(null, null, null);
   }
 
-  async handleToken(accessToken) {
+  async handleLogin({ login, user_id, missing_scopes }) {
     try {
-      const { login, user_id, missing_scopes } = await invoke("validate_oauth_token", { accessToken });
-      await invoke("set_oauth_credentials", { accessToken, login, userId: user_id });
       this.login = login;
       const displayName = await this._resolveDisplayName(login, user_id);
       this._setLoginLabel(displayName);

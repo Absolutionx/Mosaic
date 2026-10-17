@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-send-chat-message"
+description = "Enables the kick_send_chat_message command without any pre-configured scope."
+commands.allow = ["kick_send_chat_message"]
+
+[[permission]]
+identifier = "deny-kick-send-chat-message"
+description = "Denies the kick_send_chat_message command without any pre-configured scope."
+commands.deny = ["kick_send_chat_message"]

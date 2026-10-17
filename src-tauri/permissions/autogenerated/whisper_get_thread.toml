@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-whisper-get-thread"
+description = "Enables the whisper_get_thread command without any pre-configured scope."
+commands.allow = ["whisper_get_thread"]
+
+[[permission]]
+identifier = "deny-whisper-get-thread"
+description = "Denies the whisper_get_thread command without any pre-configured scope."
+commands.deny = ["whisper_get_thread"]

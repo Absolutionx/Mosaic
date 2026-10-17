@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-prediction-result"
+description = "Enables the get_prediction_result command without any pre-configured scope."
+commands.allow = ["get_prediction_result"]
+
+[[permission]]
+identifier = "deny-get-prediction-result"
+description = "Denies the get_prediction_result command without any pre-configured scope."
+commands.deny = ["get_prediction_result"]

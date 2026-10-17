@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-prime-offers"
+description = "Enables the get_prime_offers command without any pre-configured scope."
+commands.allow = ["get_prime_offers"]
+
+[[permission]]
+identifier = "deny-get-prime-offers"
+description = "Denies the get_prime_offers command without any pre-configured scope."
+commands.deny = ["get_prime_offers"]

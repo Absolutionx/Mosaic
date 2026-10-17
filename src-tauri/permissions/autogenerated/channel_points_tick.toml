@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-channel-points-tick"
+description = "Enables the channel_points_tick command without any pre-configured scope."
+commands.allow = ["channel_points_tick"]
+
+[[permission]]
+identifier = "deny-channel-points-tick"
+description = "Denies the channel_points_tick command without any pre-configured scope."
+commands.deny = ["channel_points_tick"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-vod-playback"
+description = "Enables the kick_vod_playback command without any pre-configured scope."
+commands.allow = ["kick_vod_playback"]
+
+[[permission]]
+identifier = "deny-kick-vod-playback"
+description = "Denies the kick_vod_playback command without any pre-configured scope."
+commands.deny = ["kick_vod_playback"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-user-note-ids"
+description = "Enables the get_user_note_ids command without any pre-configured scope."
+commands.allow = ["get_user_note_ids"]
+
+[[permission]]
+identifier = "deny-get-user-note-ids"
+description = "Denies the get_user_note_ids command without any pre-configured scope."
+commands.deny = ["get_user_note_ids"]

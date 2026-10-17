@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-kick-live-dvr"
+description = "Enables the get_kick_live_dvr command without any pre-configured scope."
+commands.allow = ["get_kick_live_dvr"]
+
+[[permission]]
+identifier = "deny-get-kick-live-dvr"
+description = "Denies the get_kick_live_dvr command without any pre-configured scope."
+commands.deny = ["get_kick_live_dvr"]

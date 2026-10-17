@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-automod-process-message"
+description = "Enables the automod_process_message command without any pre-configured scope."
+commands.allow = ["automod_process_message"]
+
+[[permission]]
+identifier = "deny-automod-process-message"
+description = "Denies the automod_process_message command without any pre-configured scope."
+commands.deny = ["automod_process_message"]

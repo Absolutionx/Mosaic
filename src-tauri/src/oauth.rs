@@ -4,7 +4,8 @@
 // prevent_close handler breaks the popup's close button. instead we open the auth URL in the system
 // browser and catch the redirect on a local tokio server (127.0.0.1:17543). the token comes back in
 // the URL #fragment (never sent to the server), so the server serves a one-shot bridge page whose JS
-// reads the fragment and GETs /token?t=<token>&s=<state>; we then emit "oauth-token" to the main window
+// reads the fragment and GETs /token?t=<token>&s=<state>; Rust then validates and keeps the token (the page
+// never sees it) and emits "oauth-login" with who logged in
 // and shut down. port 17543 must match the redirect URI registered at dev.twitch.tv
 //
 // the state value: every login attempt sends Twitch a fresh random `state`, Twitch hands it back in the
@@ -76,10 +77,6 @@ pub const REQUIRED_SCOPES: &[&str] = &[
     "moderator:read:vips",
 ];
 
-#[derive(Serialize, Clone)]
-pub struct OAuthTokenEvent {
-    pub access_token: String,
-}
 
 #[derive(Deserialize, Debug)]
 struct ValidateResponse {
@@ -127,7 +124,7 @@ fn authorize_url(state: &str) -> String {
     )
 }
 
-// opens the Twitch login page in the default browser and starts a local HTTP server to catch the OAuth redirect. on success it emits "oauth-token" to the main window and shuts down
+// opens the Twitch login page in the default browser and starts a local HTTP server to catch the OAuth redirect. on success it emits "oauth-login" (login, user id; never the token) and shuts down
 #[tauri::command]
 pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
     // try to bind the port before opening the browser. if it's already in use a previous login attempt is still running, just open the URL again so the user can retry without restarting the app
@@ -147,6 +144,18 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
             }
         }
     };
+    // the redirect says "localhost", which a browser may reach over IPv6 ([::1]) first. listen there too, so
+    // the token can't land at another program sitting on [::1]:17543 while Mosaic waits on 127.0.0.1 only.
+    // that address taken by someone else: stop, like a busy 127.0.0.1 above. no IPv6 on this computer: fine
+    let listener_v6 = match TcpListener::bind(format!("[::1]:{REDIRECT_PORT}")).await {
+        Ok(l) => Some(l),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            return Err(format!(
+                "Another program is using port {REDIRECT_PORT}, which Mosaic's Twitch login needs. Close it and try again."
+            ));
+        }
+        Err(_) => None,
+    };
     SERVER_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
 
     let state = new_state();
@@ -160,8 +169,16 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
         // 5-minute timeout in case the user abandons the flow
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(300),
-            run_redirect_server(listener, state, move |token| {
-                let _ = app2.emit("oauth-token", OAuthTokenEvent { access_token: token });
+            run_redirect_server(listener, listener_v6, state, move |token| {
+                // the token stays in Rust: validated, stored and handed to chat here; the page only hears
+                // who logged in ("oauth-login"), or that it failed ("oauth-login-failed")
+                let app3 = app2.clone();
+                tauri::async_runtime::spawn(async move {
+                    match accept_token(&app3, token).await {
+                        Ok(info) => { let _ = app3.emit("oauth-login", info); }
+                        Err(e) => { let _ = app3.emit("oauth-login-failed", e); }
+                    }
+                });
             }),
         )
         .await;
@@ -267,9 +284,24 @@ const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
 // serves the bridge page and waits for it to hand over the token. `expected_state` is what this login
 // attempt sent to Twitch: a /token request without it is refused and the server keeps waiting for the
 // real one. `on_token` runs once, with the accepted token, and then the server stops
-async fn run_redirect_server<F: Fn(String)>(listener: TcpListener, expected_state: String, on_token: F) {
+async fn run_redirect_server<F: Fn(String)>(
+    listener: TcpListener,
+    listener_v6: Option<TcpListener>,
+    expected_state: String,
+    on_token: F,
+) {
     loop {
-        let (mut socket, _) = match listener.accept().await {
+        // whichever address the browser came in on (127.0.0.1, or [::1] when there is one)
+        let accepted = tokio::select! {
+            r = listener.accept() => r,
+            r = async {
+                match &listener_v6 {
+                    Some(l) => l.accept().await,
+                    None => std::future::pending().await,
+                }
+            } => r,
+        };
+        let (mut socket, _) = match accepted {
             Ok(s) => s,
             Err(_) => break,
         };
@@ -365,28 +397,40 @@ fn urlencoding_lite(input: &str) -> String {
         .replace('/', "%2F")
 }
 
-#[tauri::command]
-pub async fn validate_oauth_token(
-    app: AppHandle,
-    access_token: String,
-) -> Result<serde_json::Value, String> {
+// validates a token from the login redirect, stores it and makes it the session's (chat, Helix). returns
+// what the page may know: login, user id and missing scopes, never the token
+async fn accept_token(app: &AppHandle, access_token: String) -> Result<serde_json::Value, String> {
     let body = reqwest_lite_get(
         "https://id.twitch.tv/oauth2/validate",
         &[("Authorization", &format!("OAuth {access_token}"))],
     )
     .await?;
-
     let parsed: ValidateResponse =
         serde_json::from_str(&body).map_err(|e| format!("Failed to parse validate response: {e}"))?;
+    save_token(app, &access_token);
+    set_session(app, Some((access_token, &parsed)));
+    Ok(session_info(&parsed))
+}
 
-    save_token(&app, &access_token);
-
-    let missing = missing_scopes(&parsed.scopes);
-    Ok(serde_json::json!({
+fn session_info(parsed: &ValidateResponse) -> serde_json::Value {
+    serde_json::json!({
         "login": parsed.login,
         "user_id": parsed.user_id,
-        "missing_scopes": missing,
-    }))
+        "missing_scopes": missing_scopes(&parsed.scopes),
+    })
+}
+
+// the in-memory credentials chat and the Helix commands use (None = logged out)
+fn set_session(app: &AppHandle, session: Option<(String, &ValidateResponse)>) {
+    use tauri::Manager;
+    let state = app.state::<crate::ChatState>();
+    if let Ok(mut guard) = state.auth.lock() {
+        *guard = session.map(|(access_token, v)| crate::chat::AuthCredentials {
+            access_token,
+            login: v.login.clone(),
+            user_id: v.user_id.clone(),
+        });
+    };
 }
 
 // Which required scopes this token is missing (empty = all present). Used by the frontend to decide
@@ -402,6 +446,7 @@ fn missing_scopes(granted: &[String]) -> Vec<String> {
 #[tauri::command]
 pub fn logout(app: AppHandle) {
     clear_token(&app);
+    set_session(&app, None);
 }
 
 #[tauri::command]
@@ -417,12 +462,10 @@ pub async fn restore_session(app: AppHandle) -> Result<serde_json::Value, String
     .await
     {
         Ok(body) => match serde_json::from_str::<ValidateResponse>(&body) {
-            Ok(parsed) => Ok(serde_json::json!({
-                "access_token": token,
-                "login": parsed.login,
-                "user_id": parsed.user_id,
-                "missing_scopes": missing_scopes(&parsed.scopes),
-            })),
+            Ok(parsed) => {
+                set_session(&app, Some((token, &parsed)));
+                Ok(session_info(&parsed))
+            }
             Err(e) => {
                 clear_token(&app);
                 Err(format!("Failed to parse validate response: {e}"))
@@ -481,7 +524,7 @@ mod redirect_server_tests {
         let addr = listener.local_addr().unwrap();
         let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let got2 = got.clone();
-        let server = tokio::spawn(super::run_redirect_server(listener, "STATE123".into(), move |t| got2.lock().unwrap().push(t)));
+        let server = tokio::spawn(super::run_redirect_server(listener, None, "STATE123".into(), move |t| got2.lock().unwrap().push(t)));
 
         let _silent = TcpStream::connect(addr).await.unwrap(); // connects, never sends
         let t0 = std::time::Instant::now();

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-channel-emotes"
+description = "Enables the get_channel_emotes command without any pre-configured scope."
+commands.allow = ["get_channel_emotes"]
+
+[[permission]]
+identifier = "deny-get-channel-emotes"
+description = "Denies the get_channel_emotes command without any pre-configured scope."
+commands.deny = ["get_channel_emotes"]

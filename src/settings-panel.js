@@ -8,6 +8,7 @@ import { pushEscape } from "./escape-stack.js";
 import { closeCommandPalette } from "./command-palette.js";
 
 let popEscape = null;       // this panel's entry on the shared Escape stack
+let selectOwner = null;      // the button whose dropdown is open
 let popSelectEscape = null; // the open dropdown's entry (Escape closes the dropdown before the panel)
 
 let actions = {}; // { openChatFilter, openHiddenChannels, openTwitchConnection }
@@ -161,6 +162,7 @@ const SECTIONS = [
       options: [0.9, 1, 1.1, 1.25].map((v) => ({ value: v, label: `${Math.round(v * 100)}%` })) },
     { kind: "toggle", id: "reduceMotion", title: "Reduce motion", desc: "Turn off animations and glows." },
     { kind: "toggle", id: "videoContextMenu", title: "Browser right-click menu", desc: "Show the browser's own menu when you right-click: on video (loop, save frame, picture in picture) and in text boxes (cut, copy, paste). Keyboard shortcuts like Ctrl+C and Ctrl+V work either way." },
+    { kind: "toggle", id: "devTools", title: "Developer tools", desc: "Lets Inspect and Ctrl+Shift+I open the developer tools, for troubleshooting. Leave this off unless you need it: anyone who asks you to paste code into them is trying to take over your Twitch account. Turning it off applies the next time Mosaic starts." },
     { kind: "toggle", id: "autoUpdateCheck", title: "Check for updates automatically", desc: "At startup and every 15 minutes." },
     { kind: "action", title: "Check for updates", desc: "", button: "Check now", run: async () => actions.checkForUpdatesNow?.() },
     { kind: "toggle", id: "lunaButton", title: "Amazon Luna button", desc: "The crown in the header with the games and loot you can claim with Prime, as on twitch.tv." },
@@ -499,7 +501,10 @@ function findRow(id) {
 
 // themed dropdown for "select" rows
 function toggleSelectMenu(btn, r) {
-  if (document.querySelector(".settings-select-menu")) { closeSelectMenu(); return; }
+  const wasOwn = selectOwner === btn;
+  if (document.querySelector(".settings-select-menu")) closeSelectMenu();
+  if (wasOwn) return; // clicking the open dropdown's button closes it; another dropdown's opens that one instead
+  selectOwner = btn;
   const menu = el("div", "settings-select-menu");
   const cur = getSetting(r.id);
   for (const o of r.options) {
@@ -519,10 +524,12 @@ function toggleSelectMenu(btn, r) {
 }
 function onSelectOutside(e) {
   const m = document.querySelector(".settings-select-menu");
-  if (m && !m.contains(e.target)) closeSelectMenu();
+  // its own button is left to the click that follows: closing here would let that click reopen it (a flicker)
+  if (m && !m.contains(e.target) && !selectOwner?.contains(e.target)) closeSelectMenu();
 }
 function closeSelectMenu() {
   document.querySelector(".settings-select-menu")?.remove();
+  selectOwner = null;
   document.removeEventListener("mousedown", onSelectOutside, true);
   popSelectEscape?.();
   popSelectEscape = null;

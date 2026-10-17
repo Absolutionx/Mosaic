@@ -62,6 +62,7 @@ export const DEFAULTS = {
   vodSpeed: 1,               // VOD playback speed (remembered across VODs)
   clipLength: 30,            // last length picked in the clip panel (Alt+X uses it)
   videoContextMenu: false,   // the browser's own right-click menu, app-wide (video, text boxes, ...)
+  devTools: false,           // Inspect / Ctrl+Shift+I (release builds only; dev builds always have them)
   chatOverlay: false,        // chat over the video in theater mode / fullscreen
   chatOverlayRect: null,     // overlay position + size as fractions of the video picture (null = default)
   chatOverlayInput: true,    // a message box in the overlay

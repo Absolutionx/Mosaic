@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-heartbeat-set-playing"
+description = "Enables the heartbeat_set_playing command without any pre-configured scope."
+commands.allow = ["heartbeat_set_playing"]
+
+[[permission]]
+identifier = "deny-heartbeat-set-playing"
+description = "Denies the heartbeat_set_playing command without any pre-configured scope."
+commands.deny = ["heartbeat_set_playing"]

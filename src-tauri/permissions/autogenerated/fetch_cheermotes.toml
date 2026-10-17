@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fetch-cheermotes"
+description = "Enables the fetch_cheermotes command without any pre-configured scope."
+commands.allow = ["fetch_cheermotes"]
+
+[[permission]]
+identifier = "deny-fetch-cheermotes"
+description = "Denies the fetch_cheermotes command without any pre-configured scope."
+commands.deny = ["fetch_cheermotes"]

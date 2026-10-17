@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-claim-prime-offer"
+description = "Enables the claim_prime_offer command without any pre-configured scope."
+commands.allow = ["claim_prime_offer"]
+
+[[permission]]
+identifier = "deny-claim-prime-offer"
+description = "Denies the claim_prime_offer command without any pre-configured scope."
+commands.deny = ["claim_prime_offer"]

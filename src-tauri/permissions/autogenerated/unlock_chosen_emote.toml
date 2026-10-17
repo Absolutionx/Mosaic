@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-unlock-chosen-emote"
+description = "Enables the unlock_chosen_emote command without any pre-configured scope."
+commands.allow = ["unlock_chosen_emote"]
+
+[[permission]]
+identifier = "deny-unlock-chosen-emote"
+description = "Denies the unlock_chosen_emote command without any pre-configured scope."
+commands.deny = ["unlock_chosen_emote"]

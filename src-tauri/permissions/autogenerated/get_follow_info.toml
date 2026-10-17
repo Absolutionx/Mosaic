@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-follow-info"
+description = "Enables the get_follow_info command without any pre-configured scope."
+commands.allow = ["get_follow_info"]
+
+[[permission]]
+identifier = "deny-get-follow-info"
+description = "Denies the get_follow_info command without any pre-configured scope."
+commands.deny = ["get_follow_info"]
