@@ -1153,6 +1153,9 @@ async fn device_gql(
         .header("Client-Id", crate::twitch_device_auth::device_client_id())
         .header("Authorization", format!("OAuth {token}"))
         .json(&serde_json::json!({ "operationName": operation, "query": query, "variables": variables }))
+        // the shared client has no overall timeout (long downloads use it); a GQL call that never answers
+        // must not hang whatever is waiting on it (the drops scan, the points panel)
+        .timeout(std::time::Duration::from_secs(20))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -1910,6 +1913,7 @@ async fn public_gql(app: &tauri::AppHandle, query: &str) -> Result<serde_json::V
             .post("https://gql.twitch.tv/gql")
             .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
             .header("Content-Type", "application/json")
+            .timeout(std::time::Duration::from_secs(20))
             .body(serde_json::json!({ "query": query }).to_string());
         for (k, v) in headers {
             req = req.header(*k, *v);
@@ -1958,6 +1962,11 @@ pub async fn drop_campaigns_more(reset: bool, app: tauri::AppHandle) -> Result<s
     if DROP_SCAN_BUSY.swap(true, Ordering::AcqRel) {
         return Ok(serde_json::json!({ "campaigns": [], "done": false, "busy": true }));
     }
+    // cleared however this call ends (an early return, an error, or the call being dropped), so one failed
+    // batch can never leave every later one answering "busy"
+    struct Busy;
+    impl Drop for Busy { fn drop(&mut self) { DROP_SCAN_BUSY.store(false, std::sync::atomic::Ordering::Release); } }
+    let _busy = Busy;
     let taken = DROP_SCAN.lock().ok().and_then(|mut g| g.take());
     let fresh = || DropScan { after: String::new(), done: false, games: Default::default(), ids: Default::default(), found: Vec::new(), at: std::time::Instant::now() };
     let mut scan = match taken {
@@ -1977,7 +1986,6 @@ pub async fn drop_campaigns_more(reset: bool, app: tauri::AppHandle) -> Result<s
     if let Ok(mut g) = DROP_SCAN.lock() {
         *g = Some(scan);
     }
-    DROP_SCAN_BUSY.store(false, Ordering::Release);
     result
 }
 
@@ -2081,6 +2089,55 @@ async fn drop_scan_step(app: &tauri::AppHandle, scan: &mut DropScan) -> Result<V
     Ok(new)
 }
 
+// Drops autopilot (drops-autopilot.js): the stream you were earning a campaign on ended, so find another
+// live stream for that game that carries the same campaign. Reads the game's live drops-enabled streams
+// (most watched first), then asks the top few channels which campaigns they carry, since some campaigns
+// only count on certain channels. Returns the most watched one that has the campaign, or null
+#[tauri::command]
+pub async fn drops_autopilot_pick(
+    game_id: Option<String>,
+    game_name: Option<String>,
+    campaign_id: String,
+    exclude_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    const CHECK: usize = 8;
+    let game = match (game_id.as_deref().filter(|s| !s.is_empty()), game_name.as_deref().filter(|s| !s.is_empty())) {
+        (Some(id), _) => format!("game(id: {})", serde_json::json!(id)),
+        (None, Some(name)) => format!("game(name: {})", serde_json::json!(name)),
+        _ => return Err("no game".into()),
+    };
+    let query = format!("query MosaicDrops {{ {game} {{ streams(first: 20, options: {{systemFilters: [DROPS_ENABLED]}}) {{ edges {{ node {{ viewersCount broadcaster {{ login displayName }} }} }} }} }} }}");
+    let json = public_gql(&app, &query).await?;
+    let exclude = exclude_login.to_lowercase();
+    let candidates: Vec<(String, String, i64)> = json.pointer("/data/game/streams/edges").and_then(|v| v.as_array()).into_iter().flatten()
+        .filter_map(|e| {
+            let login = e.pointer("/node/broadcaster/login")?.as_str()?.to_lowercase();
+            if login == exclude { return None; }
+            let name = e.pointer("/node/broadcaster/displayName").and_then(|v| v.as_str()).unwrap_or(&login).to_string();
+            let viewers = e.pointer("/node/viewersCount").and_then(|v| v.as_i64()).unwrap_or(0);
+            Some((login, name, viewers))
+        })
+        .take(CHECK)
+        .collect();
+    if candidates.is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+    // one request for all of them, each channel's campaign ids
+    let fields: Vec<String> = candidates.iter().enumerate()
+        .map(|(i, (l, _, _))| format!("c{i}: channel(name: {}) {{ viewerDropCampaigns {{ id }} }}", serde_json::json!(l)))
+        .collect();
+    let json = public_gql(&app, &format!("query MosaicDrops {{ {} }}", fields.join(" "))).await?;
+    for (i, (login, name, viewers)) in candidates.iter().enumerate() {
+        let has = json.pointer(&format!("/data/c{i}/viewerDropCampaigns")).and_then(|v| v.as_array())
+            .is_some_and(|list| list.iter().any(|c| c.get("id").and_then(|v| v.as_str()) == Some(campaign_id.as_str())));
+        if has {
+            return Ok(serde_json::json!({ "login": login, "name": name, "viewers": viewers }));
+        }
+    }
+    Ok(serde_json::Value::Null)
+}
+
 // The balance pill's 60s check, which also claims the channel points bonus (the chest Twitch offers every
 // ~15 minutes of watching) when claim is true (Settings > Twitch account > Auto-claim channel points bonus).
 // Same unofficial GQL as the balance (device login): communityPoints.availableClaim is the ready bonus, and
@@ -2112,7 +2169,8 @@ pub async fn channel_points_tick(
     let after = device_gql(&app, "ChannelPointsBonus", QUERY, vars).await.ok().flatten()
         .and_then(|j| j.pointer("/data/user/channel/self/communityPoints/balance").and_then(|v| v.as_i64()))
         .or(balance);
-    Ok(serde_json::json!({ "balance": after, "claimed": true }))
+    // "before" lets the points ledger (points-ledger.js) tell the chest apart from what watching earned
+    Ok(serde_json::json!({ "balance": after, "before": balance, "claimed": true }))
 }
 
 // claim an earned drop by its instance id (DropsPage_ClaimDropRewards)

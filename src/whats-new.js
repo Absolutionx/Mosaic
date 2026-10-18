@@ -109,7 +109,14 @@ export async function openWhatsNew({ select, fresh = new Set(), current } = {}) 
       if (last && last[0] === label) last[1].push(i);
       else groups.push([label, [i]]);
     }
-    for (const [kind, label] of KINDS) groups.push([label, selected.items.filter((i) => i.kind === kind && !i.top)]);
+    for (const [kind, label] of KINDS) {
+      const items = selected.items.filter((i) => i.kind === kind && !i.top);
+      if (!items.length) continue;
+      // the pinned items' heading carries on when the usual grouping starts with the same kind (one "New", not two)
+      const last = groups[groups.length - 1];
+      if (last && last[0] === label) last[1].push(...items);
+      else groups.push([label, items]);
+    }
     for (const [label, items] of groups) {
       if (!items.length) continue;
       rows.append(el("div", "settings-group", label));

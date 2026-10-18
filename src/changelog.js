@@ -4,6 +4,22 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.7.0",
+    items: [
+      { kind: "new", top: true, title: "Drops autopilot", desc: "When the stream you're earning drops on ends, Mosaic finds another live stream of that game with the same campaign and offers to switch. Set it to switch automatically after a 10-second countdown, or turn it off, in Settings > Twitch account." },
+      { kind: "new", title: "Points ledger", desc: "A new Ledger tab in Points & Drops shows where your channel points came from and went: watching, bonus chests, raids, predictions and what you redeemed, day by day. Pick a reward to save for and see how long it'll take, and see which channels earn you the most per hour. It records from now on, kept on this computer." },
+      { kind: "new", title: "Lurk mode", desc: "Turn it on in Settings > Player and, while Mosaic is minimized or in the tray, a Twitch stream keeps going as audio only (or muted) so points, drops and watch streaks keep counting. Mosaic stops drawing anything meanwhile, using about 70% less memory, and chat pauses. Open Mosaic and the picture comes back." },
+      { kind: "improved", title: "A new Points & Drops panel", desc: "Your balance and rewards sit on the left, sorted by what you can afford, with your drops campaigns as cards beside them. Rewards that need a message open a roomier box to type in." },
+      { kind: "improved", title: "Watch stats moved", desc: "Watch stats now has its own tab in the Points & Drops panel, next to Rewards and the Ledger, instead of the chat settings menu. It works without a Twitch connection." },
+      { kind: "new", title: "Saved looks", desc: "Save your theme, colors, customized parts and Custom CSS as a named look in Settings > Appearance, then switch between looks with one click." },
+      { kind: "improved", title: "Themed pop-out windows", desc: "Picture-in-picture and MultiView pop-outs now use your theme too, light themes included, and change along with it." },
+      { kind: "new", title: "Safe mode", desc: "If a customization makes Mosaic hard to use, press Ctrl+Alt+Shift+S to switch custom CSS and customized parts off. Press it again to bring them back." },
+      { kind: "fixed", title: "Slow connections", desc: "Twitch requests that hang now give up after 20 seconds, so the Points & Drops panel and the Drops hub no longer get stuck loading. If one part fails, the rest still shows." },
+      { kind: "fixed", title: "Lighter when minimized", desc: "Mosaic's memory saver now kicks in when it's minimized with nothing playing, not only when it's in the tray." },
+      { kind: "fixed", title: "Smoother settings", desc: "Changing a setting no longer briefly freezes the Settings panel, and chat on light themes does less work per message." },
+    ],
+  },
+  {
     version: "1.6.0",
     items: [
       { kind: "fixed", top: true, title: "Drops keep counting", desc: "Drop progress could stop after a while until you logged in again, without any warning. Mosaic now notices when Twitch stops counting, recovers on its own, and shows the Drops bar if it can't." },

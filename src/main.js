@@ -18,11 +18,12 @@ import { initModMenu } from "./mod-menu.js";
 import { initWhispers, openWhispers } from "./whispers.js";
 import { initCommandPalette } from "./command-palette.js";
 import { showRaidBanner, showRaidArrived, hideRaidBanner } from "./raid-banner.js";
+import { dropsAutopilot } from "./drops-autopilot.js";
 import { initClips, toggleClipPanel } from "./clips.js";
 import { initChatOverlay } from "./chat-overlay.js";
 import { openDownloadDialog } from "./vod-downloads.js";
 import { initEmoteCards } from "./emote-card.js";
-import { startWatchTracking, openWatchStats } from "./watch-stats.js";
+import { startWatchTracking } from "./watch-stats.js";
 import { maybeShowWhatsNew, openWhatsNew } from "./whats-new.js";
 import { initNotificationsPanel } from "./notifications-panel.js";
 import { initLunaPanel } from "./luna-panel.js";
@@ -63,6 +64,7 @@ import { formatViewerCount } from "./format.js";
 import { checkStreamDeps } from "./deps-banner.js";
 import { checkForUpdate } from "./update-banner.js";
 import { MultiView } from "./multiview.js";
+import { initLurkMode, lurkNow, lurkActive, isAway } from "./lurk-mode.js";
 import { updateDropsBanner, hideDropsBanner, resetDropsDismissal, configureDropsBanner } from "./drops-banner.js";
 import { openHiddenChannelsModal } from "./hidden-channels.js";
 import { initMiniPlayer, activateMiniPlayer, deactivateMiniPlayer, resetMiniPlayerDismissal } from "./mini-player.js";
@@ -243,6 +245,13 @@ async function handleStreamSilent(secs) {
     if (await tryKickFailover(channelAtSilence)) return;
     // no Kick simulcast: this IS the end, so say so rather than leaving a frozen frame until the 20s timeout fires
     setStatus(`${channelAtSilence} has ended the stream.`);
+    // earning drops here? offer another live stream with the same campaign (not after a raid: that moves you already)
+    dropsAutopilot({
+      channel: channelAtSilence,
+      raidedRecently: () => Date.now() - (session.lastRaidAt || 0) < 180_000,
+      stillOnIt: () => session.intendedChannel === channelAtSilence,
+      go: (login) => watchChannel(login),
+    }).catch((err) => console.warn("[drops-autopilot]", err));
   } catch (err) {
     // probe failed (network, rate limit). not evidence of anything, fall through to the existing onDead/retry path
     console.warn("[main] stream-ended probe failed:", err);
@@ -466,16 +475,23 @@ const trackId = new TrackId(playbackControls.videoEl, {
         // chat filter + hidden channels live in Settings > Chat > Filters now
         if (action === "settings") openSettingsPanel();
         else if (action === "drops") openDropsHub();
-        else if (action === "stats") showWatchStats();
       });
     });
   }
 }
-document.getElementById("rewards-btn")?.addEventListener("click", () => {
+// Points & Drops: Rewards | Ledger | Watch stats (rewards.js). tab picks where it opens
+function openPointsPanel(tab) {
   openRewardsModal(chat.channel, chat.roomId, () => {
     openPinAuthModal(() => { if (chat.roomId) chat._startPinPoll(chat.roomId); });
+  }, undefined, {
+    tab,
+    stats: {
+      avatarFor: (login) => (sidebar.followed || []).find((c) => String(c.login || "").toLowerCase() === login)?.avatar || "",
+      watch: (login) => paletteWatch(login),
+    },
   });
-});
+}
+document.getElementById("rewards-btn")?.addEventListener("click", () => openPointsPanel("rewards"));
 // Mod action log (fills in only on channels you moderate; see mod-log.js + channel.moderate in eventsub.rs)
 initModLog(chat);
 document.getElementById("modlog-btn")?.addEventListener("click", () => openModLogModal());
@@ -550,6 +566,7 @@ checkForUpdate();
 
 // multi-stream grid overlay, seeded with the current channel. self-contained (multiview.js), uses the native-HLS path per tile, so it doesn't disturb the main relay player
 const multiview = new MultiView();
+initLurkMode({ playbackControls, multiview, chat });
 // MultiView is a distinct mode: while open we fully STOP the main player, not pause it, pausing left the relay alive and could leak audio under the grid (double-audio). we remember what was playing and restart it on close
 let _multiviewResume = null;
 const multiviewHooks = {
@@ -885,12 +902,8 @@ startWatchTracking(() => {
   const f = (sidebar.followed || []).find((c) => String(c.login || "").toLowerCase() === cur.toLowerCase());
   return { login: cur, name: (f && f.name) || chat.channelDisplayName || cur, kind: "live" };
 });
-function showWatchStats() {
-  openWatchStats({
-    avatarFor: (login) => (sidebar.followed || []).find((c) => String(c.login || "").toLowerCase() === login)?.avatar || "",
-    watch: (login) => paletteWatch(login),
-  });
-}
+// the command palette and Settings > App > Watch stats open the Points & Drops panel on its Watch stats tab
+function showWatchStats() { openPointsPanel("stats"); }
 // drops hub (drops-hub.js): the header's Drops tab, the command palette and the Points & Drops popup
 document.getElementById("drops-tab")?.addEventListener("click", () => openDropsHub());
 configureDropsHub({
@@ -1830,6 +1843,7 @@ async function watchChannel(channel, stream) {
 listen("eventsub-raid", (event) => {
   const { to_login, to_name, viewers } = event.payload;
   if (!session.playing || !to_login) return;
+  session.lastRaidAt = Date.now(); // drops autopilot stays out of the way of a raid
   const watching = (playbackControls.currentChannel || "").toLowerCase();
   // currentChannel can be "vod:<id>", which a live raid should never match anyway, but the prefix check makes "not watching a live channel" explicit
   if (!watching || watching.startsWith("vod:")) return;
@@ -2314,14 +2328,18 @@ window.addEventListener("mosaic:streamlink-update", async (e) => {
 let memorySaverOn = false;
 function syncMemorySaver() {
   const playing = [...document.querySelectorAll("video")].some((v) => !v.paused && !v.ended);
-  const on = document.hidden && !playing;
+  // lurking (lurk-mode.js) plays audio only, which needs little of what the saver takes back
+  // isAway(): minimized or in the tray (WebView2 itself only reports the tray as hidden)
+  const on = isAway() && (!playing || lurkActive());
   if (on === memorySaverOn) return;
   memorySaverOn = on;
   invoke("set_memory_saver", { on }).catch(() => {});
 }
 document.addEventListener("visibilitychange", syncMemorySaver);
+document.addEventListener("mosaic:lurk", syncMemorySaver);
+document.addEventListener("mosaic:away", syncMemorySaver);
 // hiding to the tray stops playback just before the window hides; a video paused while minimized counts too
-document.addEventListener("pause", () => { if (document.hidden) syncMemorySaver(); }, true);
+document.addEventListener("pause", () => { if (isAway()) syncMemorySaver(); }, true);
 
 // macOS native-HLS toggle: whether Twitch LIVE plays via native HLS/hls.js (get_live_m3u8_url +
 // attachHlsDvr) instead of the fMP4 byte-relay + MSE. defaults ON for macOS (WebKit MSE is unreliable),
@@ -2424,6 +2442,8 @@ initPreload({
     // nothing preloads while Mosaic sits in the tray; it starts again when the window comes back
     preloadPausedForTray = true;
     syncPreload(0);
+    // lurk mode keeps a live stream going as audio only instead (lurk-mode.js)
+    if (lurkNow()) return;
     // Fully stop and return to Home so reopening from the tray shows a clean home page rather than a
     // disconnected chat + empty black stream frame.
     if (session.playing) stopPlayback({ returnToPage: true, goHome: true });

@@ -77,3 +77,55 @@ export function showRaidArrived(fromName) {
   bannerEl = el;
   clearTimer = setTimeout(hideRaidBanner, 5000);
 }
+
+// Drops autopilot (drops-autopilot.js): the stream ended while earning a campaign. Same banner as a raid:
+//   auto: "Keep earning X drops" with a 10s countdown, then switches; Switch now / Stay
+//   ask:  Switch / Stay, no countdown (clears itself after a minute)
+// toName null: no other stream has the campaign right now, so just say so
+// opts: { game, toName, viewers, mode: "auto" | "ask", go(), stillValid() }
+const AUTOPILOT_MS = 10000;
+export function showDropsAutopilotBanner(opts) {
+  hideRaidBanner();
+  const { game, toName, viewers, mode } = opts;
+  const auto = mode === "auto" && !!toName;
+  const el = document.createElement("div");
+  el.className = "raid-banner drops-autopilot" + (auto ? " counting" : "");
+  el.setAttribute("role", "status");
+  el.innerHTML =
+    '<span class="raid-banner-icon">🎁</span>' +
+    '<span class="raid-banner-text"><span class="raid-banner-title"></span><span class="raid-banner-sub"></span></span>' +
+    '<span class="raid-banner-actions"></span>' +
+    (auto ? '<span class="raid-banner-bar"><span></span></span>' : "");
+  const who = viewers ? ` (${Number(viewers).toLocaleString()} viewers)` : "";
+  el.querySelector(".raid-banner-title").textContent = toName ? `Keep earning ${game} drops` : `No other stream has your ${game} drops right now`;
+  const sub = el.querySelector(".raid-banner-sub");
+  sub.textContent = !toName ? "Mosaic will stay here." : auto ? `Switching to ${toName}${who} in ${AUTOPILOT_MS / 1000} seconds` : `Switch to ${toName}${who}?`;
+  const actions = el.querySelector(".raid-banner-actions");
+  const btn = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = `raid-banner-btn ${cls}`; b.textContent = label;
+    b.addEventListener("click", fn);
+    actions.appendChild(b);
+  };
+  const go = () => { hideRaidBanner(); opts.go(); };
+  if (toName) btn(auto ? "Switch now" : "Switch", "primary", go);
+  btn(toName ? "Stay" : "OK", "", hideRaidBanner);
+  host().appendChild(el);
+  bannerEl = el;
+
+  if (auto) {
+    const bar = el.querySelector(".raid-banner-bar span");
+    requestAnimationFrame(() => { if (bar) { bar.style.transitionDuration = `${AUTOPILOT_MS}ms`; bar.style.transform = "scaleX(0)"; } });
+    let left = Math.round(AUTOPILOT_MS / 1000);
+    const tick = () => {
+      if (!opts.stillValid()) { hideRaidBanner(); return; }
+      left -= 1;
+      if (left <= 0) { go(); return; }
+      sub.textContent = `Switching to ${toName}${who} in ${left} second${left === 1 ? "" : "s"}`;
+      timer = setTimeout(tick, 1000);
+    };
+    timer = setTimeout(tick, 1000);
+  } else {
+    clearTimer = setTimeout(hideRaidBanner, toName ? 60000 : 15000);
+  }
+}

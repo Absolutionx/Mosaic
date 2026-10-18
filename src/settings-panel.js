@@ -8,7 +8,7 @@ import { pushEscape } from "./escape-stack.js";
 import { closeCommandPalette } from "./command-palette.js";
 import { THEME_PRESETS, THEME_PARTS, presetById, isHex, CUSTOM_PARTS } from "./themes.js";
 import { configureCustomize, startPicking, openEditor, changedParts, resetPart, customParts } from "./customize.js";
-import { exportThemeCode, importThemeCode } from "./theme-share.js";
+import { exportThemeCode, importThemeCode, savedLooks, saveLook, deleteLook, useLook, isCurrentLook } from "./theme-share.js";
 
 let popEscape = null;       // this panel's entry on the shared Escape stack
 let selectOwner = null;      // the button whose dropdown is open
@@ -28,7 +28,7 @@ const QUALITY_OPTIONS = [
 
 // sections -> rows. kinds: toggle, segmented, select, text, range, action, preview, info, group, themes
 // (the preset picker), accent, color (one themeColors part), changes (customized parts), code (custom CSS),
-// import (a theme code), allparts (every customizable part, searchable)
+// import (a theme code), allparts (every customizable part, searchable), looks (saved looks)
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({ value: h, label: new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" }) }));
 const SECTIONS = [
   { id: "chat", label: "Chat", icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', rows: [
@@ -102,6 +102,8 @@ const SECTIONS = [
     { kind: "toggle", id: "autoTheater", title: "Auto theater mode", desc: "Collapse the sidebar when a stream starts, for a wider video." },
     { kind: "toggle", id: "miniPlayer", title: "Mini player", desc: "Keep the stream in a small corner player when you go to Home or Browse." },
     { kind: "toggle", id: "autoPipOnBlur", title: "Pop out when switching apps", desc: "Move the stream to a floating window when Mosaic loses focus." },
+    { kind: "segmented", id: "lurkMode", title: "Lurk mode", desc: "While Mosaic is minimized or closed to the tray, keep a Twitch stream going as audio only, so channel points, drops and watch streaks keep counting with far less work for your computer. Muted turns the sound off too. The picture and sound come back when you open Mosaic.",
+      options: [{ value: "off", label: "Off" }, { value: "audio", label: "Audio only" }, { value: "muted", label: "Muted" }] },
     { kind: "toggle", id: "streamInfoOverlay", title: "Stream info on hover", desc: "The channel, title and viewers over the video when you hover it." },
     { kind: "segmented", id: "ambientGlow", title: "Ambient glow", desc: "A soft glow in the space around the video that follows the stream's colors.",
       options: [{ value: "off", label: "Off" }, { value: "subtle", label: "Subtle" }, { value: "normal", label: "Normal" }, { value: "strong", label: "Strong" }] },
@@ -161,9 +163,12 @@ const SECTIONS = [
   { id: "twitch", label: "Twitch account", icon: '<path d="M4 3h16v11l-4 4h-4l-3 3H7v-3H4z"/><path d="M11 7v5M16 7v5"/>', rows: [
     { kind: "action", title: "Twitch connection", desc: "The extra Twitch login used for pinned messages, predictions, polls, badges, following and drops.", button: "Manage…", run: () => { closeSettingsPanel(); actions.openTwitchConnection?.(); } },
     { kind: "toggle", id: "autoClaimDrops", title: "Auto-claim drops", desc: "Claim Twitch Drops as soon as they're ready." },
+    { kind: "segmented", id: "dropsAutopilot", title: "Drops autopilot", desc: "When the stream you're earning drops on ends, find another live stream with the same campaign. Ask offers the switch; Automatically switches after a 10-second countdown you can cancel. Raids still take you along as usual.",
+      options: [{ value: "ask", label: "Ask" }, { value: "auto", label: "Automatically" }, { value: "off", label: "Off" }] },
     { kind: "toggle", id: "autoClaimBonus", title: "Auto-claim channel points bonus", desc: "Claim the bonus chest Twitch offers while you watch, within about a minute of it appearing." },
   ]},
   { id: "appearance", label: "Appearance", icon: '<circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A5.6 5.6 0 0 0 22 9.9C22 5.5 17.5 2 12 2z"/>', rows: [
+    { kind: "looks", title: "Saved looks", desc: "Your whole look (theme, colors, customized parts and custom CSS) saved under a name. Click one to switch to it." },
     { kind: "themes", title: "Theme", desc: "A starting look for the whole app. Your color changes below go on top of it." },
     { kind: "accent", title: "Accent color", desc: "Buttons, the seek bar, Drops tags, highlights and glows. Theme uses the theme's own color (Mosaic's is the platform's). Platform always uses Twitch purple, and Kick green in Kick mode." },
     { kind: "group", title: "Colors" },
@@ -179,7 +184,7 @@ const SECTIONS = [
       run: () => { setSetting("customParts", {}); return "Reset"; } },
     { kind: "group", title: "Custom CSS" },
     { kind: "toggle", id: "customCssOn", title: "Use custom CSS", desc: "Turn this off to go back to normal at once, without losing what you wrote." },
-    { kind: "code", id: "customCss", title: "Custom CSS", desc: "Your own CSS rules, applied on top of everything. For anything the picker doesn't cover. Only paste CSS you understand: it can make Mosaic hard to use, and Use custom CSS above is the quick way back." },
+    { kind: "code", id: "customCss", title: "Custom CSS", desc: "Your own CSS rules, applied on top of everything. For anything the picker doesn't cover. Only paste CSS you understand: it can make Mosaic hard to use. Use custom CSS above is the quick way back, and if it hides Settings itself, press Ctrl+Alt+Shift+S to switch custom CSS and customized parts off until you restart." },
     { kind: "group", title: "Share" },
     { kind: "action", title: "Copy theme code", desc: "Your theme, colors, customized parts and custom CSS as one code you can send to someone or keep.", button: "Copy",
       run: async () => copyThemeCode() },
@@ -300,7 +305,7 @@ export function openSettingsPanel(section, focusTitle) {
   search.addEventListener("input", () => { query = search.value.trim().toLowerCase(); render(); });
   popEscape = pushEscape(() => closeSettingsPanel());
   // keep controls in sync with changes made elsewhere (e.g. the player's quality-menu toggles)
-  unsubscribe = onSettingChange(() => refreshValues());
+  unsubscribe = onSettingChange((id) => refreshValues(id));
   render();
   if (focusTitle) focusRow(focusTitle);
   else setTimeout(() => search.focus(), 30);
@@ -379,6 +384,7 @@ function buildRow(r) {
   if (r.kind === "themes") return buildThemePicker(r);
   if (r.kind === "changes") return buildChangesList(r);
   if (r.kind === "allparts") return buildAllParts(r);
+  if (r.kind === "looks") return buildLooks(r);
   if (r.kind === "info") {
     const v = el("div", "settings-version", "Mosaic");
     getVersion().then((ver) => { v.textContent = `Mosaic v${ver}`; }).catch(() => {});
@@ -598,6 +604,63 @@ function fillChanges(list) {
   }
 }
 
+// Saved looks: a chip per look (click to switch, x to delete), then Save current look
+function buildLooks(r) {
+  const wrap = el("div", "settings-themes-row settings-looks");
+  const text = el("div", "settings-row-text");
+  text.append(el("div", "settings-row-title", r.title), el("div", "settings-row-desc", r.desc));
+  const list = el("div", "settings-looks-list");
+  wrap.append(text, list);
+  fillLooks(list);
+  return wrap;
+}
+function fillLooks(list) {
+  list.replaceChildren();
+  for (const l of savedLooks()) {
+    const chip = el("div", "settings-look" + (isCurrentLook(l.look) ? " on" : ""));
+    const use = el("button", "settings-look-use", l.name);
+    use.type = "button";
+    use.title = `Switch to ${l.name}`;
+    use.addEventListener("click", () => { try { useLook(l.name); showToast(`Switched to ${l.name}.`); } catch (e) { showToast(e.message, true); } });
+    const del = el("button", "settings-look-del");
+    del.type = "button";
+    del.title = `Delete ${l.name}`;
+    del.innerHTML = ICON('<path d="M18 6 6 18M6 6l12 12"/>', 12);
+    // asks once: the first click arms it
+    let armed = false, t = null;
+    del.addEventListener("click", () => {
+      if (!armed) { armed = true; chip.classList.add("armed"); del.title = "Click again to delete"; t = setTimeout(() => { armed = false; chip.classList.remove("armed"); del.title = `Delete ${l.name}`; }, 2500); return; }
+      clearTimeout(t);
+      deleteLook(l.name);
+    });
+    chip.append(use, del);
+    list.appendChild(chip);
+  }
+  const add = el("button", "settings-look-add", savedLooks().length ? "+ Save current look" : "+ Save your current look");
+  add.type = "button";
+  add.addEventListener("click", () => {
+    const form = el("div", "settings-look-form");
+    const input = el("input", "settings-text");
+    input.type = "text"; input.placeholder = "Name, e.g. Night"; input.maxLength = 40; input.spellcheck = false;
+    const save = el("button", "settings-action", "Save");
+    save.type = "button";
+    const cancel = el("button", "settings-action", "Cancel");
+    cancel.type = "button";
+    const done = () => form.replaceWith(add);
+    const go = () => {
+      try { const n = saveLook(input.value); showToast(`Saved "${n}".`); } catch (e) { showToast(e.message, true); return; }
+      fillLooks(list);
+    };
+    save.addEventListener("click", go);
+    cancel.addEventListener("click", done);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); if (e.key === "Escape") { e.stopPropagation(); done(); } });
+    form.append(input, save, cancel);
+    add.replaceWith(form);
+    input.focus();
+  });
+  list.appendChild(add);
+}
+
 // open a part's editor from Settings: outlined if it's on screen right now, otherwise in the middle
 function editPart(p) {
   closeSettingsPanel();
@@ -705,7 +768,8 @@ function buildPreview() {
 }
 
 // reflect current values onto every control on screen
-function refreshValues() {
+// changed: the setting that just changed (undefined = refresh everything)
+function refreshValues(changed) {
   if (!panelEl) return;
   panelEl.querySelectorAll(".settings-switch").forEach((sw) => {
     const on = !!getSetting(sw.dataset.setting);
@@ -726,8 +790,14 @@ function refreshValues() {
     if (document.activeElement !== input) input.value = String(getSetting(input.dataset.setting) || "");
   });
   panelEl.querySelectorAll(".settings-theme").forEach((b) => b.classList.toggle("on", b.dataset.theme === getSetting("theme")));
-  panelEl.querySelectorAll(".settings-changes-list").forEach((l) => fillChanges(l));
-  panelEl.querySelectorAll(".settings-allparts-list").forEach((l) => fillAllParts(l));
+  // the parts lists only depend on customParts; rebuilding 200 rows on every color-picker tick made dragging stutter
+  if (changed === undefined || ["savedLooks", "theme", "themeAccent", "themeColors", "customParts", "customCss", "customCssOn"].includes(changed)) {
+    panelEl.querySelectorAll(".settings-looks-list").forEach((l) => { if (!l.querySelector(".settings-look-form")) fillLooks(l); });
+  }
+  if (changed === undefined || changed === "customParts") {
+    panelEl.querySelectorAll(".settings-changes-list").forEach((l) => fillChanges(l));
+    panelEl.querySelectorAll(".settings-allparts-list").forEach((l) => fillAllParts(l));
+  }
   panelEl.querySelectorAll(".settings-code").forEach((ta) => {
     if (document.activeElement !== ta) ta.value = String(getSetting(ta.dataset.setting) || "");
   });

@@ -14,8 +14,9 @@ const MAX_CODE = 60000;
 const toB64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 const fromB64 = (s) => new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
 
-export function exportThemeCode() {
-  const data = {
+// the whole current look as a plain object (what a theme code and a saved look hold)
+export function currentLook() {
+  return {
     v: 1,
     theme: getSetting("theme"),
     accent: getSetting("themeAccent"),
@@ -24,7 +25,10 @@ export function exportThemeCode() {
     css: getSetting("customCss") || "",
     cssOn: !!getSetting("customCssOn"),
   };
-  return PREFIX + toB64(JSON.stringify(data));
+}
+
+export function exportThemeCode() {
+  return PREFIX + toB64(JSON.stringify(currentLook()));
 }
 
 // validate a code and apply it; returns a one-line summary, throws an Error with a friendly message
@@ -35,6 +39,11 @@ export function importThemeCode(text) {
   if (!raw.startsWith(PREFIX)) throw new Error("That isn't a Mosaic theme code (they start with MOSAIC-THEME:).");
   let data;
   try { data = JSON.parse(fromB64(raw.slice(PREFIX.length).replace(/\s+/g, ""))); } catch { throw new Error("That theme code is damaged or incomplete."); }
+  return applyLook(data);
+}
+
+// check a look object and apply it (theme codes and saved looks both come through here); returns a summary
+export function applyLook(data) {
   if (!data || typeof data !== "object" || data.v !== 1) throw new Error("That theme code is from a newer or unknown version of Mosaic.");
 
   const theme = THEME_PRESETS.some((p) => p.id === data.theme) ? data.theme : "mosaic";
@@ -71,4 +80,40 @@ export function importThemeCode(text) {
   if (n) bits.push(`${n} customized part${n === 1 ? "" : "s"}`);
   if (css.trim()) bits.push("custom CSS");
   return `Theme applied: ${bits.join(", ")}.${skipped ? ` ${skipped} part${skipped === 1 ? "" : "s"} this version doesn't know were skipped.` : ""}`;
+}
+
+// ---- Saved looks (Settings > Appearance > Saved looks): named copies of whole looks, to switch in one click ----
+const MAX_LOOKS = 20;
+export const savedLooks = () => {
+  const l = getSetting("savedLooks");
+  return Array.isArray(l) ? l.filter((x) => x && typeof x.name === "string" && x.look && typeof x.look === "object") : [];
+};
+// a stable fingerprint of a look, to mark the saved one that matches what's on screen
+const sameLook = (a, b) => {
+  const norm = (l) => JSON.stringify({ t: l.theme, a: l.accent, c: sortObj(l.colors), p: sortObj(l.parts), css: l.css || "", on: !!l.cssOn });
+  return norm(a) === norm(b);
+};
+function sortObj(o) {
+  if (!o || typeof o !== "object" || Array.isArray(o)) return o;
+  return Object.fromEntries(Object.keys(o).sort().map((k) => [k, sortObj(o[k])]));
+}
+export const isCurrentLook = (look) => sameLook(look, currentLook());
+
+// save what's on screen under a name (same name replaces it); returns the cleaned name
+export function saveLook(name) {
+  const n = String(name || "").trim().slice(0, 40);
+  if (!n) throw new Error("Give the look a name.");
+  const list = savedLooks().filter((l) => l.name.toLowerCase() !== n.toLowerCase());
+  if (list.length >= MAX_LOOKS) throw new Error(`You can keep up to ${MAX_LOOKS} looks. Delete one first.`);
+  list.push({ name: n, look: currentLook() });
+  setSetting("savedLooks", list);
+  return n;
+}
+export function deleteLook(name) {
+  setSetting("savedLooks", savedLooks().filter((l) => l.name !== name));
+}
+export function useLook(name) {
+  const l = savedLooks().find((x) => x.name === name);
+  if (!l) throw new Error("That look no longer exists.");
+  applyLook(l.look);
 }

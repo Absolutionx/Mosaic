@@ -25,6 +25,8 @@ import { chatClock, fmtNum } from "./format.js";
 // most recently active chatters whose user-card history + message count are kept per channel
 const CHATTER_HISTORY_CAP = 3000;
 import { chatLiveEventsMixin } from "./chat/chat-live-events.js";
+import { recordTick } from "./points-ledger.js";
+import { session } from "./session.js";
 import { chatBadgePickerMixin } from "./chat/chat-badge-picker.js";
 
 // must match .chat-input's max-height in index.html, duplicated (not read via getComputedStyle) since _autosizeChatInput() needs it every keystroke
@@ -2001,11 +2003,25 @@ export class TwitchChat {
       try {
         const r = await invoke("channel_points_tick", { channelLogin: login, claim: !!getSetting("autoClaimBonus") });
         setBal(r && r.balance != null ? fmtCount(r.balance) : "");
+        // the points ledger (points-ledger.js) learns from every check
+        const cur = String(session.intendedChannel || "").toLowerCase();
+        try { recordTick(login, r, !!session.playing && cur === String(login).toLowerCase()); } catch (e) { console.warn("[ledger]", e); }
         if (r && r.claimed) this._flashBonusClaimed();
       } catch { setBal(""); }
     };
     poll();
     this._pointsPollTimer = setInterval(poll, 60000);
+  }
+
+  // lurk mode pauses drawing chat while Mosaic is minimized or in the tray; back on screen, a line says so
+  setLurking(on, ms = 0) {
+    if (on) { this._lurking = true; this._lurkSkipped = 0; return; }
+    if (!this._lurking) return;
+    this._lurking = false;
+    const n = this._lurkSkipped || 0;
+    const min = Math.round(ms / 60000);
+    const away = min >= 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${Math.max(1, min)}m`;
+    if (n > 0) this.systemLine(`Welcome back. Chat was paused while you lurked for ${away} (${n.toLocaleString()} message${n === 1 ? "" : "s"} skipped).`);
   }
 
   // the balance pill briefly reads "+Bonus" after an automatic bonus claim
@@ -2034,6 +2050,8 @@ export class TwitchChat {
                 replyParentUser, replyParentBody, msgId, userId, isAction = false,
                 emotesTag = null, isFirstMsg = false, isHighlighted = false, replyParentMsgId = null,
                 replyThreadParentMsgId = null) {
+    // lurk mode (lurk-mode.js): nobody's looking, so don't build the lines at all
+    if (this._lurking) { this._lurkSkipped = (this._lurkSkipped || 0) + 1; return; }
     // words/phrases hide the whole message (see reloadChatFilter / the Chat Filter modal)
     if (this._shouldFilterMessage(username, message, emotesTag)) return;
 

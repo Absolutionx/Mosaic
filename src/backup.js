@@ -10,7 +10,7 @@ const LOCAL_KEYS = [
   "mosaicSettings", "lowLatency", "catchUpToLive", "autoPipOnBlur", "closeToTray",
   "favoriteChannels", "hiddenChannels", "chatFilter", "kickFollows", "kickAliases",
   "channelVolumes", "trackIdHistory", "homeMvLayout", "miniPlayerPos", "pipWinSize", "pipWinPos",
-  "watchStats", "vodBookmarks", "myChatCounts",
+  "watchStats", "vodBookmarks", "myChatCounts", "pointsLedger",
 ];
 
 export async function exportBackup() {

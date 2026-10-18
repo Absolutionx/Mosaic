@@ -53,6 +53,7 @@ export const DEFAULTS = {
   preloadChannels: [],       // which favorites (lowercase logins); empty = any favorite, in sidebar order
   catchUpToLive: true,
   autoPipOnBlur: false,
+  lurkMode: "off",           // "off" | "audio" | "muted": minimized / in the tray, keep the stream as audio only (lurk-mode.js)
   autoTheater: true,
   vodHeatmap: true,
   vodTopClips: true,
@@ -108,6 +109,7 @@ export const DEFAULTS = {
   closeToTray: true,
   autoClaimDrops: true,
   autoClaimBonus: true,      // claim the channel points bonus chest automatically while watching
+  dropsAutopilot: "ask",     // stream ended mid-campaign: "ask" to switch, "auto" (10s countdown) or "off" (drops-autopilot.js)
   autostart: false,          // start Mosaic with your computer
   startMinimized: false,     // ...and go straight to the tray when it does
   uiZoom: 1,
@@ -119,6 +121,7 @@ export const DEFAULTS = {
   customParts: {},           // Customize picker (customize.js): { partId: { bg, text, border, accent, radius, hidden } }
   customCss: "",             // Appearance > Custom CSS, your own rules on top of everything
   customCssOn: true,         // quick off switch for it, without losing what you wrote
+  savedLooks: [],            // Appearance > Saved looks: [{ name, look }] (theme-share.js)
   autoUpdateCheck: true,
 };
 
@@ -190,6 +193,44 @@ export function resetSettings() {
   }
 }
 
+// other windows of Mosaic (the PiP player, MultiView pop-outs) share these settings through localStorage:
+// when the main window changes them, re-read and re-apply, so a pop-out follows a theme change live
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== STORE_KEY && e.key !== null) return;
+    store = null;
+    applyAppearance();
+  });
+}
+
+// Safe mode: Ctrl+Alt+Shift+S switches custom CSS and customized parts off (and back on) without deleting
+// them, for when they've hidden Settings itself. Lasts until pressed again or Mosaic restarts
+let safeMode = false;
+if (typeof document !== "undefined") {
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey && e.altKey && e.shiftKey && e.code === "KeyS")) return;
+    e.preventDefault();
+    safeMode = !safeMode;
+    applyAppearance();
+    showSafeModeNote(safeMode);
+  }, true);
+}
+function showSafeModeNote(on) {
+  document.getElementById("mosaic-safe-note")?.remove();
+  const n = document.createElement("div");
+  n.id = "mosaic-safe-note";
+  n.textContent = on
+    ? "Custom CSS and customized parts are off until you press Ctrl+Alt+Shift+S again or restart Mosaic."
+    : "Custom CSS and customized parts are back on.";
+  Object.assign(n.style, {
+    position: "fixed", left: "50%", bottom: "24px", transform: "translateX(-50%)", zIndex: "2147483647",
+    padding: "10px 16px", borderRadius: "10px", font: "600 13px system-ui, sans-serif",
+    background: "#161b22", color: "#e7ebf2", border: "1px solid #29313d", boxShadow: "0 8px 24px rgba(0,0,0,.45)",
+  });
+  document.body.appendChild(n);
+  setTimeout(() => n.remove(), 5000);
+}
+
 // a <style> of ours at the end of <head> (created once, kept last so it wins ties)
 function styleTag(id) {
   let el = document.getElementById(id);
@@ -224,8 +265,8 @@ export function applyAppearance() {
   const light = themeIsLight(getSetting("theme"), getSetting("themeColors"));
   body.classList.toggle("theme-light", light);
   // your picked parts, then your own CSS, as the last stylesheets in the page so they win
-  styleTag("mosaic-custom-parts").textContent = customPartsCss(getSetting("customParts"), light);
-  styleTag("mosaic-custom-css").textContent = getSetting("customCssOn") ? String(getSetting("customCss") || "") : "";
+  styleTag("mosaic-custom-parts").textContent = safeMode ? "" : customPartsCss(getSetting("customParts"), light);
+  styleTag("mosaic-custom-css").textContent = !safeMode && getSetting("customCssOn") ? String(getSetting("customCss") || "") : "";
   body.classList.toggle("chat-show-timestamps", !!getSetting("showTimestamps"));
   body.classList.toggle("chat-zebra", !!getSetting("zebraLines"));
   body.classList.toggle("chat-neutral-names", getSetting("usernameColors") === "neutral");

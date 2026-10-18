@@ -388,6 +388,26 @@ pub fn set_memory_saver(app: tauri::AppHandle, on: bool) {
     }
 }
 
+// Lurk mode (lurk-mode.js): tell WebView2 the page isn't on screen while Mosaic is minimized and lurking, the
+// way a browser treats a background tab: it stops drawing and painting entirely, while audio keeps playing.
+// WebView2 only does this by itself when the window is hidden (tray), not when it's minimized. Back on screen,
+// lurk mode sets it visible again (and main.js does on any focus, as a safety net). a no-op elsewhere
+#[tauri::command]
+pub fn set_page_visible(app: tauri::AppHandle, visible: bool) {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        let Some(win) = app.get_webview_window("main") else { return };
+        let _ = win.with_webview(move |wv| unsafe {
+            let _ = wv.controller().SetIsVisible(visible.into());
+        });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, visible);
+    }
+}
+
 // Skinned right-click menu. WebView2 draws its own native (light, Windows-styled) context menu, which is where the
 // chat box's spelling suggestions live. Its ContextMenuRequested event hands over that menu's items (suggestions,
 // Cut/Copy/Paste, ...); we mark it handled so WebView2 doesn't draw it, send the items to the frontend

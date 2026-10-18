@@ -2,7 +2,6 @@
 // included in Settings backups), and a stats view with totals, a daily chart, top channels, live vs VOD
 // and your streak. Tracking starts with this version; nothing is sent anywhere.
 
-import { pushEscape } from "./escape-stack.js";
 import { fmtDateMDY } from "./format.js";
 
 const KEY = "watchStats";
@@ -137,61 +136,67 @@ export function fmtHours(secs) {
   return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-// ---- the stats view ----
-let viewEl = null, popEscape = null;
+// ---- the stats view: the Watch stats tab of the Points & Drops panel (rewards.js) ----
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
-// opts: { avatarFor(login) -> url | "", watch(login) }
-export function openWatchStats(opts = {}) {
-  closeWatchStats();
-  const backdrop = el("div", "hub-backdrop");
-  const panel = el("div", "hub-panel stats-panel");
-  backdrop.appendChild(panel);
-  const head = el("div", "hub-head");
-  head.appendChild(el("div", "hub-title", "Watch stats"));
-  const tabs = el("div", "hub-tabs");
-  const close = el("button", "hub-close");
-  close.type = "button"; close.title = "Close (Esc)";
-  close.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
-  close.addEventListener("click", closeWatchStats);
-  head.append(tabs, close);
-  const body = el("div", "hub-body");
-  panel.append(head, body);
+// draws into the panel body. opts: { avatarFor(login) -> url | "", watch(login) } (picking a channel watches it)
+export function renderWatchStats(body, opts = {}) {
   let period = "week";
-  for (const [id, label] of [["week", "This week"], ["month", "This month"], ["all", "All time"]]) {
-    const b = el("button", "hub-tab" + (id === period ? " active" : ""), label);
-    b.type = "button";
-    b.addEventListener("click", () => { period = id; tabs.querySelectorAll(".hub-tab").forEach((t) => t.classList.toggle("active", t === b)); render(); });
-    tabs.appendChild(b);
-  }
+  try { const p = localStorage.getItem("watchStatsPeriod"); if (["week", "month", "all"].includes(p)) period = p; } catch { /* ignore */ }
   function render() {
     const st = computeStats(period);
-    body.replaceChildren();
+    const wrap = el("div", "ws");
+    const left = el("div", "ws-col");
+    const side = el("div", "lg-side ws-side");
+    wrap.append(left, side);
+
+    const head = el("div", "lg-head");
+    head.appendChild(el("div", "lg-big", fmtHours(st.total)));
+    head.lastChild.appendChild(el("small", null, period === "all" && st.since ? `watched since ${fmtDateMDY(st.since)}` : "watched"));
+    const range = el("div", "lg-range");
+    range.setAttribute("role", "group");
+    range.setAttribute("aria-label", "Period");
+    for (const [id, label] of [["week", "This week"], ["month", "This month"], ["all", "All time"]]) {
+      const b = el("button", id === period ? "on" : "", label);
+      b.type = "button";
+      b.addEventListener("click", () => {
+        period = id;
+        try { localStorage.setItem("watchStatsPeriod", id); } catch { /* ignore */ }
+        render();
+      });
+      range.appendChild(b);
+    }
+    head.appendChild(range);
+    left.appendChild(head);
+
     if (!st.total) {
-      body.appendChild(el("div", "hub-empty", period === "all" ? "Nothing yet. Time you spend watching is counted from now on." : "Nothing watched in this period yet."));
-      return;
-    }
-    const cards = el("div", "stats-cards");
-    const card = (big, label) => { const c = el("div", "stats-card"); c.append(el("div", "stats-card-big", big), el("div", "stats-card-label", label)); cards.appendChild(c); };
-    card(fmtHours(st.total), period === "all" ? `Watched since ${fmtDateMDY(st.since)}` : "Watched");
-    card(st.total ? `${Math.round((st.live / st.total) * 100)}%` : "0%", `Live · ${fmtHours(st.vod)} of VODs`);
-    card(`${st.streak} day${st.streak === 1 ? "" : "s"}`, "Current streak");
-    body.appendChild(cards);
-    if (st.series.length) {
-      const max = Math.max(60, ...st.series.map((x) => x.secs));
-      const chart = el("div", "stats-chart" + (st.series.length > 7 ? " dense" : ""));
-      for (const x of st.series) {
-        const col = el("div", "stats-col");
-        col.title = `${fmtDateMDY(x.day)}: ${fmtHours(x.secs)}`;
-        const bar = el("div", "stats-bar");
-        bar.style.height = `${Math.max(x.secs ? 4 : 0, (x.secs / max) * 100)}%`;
-        const d = new Date(`${x.day}T12:00:00`);
-        col.append(bar, el("div", "stats-col-label", st.series.length > 7 ? String(d.getDate()) : d.toLocaleDateString([], { weekday: "short" })));
-        chart.appendChild(col);
+      left.appendChild(el("div", "lg-empty", period === "all" ? "Nothing yet. Time you spend watching is counted from now on." : "Nothing watched in this period yet."));
+    } else {
+      const cards = el("div", "stats-cards");
+      const card = (big, label) => { const c = el("div", "stats-card"); c.append(el("div", "stats-card-big", big), el("div", "stats-card-label", label)); cards.appendChild(c); };
+      card(`${Math.round((st.live / st.total) * 100)}%`, `Live · ${fmtHours(st.vod)} of VODs`);
+      card(`${st.streak} day${st.streak === 1 ? "" : "s"}`, "Current streak");
+      if (st.top[0]) card(st.top[0].name, `Most watched · ${fmtHours(st.top[0].secs)}`);
+      left.appendChild(cards);
+      if (st.series.length) {
+        const max = Math.max(60, ...st.series.map((x) => x.secs));
+        const chart = el("div", "stats-chart" + (st.series.length > 7 ? " dense" : ""));
+        for (const x of st.series) {
+          const col = el("div", "stats-col");
+          col.title = `${fmtDateMDY(x.day)}: ${fmtHours(x.secs)}`;
+          const bar = el("div", "stats-bar");
+          bar.style.height = `${Math.max(x.secs ? 4 : 0, (x.secs / max) * 100)}%`;
+          const d = new Date(`${x.day}T12:00:00`);
+          col.append(bar, el("div", "stats-col-label", st.series.length > 7 ? String(d.getDate()) : d.toLocaleDateString([], { weekday: "short" })));
+          chart.appendChild(col);
+        }
+        left.appendChild(chart);
       }
-      body.appendChild(chart);
     }
-    body.appendChild(el("div", "hub-section", "Top channels"));
+
+    side.appendChild(el("h4", null, "Top channels"));
+    side.appendChild(el("p", null, "Click one to watch it"));
+    if (!st.top.length) side.appendChild(el("div", "lg-empty small", "Channels you watch show up here."));
     const list = el("div", "stats-top");
     const topMax = st.top[0] ? st.top[0].secs : 1;
     for (const c of st.top) {
@@ -208,21 +213,11 @@ export function openWatchStats(opts = {}) {
       bar.appendChild(fill);
       main.append(el("span", "stats-row-name", c.name), bar);
       row.append(av, main, el("span", "stats-row-time", fmtHours(c.secs)));
-      row.addEventListener("click", () => { closeWatchStats(); opts.watch?.(c.login); });
+      row.addEventListener("click", () => opts.watch?.(c.login));
       list.appendChild(row);
     }
-    body.appendChild(list);
+    side.appendChild(list);
+    body.replaceChildren(wrap);
   }
   render();
-  backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) closeWatchStats(); });
-  document.body.appendChild(backdrop);
-  viewEl = backdrop;
-  popEscape = pushEscape(closeWatchStats);
-}
-
-export function closeWatchStats() {
-  viewEl?.remove();
-  viewEl = null;
-  popEscape?.();
-  popEscape = null;
 }

@@ -8,10 +8,15 @@ const _normalizedColors = new Map();
 
 // light themes (themes.js, body.theme-light): names are DARKENED until readable on the chat background
 // instead. maxLum: the lightest a name may be on that background (null on dark themes)
-let _lightBgKey = null, _maxLum = null;
+let _lightBgKey = null, _maxLum = null, _bgReadAt = 0;
 function lightThemeMaxLum() {
   const body = document.body;
   if (!body?.classList.contains("theme-light")) return null;
+  // reading a computed style forces a style pass; in a busy chat that ran for every message, so the
+  // background is re-read at most once a second (a theme change shows up within that)
+  const now = performance.now();
+  if (_lightBgKey !== null && now - _bgReadAt < 1000) return _maxLum;
+  _bgReadAt = now;
   const bg = getComputedStyle(body).getPropertyValue("--m-surface").trim();
   if (bg !== _lightBgKey) {
     _lightBgKey = bg;

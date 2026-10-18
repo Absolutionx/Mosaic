@@ -9,6 +9,7 @@ import { getSetting } from "../settings.js";
 //   card never flickers
 
 import { invoke } from "@tauri-apps/api/core";
+import { noteKnown, expectLater } from "../points-ledger.js";
 
 // adaptive polling: fast only while something is running (countdowns, betting), slow otherwise. a fixed
 // 5s cadence meant two requests every 5 seconds for channels that almost never run a prediction or poll
@@ -234,6 +235,10 @@ export const chatLiveEventsMixin = {
       } else { kind = "LOST"; points = e.bet.points; }
     } else if (e.bet && !winner && inferred) { kind = "UNKNOWN"; }
     e.result = { kind, points, winner, inferred };
+    // the payout reaches your balance a moment later; the points ledger matches it then
+    if ((kind === "WON" || kind === "REFUND") && points > 0) {
+      try { expectLater(e.login || s.login, points, kind === "WON" ? "predwin" : "refund", e.event.title ? `“${e.event.title}”` : ""); } catch { /* ignore */ }
+    }
     e.expires = Date.now() + RESULT_SHOWN_MS; // the finished card clears itself (the result stays in chat)
     this._leRender("pred");
     const title = e.event.title ? `"${e.event.title}"` : "Prediction";
@@ -634,6 +639,7 @@ export const chatLiveEventsMixin = {
     this._leRender("pred");
     try {
       await invoke("make_prediction", { eventId: d.id, outcomeId, points: amt });
+      try { noteKnown(s.login, -amt, "bet", d.title ? `Prediction: “${d.title}”` : "Prediction"); } catch { /* ignore */ }
       if (s.balance != null) s.balance = Math.max(0, s.balance - amt);
       s.myBets.set(d.id, { outcomeId, points: (bet ? bet.points : 0) + amt });
       s.amount = "";

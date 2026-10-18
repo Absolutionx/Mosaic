@@ -34,7 +34,7 @@ export function fmtEnds(iso, now = Date.now()) {
   const d = Math.round(h / 24);
   return `Ends in ${d} day${d === 1 ? "" : "s"}`;
 }
-const boxArt = (url) => (url || "").replace("{width}", "104").replace("{height}", "139").replace(/-\d+x\d+\./, "-104x139.");
+export const boxArt = (url) => (url || "").replace("{width}", "104").replace("{height}", "139").replace(/-\d+x\d+\./, "-104x139.");
 
 // main.js supplies these once; openDropsHub() from anywhere (palette, Points & Drops) then works the same
 let configured = {};
@@ -128,8 +128,10 @@ async function loadMore(body, reset = false) {
     // nothing found yet: the whole list failed; otherwise keep what's shown and say the rest didn't load
     if (!d.campaigns.length) { d.paged = false; d.allError = "unavailable"; } else d.scanError = err;
   } else if (r?.busy) {
-    setTimeout(() => loadMore(body, reset), 1000);
-    return;
+    // another batch is still running (e.g. from before a Refresh): try again shortly, but not forever
+    d.busyTries = (d.busyTries || 0) + 1;
+    if (d.busyTries <= 30) { setTimeout(() => loadMore(body, reset), 1000); return; }
+    if (!d.campaigns.length) { d.paged = false; d.allError = "unavailable"; } else d.scanError = "Twitch is taking too long";
   } else {
     const seen = new Set(d.campaigns.map((c) => c.id));
     d.campaigns.push(...(r?.campaigns || []).filter((c) => !seen.has(c.id)));

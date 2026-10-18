@@ -1,4 +1,4 @@
-import { getSetting, setSetting } from "./settings.js";
+import { getSetting, setSetting, onSettingChange } from "./settings.js";
 // VOD playback speeds offered (menu, < / > keys, command palette)
 const VOD_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 // custom playback controls for the <video> element, fed via MSE from the local relay
@@ -756,6 +756,8 @@ export class PlaybackControls {
 
     // copy the app's stylesheets into the PiP document so the controls pick up the theme. rule-by-rule rather than cloning <link> nodes (the PiP document's base URL differs, so relative hrefs wouldn't resolve); same-origin, so cssRules access can't throw
     for (const sheet of document.styleSheets) {
+      // our customized-parts / custom-CSS tags are mirrored live below instead (a copy would go stale)
+      if (sheet.ownerNode?.id?.startsWith("mosaic-custom")) continue;
       try {
         const style = pipWin.document.createElement("style");
         style.textContent = [...sheet.cssRules].map((r) => r.cssText).join("\n");
@@ -780,6 +782,20 @@ export class PlaybackControls {
     doc.body.className = "docpip-body";
     // the copied stylesheet has the body.kick-mode overrides, but this document's body needs the class, else the slider's accent resolves to the :root default (Twitch purple) mid-Kick-session
     if (this._isKickSession) doc.body.classList.add("kick-mode");
+    // the theme lives on the main body (inline colors + theme-light) and in our <style> tags: mirror both
+    // here, now and whenever the look changes while this window is open
+    const syncTheme = () => {
+      doc.body.style.cssText = document.body.style.cssText;
+      doc.body.classList.toggle("theme-light", document.body.classList.contains("theme-light"));
+      for (const id of ["mosaic-custom-parts", "mosaic-custom-css"]) {
+        let tag = doc.getElementById(id);
+        if (!tag) { tag = doc.createElement("style"); tag.id = id; doc.head.appendChild(tag); }
+        tag.textContent = document.getElementById(id)?.textContent || "";
+      }
+    };
+    syncTheme();
+    const offTheme = onSettingChange(() => syncTheme());
+    signal.addEventListener("abort", offTheme, { once: true });
     doc.body.appendChild(this.videoEl); // implicit adoptNode; playback continues
 
     const bar = doc.createElement("div");

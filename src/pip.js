@@ -6,12 +6,14 @@ import { getCurrentWindow, currentMonitor, availableMonitors, primaryMonitor, Ph
 import { invoke } from "@tauri-apps/api/core";
 import { attachMseStream } from "./stream-player.js";
 import { attachHlsVod } from "./vod-player.js";
-import { getSetting } from "./settings.js";
+import { getSetting, applyAppearance } from "./settings.js";
 
 const params  = new URLSearchParams(location.search);
 // body.kick-mode flips --accent to Kick green (the slider uses it). applied at parse time
 // so the slider never flashes purple
 if (params.get("kick") === "1") document.body.classList.add("kick-mode");
+// the theme, customized parts and custom CSS, same as the main window (settings.js keeps it in step after)
+applyAppearance();
 const mode    = params.get("mode") || "live";
 const src     = params.get("src") || "";
 const pos     = parseFloat(params.get("pos") || "0") || 0;
