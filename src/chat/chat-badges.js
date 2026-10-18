@@ -6,7 +6,25 @@ import { kickBadgeElement } from "./kick-badges.js";
 // see normalizeColor
 const _normalizedColors = new Map();
 
-function normalizeColorUncached(hex) {
+// light themes (themes.js, body.theme-light): names are DARKENED until readable on the chat background
+// instead. maxLum: the lightest a name may be on that background (null on dark themes)
+let _lightBgKey = null, _maxLum = null;
+function lightThemeMaxLum() {
+  const body = document.body;
+  if (!body?.classList.contains("theme-light")) return null;
+  const bg = getComputedStyle(body).getPropertyValue("--m-surface").trim();
+  if (bg !== _lightBgKey) {
+    _lightBgKey = bg;
+    const m = /^#([0-9a-f]{6})$/i.exec(bg);
+    const lin = (c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+    const L = m ? [0, 2, 4].map((i) => lin(parseInt(m[1].slice(i, i + 2), 16) / 255)).reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0) : 1;
+    // 4.5:1 for small text: (Lbg + 0.05) / (L + 0.05) >= 4.5, with a little margin
+    _maxLum = (L + 0.05) / 4.7 - 0.05;
+  }
+  return _maxLum;
+}
+
+function normalizeColorUncached(hex, maxLum = null) {
   if (!hex || !/^#[0-9a-fA-F]{6}$/.test(hex)) return "#9147ff";
   const r = parseInt(hex.slice(1, 3), 16) / 255;
   const g = parseInt(hex.slice(3, 5), 16) / 255;
@@ -22,7 +40,7 @@ function normalizeColorUncached(hex) {
   // luminance ~0.0103), not the old #0e0e10 this was tuned for, so the old 0.193 left some names at ~4:1.
   // (L+0.05)/(0.0103+0.05) = 4.5 -> L ~= 0.222, plus a little margin for the rounding to a hex color
   const MIN_LUM = 0.228;
-  if (relLum(r, g, b) >= MIN_LUM) return hex;
+  if (maxLum == null ? relLum(r, g, b) >= MIN_LUM : relLum(r, g, b) <= maxLum) return hex;
 
   const max = Math.max(r, g, b), min = Math.min(r, g, b);
   let h = 0, s = 0;
@@ -50,11 +68,19 @@ function normalizeColorUncached(hex) {
     return [chan(hh + 1 / 3), chan(hh), chan(hh - 1 / 3)];
   };
 
-  // walk lightness up until readable. 0.02 steps, can't loop forever since l clamps to 1 (white)
+  // walk lightness up (dark themes) or down (light themes) until readable. 0.02 steps, can't loop
+  // forever since l clamps to 1 (white) or 0 (black)
   let [nr, ng, nb] = [r, g, b];
-  while (relLum(nr, ng, nb) < MIN_LUM && l < 1) {
-    l = Math.min(1, l + 0.02);
-    [nr, ng, nb] = hslToRgb(h, s, l);
+  if (maxLum == null) {
+    while (relLum(nr, ng, nb) < MIN_LUM && l < 1) {
+      l = Math.min(1, l + 0.02);
+      [nr, ng, nb] = hslToRgb(h, s, l);
+    }
+  } else {
+    while (relLum(nr, ng, nb) > maxLum && l > 0) {
+      l = Math.max(0, l - 0.02);
+      [nr, ng, nb] = hslToRgb(h, s, l);
+    }
   }
   const toHex = (c) => Math.round(c * 255).toString(16).padStart(2, "0");
   return `#${toHex(nr)}${toHex(ng)}${toHex(nb)}`;
@@ -98,16 +124,18 @@ export const chatBadgesMixin = {
     return foundAny ? fragment : null;
   },
 
-  // Twitch sometimes sends colors too dark to read on the dark bg. like official Twitch,
+  // Twitch sometimes sends colors too dark to read on the dark bg (or, on a light theme, too light). like official Twitch,
   // LIGHTEN hue-preserving until readable: to HSL, raise only lightness until WCAG contrast vs
   // the chat bg clears ~4.5:1, back to RGB. already-readable colors pass through
   // results are remembered (a chat has a few thousand distinct colors at most), so each is worked out once
   normalizeColor(hex) {
-    const hit = _normalizedColors.get(hex);
+    const maxLum = lightThemeMaxLum();
+    const key = maxLum == null ? hex : `${hex}|${_lightBgKey}`;
+    const hit = _normalizedColors.get(key);
     if (hit !== undefined) return hit;
-    const out = normalizeColorUncached(hex);
+    const out = normalizeColorUncached(hex, maxLum);
     if (_normalizedColors.size >= 4096) _normalizedColors.clear();
-    _normalizedColors.set(hex, out);
+    _normalizedColors.set(key, out);
     return out;
   },
 

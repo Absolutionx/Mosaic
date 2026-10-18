@@ -1859,7 +1859,12 @@ pub async fn get_drop_campaigns(app: tauri::AppHandle) -> Result<serde_json::Val
     let Some(json) = device_gql(&app, "DropCampaigns", QUERY, serde_json::json!({})).await? else {
         return Ok(serde_json::json!([]));
     };
-    let list = json.pointer("/data/currentUser/dropCampaigns").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    // null (not an empty list) is Twitch declining to share the list with this client: the TV app's id, which
+    // new Twitch connections use since 10-16-26, gets null here while the Android id got the full list. The hub
+    // then builds the list a batch at a time from live drops streams (drop_campaigns_more)
+    let Some(list) = json.pointer("/data/currentUser/dropCampaigns").and_then(|v| v.as_array()).cloned() else {
+        return Err("unavailable".into());
+    };
     let out: Vec<serde_json::Value> = list.iter().map(|c| serde_json::json!({
         "id": c.get("id").and_then(|v| v.as_str()).unwrap_or(""),
         "name": c.get("name").and_then(|v| v.as_str()).unwrap_or(""),
@@ -1874,6 +1879,206 @@ pub async fn get_drop_campaigns(app: tauri::AppHandle) -> Result<serde_json::Val
         "box_art": c.pointer("/game/boxArtURL").and_then(|v| v.as_str()).unwrap_or(""),
     })).collect();
     Ok(serde_json::Value::Array(out))
+}
+
+// GQL for the public reads the Available list falls back to. Twitch answers some of these anonymous web
+// client requests with "failed integrity check" depending on how they're sent, so this tries, in order: the
+// Twitch connection's own login (device token), then the web client id with curl-like headers, then a
+// browser-like set. First answer with data wins; each refusal is logged (numbers and Twitch's message only)
+async fn public_gql(app: &tauri::AppHandle, query: &str) -> Result<serde_json::Value, String> {
+    let mut why: Vec<String> = Vec::new();
+    match device_gql(app, "MosaicDrops", query, serde_json::json!({})).await {
+        Ok(Some(json)) => {
+            return Ok(json);
+        }
+        Ok(None) => why.push("connection: not connected".into()),
+        Err(e) => why.push(format!("connection: {e}")),
+    }
+    let mut rnd = [0u8; 16];
+    let _ = getrandom::getrandom(&mut rnd);
+    let device: String = rnd.iter().map(|b| format!("{b:02x}")).collect();
+    let attempts: [(&str, &[(&str, &str)]); 2] = [
+        ("plain", &[("User-Agent", "curl/8.13.0"), ("Accept", "*/*")]),
+        ("browser", &[
+            ("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"),
+            ("Accept", "*/*"), ("Origin", "https://www.twitch.tv"), ("Referer", "https://www.twitch.tv/"),
+            ("X-Device-Id", &device), ("Client-Session-Id", &device),
+        ]),
+    ];
+    for (name, headers) in attempts {
+        let mut req = crate::http::client()
+            .post("https://gql.twitch.tv/gql")
+            .header("Client-ID", "kimne78kx3ncx6brgo4mv6wki5h1ko")
+            .header("Content-Type", "application/json")
+            .body(serde_json::json!({ "query": query }).to_string());
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let json: serde_json::Value = match req.send().await {
+            Ok(r) if r.status().is_success() => match r.json().await { Ok(j) => j, Err(e) => { why.push(format!("{name}: {e}")); continue } },
+            Ok(r) => { why.push(format!("{name}: HTTP {}", r.status())); continue }
+            Err(e) => { why.push(format!("{name}: {e}")); continue }
+        };
+        let err = json.pointer("/errors/0/message").and_then(|v| v.as_str());
+        match err {
+            Some(m) => why.push(format!("{name}: {m}")),
+            None => {
+                eprintln!("[drops] public list via {name} (after: {})", why.join("; "));
+                return Ok(json);
+            }
+        }
+    }
+    Err(why.join("; "))
+}
+
+// The Available list when Twitch won't share it with the connection's app id (see get_drop_campaigns), built a
+// batch at a time as the hub scrolls: each call reads the next few pages of Twitch's live streams filtered to
+// drops-enabled ones (the directory's "Drops Enabled" filter, most viewers first), and for each game not seen
+// yet asks its top channels which campaigns they carry (channel.viewerDropCampaigns). Only game campaigns are
+// kept: a streamer's own channel-only drops are left out. Covers every campaign someone is live with, which
+// is what "Find streams" needs anyway. The scan is kept for a few minutes, so reopening the hub resumes it
+struct DropScan {
+    after: String,
+    done: bool,
+    games: std::collections::HashSet<String>,
+    ids: std::collections::HashSet<String>,
+    found: Vec<serde_json::Value>,
+    at: std::time::Instant,
+}
+
+static DROP_SCAN: std::sync::Mutex<Option<DropScan>> = std::sync::Mutex::new(None);
+static DROP_SCAN_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// reset: the hub (re)opened: answers everything found so far when the last scan is under 3 minutes old,
+// otherwise starts over. Then each call scans the next batch. Returns { campaigns (new ones, or all on
+// reset), done, busy (another batch is already running) }
+#[tauri::command]
+pub async fn drop_campaigns_more(reset: bool, app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    use std::sync::atomic::Ordering;
+    if DROP_SCAN_BUSY.swap(true, Ordering::AcqRel) {
+        return Ok(serde_json::json!({ "campaigns": [], "done": false, "busy": true }));
+    }
+    let taken = DROP_SCAN.lock().ok().and_then(|mut g| g.take());
+    let fresh = || DropScan { after: String::new(), done: false, games: Default::default(), ids: Default::default(), found: Vec::new(), at: std::time::Instant::now() };
+    let mut scan = match taken {
+        Some(s) if !reset || s.at.elapsed() < std::time::Duration::from_secs(180) => s,
+        _ => fresh(),
+    };
+    let result = if reset && !scan.found.is_empty() {
+        Ok(serde_json::json!({ "campaigns": scan.found, "done": scan.done }))
+    } else if scan.done {
+        Ok(serde_json::json!({ "campaigns": [], "done": true }))
+    } else {
+        match drop_scan_step(&app, &mut scan).await {
+            Ok(new) => Ok(serde_json::json!({ "campaigns": new, "done": scan.done })),
+            Err(e) => Err(e),
+        }
+    };
+    if let Ok(mut g) = DROP_SCAN.lock() {
+        *g = Some(scan);
+    }
+    DROP_SCAN_BUSY.store(false, Ordering::Release);
+    result
+}
+
+async fn drop_scan_step(app: &tauri::AppHandle, scan: &mut DropScan) -> Result<Vec<serde_json::Value>, String> {
+    const PAGES: usize = 3;
+    const PER_GAME: usize = 3;
+    const CHUNK: usize = 15;
+    const STREAMS: &str = "edges { cursor node { broadcaster { login } game { id } } } pageInfo { hasNextPage }";
+    // new games in this batch -> channels to ask, most viewers first
+    let mut batch: Vec<(String, Vec<String>)> = Vec::new();
+    for _ in 0..PAGES {
+        // values go in as JSON-escaped string literals (valid GraphQL strings), the form tested against Twitch
+        let query = format!("query MosaicDrops {{ streams(first: 30{}, options: {{systemFilters: [DROPS_ENABLED]}}) {{ {STREAMS} }} }}", scan.after);
+        let json = public_gql(app, &query).await?;
+        let Some(edges) = json.pointer("/data/streams/edges").and_then(|v| v.as_array()) else {
+            let why = json.get("errors").map(|e| e.to_string()).unwrap_or_else(|| "no stream list".into());
+            return Err(why.chars().take(300).collect());
+        };
+        for e in edges {
+            let (Some(login), Some(game)) = (
+                e.pointer("/node/broadcaster/login").and_then(|v| v.as_str()),
+                e.pointer("/node/game/id").and_then(|v| v.as_str()),
+            ) else { continue };
+            if scan.games.contains(game) { continue; }
+            match batch.iter_mut().find(|g| g.0 == game) {
+                Some(g) => { if g.1.len() < PER_GAME { g.1.push(login.to_string()); } }
+                None => batch.push((game.to_string(), vec![login.to_string()])),
+            }
+        }
+        let more = json.pointer("/data/streams/pageInfo/hasNextPage").and_then(|v| v.as_bool()).unwrap_or(false);
+        match edges.last().and_then(|e| e.get("cursor")).and_then(|v| v.as_str()).filter(|c| !c.is_empty()) {
+            Some(c) if more => scan.after = format!(", after: {}", serde_json::json!(c)),
+            _ => { scan.done = true; break; }
+        }
+    }
+    scan.games.extend(batch.iter().map(|g| g.0.clone()));
+    let channels: Vec<String> = batch.into_iter().flat_map(|g| g.1).collect();
+    // a few channels per request (aliased fields); when Twitch refuses a batch, that batch's channels one per
+    // request (the single-channel form it always answered in testing, 10-17-26), a few at a time
+    // accountLinkURL + self.isAccountConnected: the "Account not linked" note; self needs the Twitch connection
+    // (public_gql asks through it first)
+    const FIELDS: &str = "viewerDropCampaigns { id name endAt accountLinkURL self { isAccountConnected } game { id displayName boxArtURL } timeBasedDrops { name benefitEdges { benefit { name } } } }";
+    let field = |i: usize, l: &str| format!("c{i}: channel(name: {}) {{ {FIELDS} }}", serde_json::json!(l));
+    let mut lists: Vec<serde_json::Value> = Vec::new();
+    let (mut refused, asked) = (0usize, channels.len());
+    for chunk in channels.chunks(CHUNK) {
+        let body: Vec<String> = chunk.iter().enumerate().map(|(i, l)| field(i, l)).collect();
+        if let Ok(json) = public_gql(app, &format!("query MosaicDrops {{ {} }}", body.join(" "))).await {
+            lists.extend((0..chunk.len()).filter_map(|i| json.pointer(&format!("/data/c{i}/viewerDropCampaigns")).cloned()));
+            continue;
+        }
+        use futures_util::StreamExt;
+        let queries: Vec<String> = chunk.iter().map(|l| format!("query MosaicDrops {{ {} }}", field(0, l))).collect();
+        let answers: Vec<Result<serde_json::Value, String>> = futures_util::stream::iter(queries)
+            .map(|query| {
+                let app = app.clone();
+                async move { public_gql(&app, &query).await }
+            })
+            .buffer_unordered(6)
+            .collect()
+            .await;
+        refused += answers.iter().filter(|a| a.is_err()).count();
+        lists.extend(answers.into_iter().flatten().filter_map(|j| j.pointer("/data/c0/viewerDropCampaigns").cloned()));
+    }
+    if asked > 0 && refused == asked {
+        return Err(format!("every channel lookup refused ({refused})"));
+    }
+    let mut new: Vec<serde_json::Value> = Vec::new();
+    for c in lists.iter().filter_map(|l| l.as_array()).flatten() {
+        let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let game = c.pointer("/game/displayName").and_then(|v| v.as_str()).unwrap_or("");
+        // no game: a streamer's own channel-only campaign, left out
+        if id.is_empty() || game.is_empty() || !scan.ids.insert(id.to_string()) { continue; }
+        let rewards: Vec<String> = c.get("timeBasedDrops").and_then(|v| v.as_array()).into_iter().flatten()
+            .flat_map(|d| {
+                let names: Vec<String> = d.pointer("/benefitEdges").and_then(|v| v.as_array()).into_iter().flatten()
+                    .filter_map(|b| b.pointer("/benefit/name").and_then(|v| v.as_str()).map(String::from)).collect();
+                if names.is_empty() { d.get("name").and_then(|v| v.as_str()).map(String::from).into_iter().collect() } else { names }
+            })
+            .collect();
+        new.push(serde_json::json!({
+            "id": id,
+            "name": c.get("name").and_then(|v| v.as_str()).unwrap_or(""),
+            "status": "ACTIVE",
+            "start": "",
+            "end": c.get("endAt").and_then(|v| v.as_str()).unwrap_or(""),
+            "details_url": "",
+            "link_url": c.get("accountLinkURL").and_then(|v| v.as_str()).unwrap_or(""),
+            // unknown (no self answer) counts as linked, so nothing is flagged by mistake
+            "connected": c.pointer("/self/isAccountConnected").and_then(|v| v.as_bool()).unwrap_or(true),
+            "game": game,
+            "game_id": c.pointer("/game/id").and_then(|v| v.as_str()).unwrap_or(""),
+            "box_art": c.pointer("/game/boxArtURL").and_then(|v| v.as_str()).unwrap_or(""),
+            "rewards": rewards,
+        }));
+    }
+    scan.found.extend(new.iter().cloned());
+    scan.at = std::time::Instant::now();
+    let unlinked = new.iter().filter(|c| c["connected"] == false && c["link_url"] != "").count();
+    eprintln!("[drops] scan batch: {asked} channels ({refused} refused), {} new campaigns ({unlinked} not linked), {} total, done {}", new.len(), scan.found.len(), scan.done);
+    Ok(new)
 }
 
 // The balance pill's 60s check, which also claims the channel points bonus (the chest Twitch offers every

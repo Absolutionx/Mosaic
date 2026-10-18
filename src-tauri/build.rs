@@ -109,6 +109,7 @@ const APP_COMMANDS: &[&str] = &[
     "search_twitch_channels",
     "get_channel_clips",
     "get_drop_campaigns",
+    "drop_campaigns_more",
     "channel_points_tick",
     "heartbeat_status",
     "heartbeat_watching",

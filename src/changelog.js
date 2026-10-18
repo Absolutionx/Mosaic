@@ -1,11 +1,25 @@
 // What's new (whats-new.js): one entry per released version, newest first. Add the entry when bumping the
 // version; the window shows after an update and lists what changed since the version you had before.
 //   kind: "new" | "improved" | "fixed"   title: a few words   desc: one or two plain sentences
+//   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
+  {
+    version: "1.6.0",
+    items: [
+      { kind: "fixed", top: true, title: "Drops keep counting", desc: "Drop progress could stop after a while until you logged in again, without any warning. Mosaic now notices when Twitch stops counting, recovers on its own, and shows the Drops bar if it can't." },
+      { kind: "fixed", top: true, title: "Available drops are back", desc: "Twitch stopped sharing its full campaign list with Mosaic, so the Drops hub showed none. Mosaic now finds campaigns from the streams that have drops on, loading more as you scroll, with their rewards and the Account not linked note." },
+      { kind: "new", title: "Themes", desc: "Pick a look in Settings > Appearance: Mosaic, Midnight, OLED Black, Graphite, Forest, Rosé and Ocean, plus the light Daylight and Paper. Each one changes the accent too, from the seek bar to Drops tags and hype train glows, and you can set your own colors on top." },
+      { kind: "new", title: "Customize anything", desc: "Press Start under Settings > Appearance > Customize parts, then click any part of Mosaic to change its colors, glow, corners or size, or hide it. Over 200 parts, including hype trains, predictions and chat events, are also in the searchable All parts list." },
+      { kind: "new", title: "Custom CSS", desc: "Write your own CSS for anything the picker doesn't cover, with a switch to turn it off at once." },
+      { kind: "new", title: "Share themes", desc: "Copy your whole look as a theme code to send to a friend, or paste one someone shared." },
+      { kind: "improved", title: "Readable names on light themes", desc: "On a light theme, chat names too pale to read on white are darkened automatically." },
+      { kind: "fixed", title: "Cursor over a loading stream", desc: "The mouse pointer no longer disappears over the video while a stream is still loading." },
+    ],
+  },
   {
     version: "1.5.9",
     items: [
-      { kind: "fixed", title: "Taskbar icon", desc: "If your taskbar kept showing Mosaic's old icon after updating, Windows now switches it to the new one." },
+      { kind: "fixed", top: true, title: "Taskbar icon", desc: "If your taskbar kept showing Mosaic's old icon after updating, Windows now switches it to the new one." },
       { kind: "new", title: "Preload favorites", desc: "Mosaic can keep your live favorites loading in the background so they start instantly when you open them. Turn it on in Settings > Player > Preload favorites, and choose how many and which ones. Each preloaded channel uses about as much data as watching it." },
       { kind: "new", title: "Search your drops", desc: "The Drops hub has a search box that finds games, campaigns and rewards." },
       { kind: "improved", title: "Drops you're earning come first", desc: "The campaign the stream you're watching is earning moves to the top of In progress, marked Earning now. Campaigns that have ended no longer show unless a reward is still waiting to be claimed." },

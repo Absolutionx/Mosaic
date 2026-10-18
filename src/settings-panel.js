@@ -6,6 +6,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getSetting, setSetting, onSettingChange, resetSettings, playChime } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
 import { closeCommandPalette } from "./command-palette.js";
+import { THEME_PRESETS, THEME_PARTS, presetById, isHex, CUSTOM_PARTS } from "./themes.js";
+import { configureCustomize, startPicking, openEditor, changedParts, resetPart, customParts } from "./customize.js";
+import { exportThemeCode, importThemeCode } from "./theme-share.js";
 
 let popEscape = null;       // this panel's entry on the shared Escape stack
 let selectOwner = null;      // the button whose dropdown is open
@@ -23,7 +26,9 @@ const QUALITY_OPTIONS = [
   { value: "audio_only", label: "Audio only" },
 ];
 
-// sections -> rows. kinds: toggle, segmented, select, text, range, action, preview, info, group
+// sections -> rows. kinds: toggle, segmented, select, text, range, action, preview, info, group, themes
+// (the preset picker), accent, color (one themeColors part), changes (customized parts), code (custom CSS),
+// import (a theme code), allparts (every customizable part, searchable)
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({ value: h, label: new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" }) }));
 const SECTIONS = [
   { id: "chat", label: "Chat", icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', rows: [
@@ -158,6 +163,28 @@ const SECTIONS = [
     { kind: "toggle", id: "autoClaimDrops", title: "Auto-claim drops", desc: "Claim Twitch Drops as soon as they're ready." },
     { kind: "toggle", id: "autoClaimBonus", title: "Auto-claim channel points bonus", desc: "Claim the bonus chest Twitch offers while you watch, within about a minute of it appearing." },
   ]},
+  { id: "appearance", label: "Appearance", icon: '<circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.4A5.6 5.6 0 0 0 22 9.9C22 5.5 17.5 2 12 2z"/>', rows: [
+    { kind: "themes", title: "Theme", desc: "A starting look for the whole app. Your color changes below go on top of it." },
+    { kind: "accent", title: "Accent color", desc: "Buttons, the seek bar, Drops tags, highlights and glows. Theme uses the theme's own color (Mosaic's is the platform's). Platform always uses Twitch purple, and Kick green in Kick mode." },
+    { kind: "group", title: "Colors" },
+    ...THEME_PARTS.map((p) => ({ kind: "color", part: p.key, title: p.title, desc: p.desc })),
+    { kind: "action", title: "Reset colors", desc: "Go back to the theme's own colors.", button: "Reset",
+      run: () => { setSetting("themeColors", {}); return "Reset"; } },
+    { kind: "group", title: "Customize" },
+    { kind: "action", title: "Customize parts", desc: "Click anything in Mosaic, like the sidebar, chat, stream cards or the seek bar, and change its colors and corners, or hide it.", button: "Start",
+      run: () => { closeSettingsPanel(); configureCustomize({ onDone: () => openSettingsPanel("appearance", "Your changes") }); startPicking(); } },
+    { kind: "changes", title: "Your changes", desc: "Parts you've customized." },
+    { kind: "allparts", title: "All parts", desc: "Everything you can customize, including things that only show up now and then, like hype trains, raids and predictions." },
+    { kind: "action", title: "Reset all parts", desc: "Undo every part you've customized.", button: "Reset", danger: true, confirm: true,
+      run: () => { setSetting("customParts", {}); return "Reset"; } },
+    { kind: "group", title: "Custom CSS" },
+    { kind: "toggle", id: "customCssOn", title: "Use custom CSS", desc: "Turn this off to go back to normal at once, without losing what you wrote." },
+    { kind: "code", id: "customCss", title: "Custom CSS", desc: "Your own CSS rules, applied on top of everything. For anything the picker doesn't cover. Only paste CSS you understand: it can make Mosaic hard to use, and Use custom CSS above is the quick way back." },
+    { kind: "group", title: "Share" },
+    { kind: "action", title: "Copy theme code", desc: "Your theme, colors, customized parts and custom CSS as one code you can send to someone or keep.", button: "Copy",
+      run: async () => copyThemeCode() },
+    { kind: "import", title: "Use a theme code", desc: "Paste a theme code someone shared. It replaces your current theme, colors, parts and custom CSS." },
+  ]},
   { id: "app", label: "App", icon: '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18"/>', rows: [
     { kind: "toggle", id: "autostart", title: "Start with your computer", desc: "Open Mosaic when you sign in." },
     { kind: "toggle", id: "startMinimized", title: "Start minimized", desc: "When Mosaic starts with your computer, go straight to the tray." },
@@ -280,7 +307,7 @@ export function openSettingsPanel(section, focusTitle) {
 }
 
 function focusRow(title) {
-  const row = [...panelEl.querySelectorAll(".settings-row")].find((r) => r.querySelector(".settings-row-title")?.textContent === title);
+  const row = [...panelEl.querySelectorAll(".settings-row, .settings-themes-row")].find((r) => r.querySelector(".settings-row-title")?.textContent === title);
   if (!row) return;
   row.scrollIntoView?.({ block: "center" });
   row.classList.remove("flash");
@@ -349,6 +376,9 @@ function render() {
 function buildRow(r) {
   if (r.kind === "group") return el("div", "settings-group", r.title);
   if (r.kind === "preview") return buildPreview();
+  if (r.kind === "themes") return buildThemePicker(r);
+  if (r.kind === "changes") return buildChangesList(r);
+  if (r.kind === "allparts") return buildAllParts(r);
   if (r.kind === "info") {
     const v = el("div", "settings-version", "Mosaic");
     getVersion().then((ver) => { v.textContent = `Mosaic v${ver}`; }).catch(() => {});
@@ -417,6 +447,73 @@ function buildRow(r) {
     wrap.append(input, val);
     ctl.appendChild(wrap);
     wrap.dataset.unit = r.unit || "";
+  } else if (r.kind === "code") {
+    // a code box that saves a moment after you stop typing (applying CSS on every key would flicker)
+    row.classList.add("settings-row-code");
+    const ta = el("textarea", "settings-code");
+    ta.spellcheck = false;
+    ta.placeholder = "/* e.g. make the sidebar a little wider */\n#app { --sidebar-width: 280px; }";
+    ta.value = String(getSetting(r.id) || "");
+    ta.dataset.setting = r.id;
+    let t = null;
+    ta.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => setSetting(r.id, ta.value), 350); });
+    ta.addEventListener("blur", () => { clearTimeout(t); setSetting(r.id, ta.value); });
+    // Tab types a tab (two spaces) instead of leaving the box
+    ta.addEventListener("keydown", (e) => {
+      if (e.key !== "Tab" || e.shiftKey) return;
+      e.preventDefault();
+      ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end");
+      ta.dispatchEvent(new Event("input"));
+    });
+    row.appendChild(ta);
+  } else if (r.kind === "import") {
+    row.classList.add("wide-control");
+    const wrap = el("div", "settings-import");
+    const input = el("input", "settings-text");
+    input.type = "text";
+    input.placeholder = "MOSAIC-THEME:…";
+    input.spellcheck = false;
+    const b = el("button", "settings-action", "Use");
+    b.type = "button";
+    b.addEventListener("click", () => {
+      try {
+        const summary = importThemeCode(input.value);
+        input.value = "";
+        showToast(summary);
+        render();
+      } catch (err) {
+        showToast(err?.message || "That isn't a Mosaic theme code.", true);
+      }
+    });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") b.click(); });
+    wrap.append(input, b);
+    ctl.appendChild(wrap);
+  } else if (r.kind === "accent") {
+    // Platform | Theme, or any color from the swatch (which then shows as chosen)
+    const seg = el("div", "settings-segmented settings-accent");
+    for (const [value, label] of [["theme", "Theme"], ["platform", "Platform"]]) {
+      const b = el("button", "settings-seg-btn", label);
+      b.type = "button";
+      b.dataset.value = value;
+      b.addEventListener("click", () => setSetting("themeAccent", value));
+      seg.appendChild(b);
+    }
+    const pick = colorInput((v) => setSetting("themeAccent", v));
+    pick.classList.add("settings-accent-pick");
+    pick.title = "Custom color";
+    seg.appendChild(pick);
+    ctl.appendChild(seg);
+  } else if (r.kind === "color") {
+    const wrap = el("div", "settings-color");
+    wrap.dataset.part = r.part;
+    const input = colorInput((v) => setSetting("themeColors", { ...themeColors(), [r.part]: v }));
+    const reset = el("button", "settings-color-reset");
+    reset.type = "button";
+    reset.title = "Use the theme's color";
+    reset.innerHTML = ICON('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>', 13);
+    reset.addEventListener("click", () => { const c = { ...themeColors() }; delete c[r.part]; setSetting("themeColors", c); });
+    wrap.append(el("span", "settings-color-hex"), input, reset);
+    ctl.appendChild(wrap);
   } else if (r.kind === "action") {
     const b = el("button", "settings-action" + (r.danger ? " danger" : ""), r.button);
     b.type = "button";
@@ -455,6 +552,144 @@ function buildRow(r) {
   return row;
 }
 
+// ---- Appearance (themes.js) ----
+const themeColors = () => { const c = getSetting("themeColors"); return c && typeof c === "object" ? c : {}; };
+// the color a part shows right now: your override, else the theme's
+const partColor = (key) => (isHex(themeColors()[key]) ? themeColors()[key] : presetById(getSetting("theme")).colors[key]);
+
+// a native color picker that saves as you drag (spaced out, so dragging doesn't write the setting every frame)
+function colorInput(onPick) {
+  const input = el("input", "settings-color-input");
+  input.type = "color";
+  let t = null;
+  input.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => onPick(input.value.toLowerCase()), 40); });
+  input.addEventListener("change", () => { clearTimeout(t); onPick(input.value.toLowerCase()); });
+  return input;
+}
+
+// Your changes: each customized part with Edit and Reset (rebuilt by refreshValues when anything changes)
+function buildChangesList(r) {
+  const wrap = el("div", "settings-themes-row settings-changes");
+  const text = el("div", "settings-row-text");
+  text.append(el("div", "settings-row-title", r.title), el("div", "settings-row-desc", r.desc));
+  wrap.append(text, el("div", "settings-changes-list"));
+  fillChanges(wrap.querySelector(".settings-changes-list"));
+  return wrap;
+}
+function fillChanges(list) {
+  list.replaceChildren();
+  const parts = changedParts();
+  if (!parts.length) { list.appendChild(el("div", "settings-changes-empty", "Nothing customized yet. Press Start above and click any part of Mosaic.")); return; }
+  for (const p of parts) {
+    const item = el("div", "settings-change");
+    const name = el("div", "settings-change-name");
+    name.append(el("span", null, p.name), el("span", "settings-change-group", p.group));
+    const edit = el("button", "settings-action", "Edit");
+    edit.type = "button";
+    edit.addEventListener("click", () => editPart(p));
+    const reset = el("button", "settings-color-reset");
+    reset.type = "button";
+    reset.title = "Reset this part";
+    reset.style.visibility = "visible";
+    reset.innerHTML = ICON('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>', 13);
+    reset.addEventListener("click", () => resetPart(p.id));
+    item.append(name, edit, reset);
+    list.appendChild(item);
+  }
+}
+
+// open a part's editor from Settings: outlined if it's on screen right now, otherwise in the middle
+function editPart(p) {
+  closeSettingsPanel();
+  configureCustomize({ onDone: () => openSettingsPanel("appearance", "Your changes") });
+  const node = [...document.querySelectorAll(p.sel)].find((n) => n.getClientRects().length) || null;
+  openEditor(p.id, node);
+}
+
+// All parts: every customizable part, by group, with a search. Groups start folded except while searching
+let allPartsQuery = "";
+function buildAllParts(r) {
+  const wrap = el("div", "settings-themes-row settings-allparts");
+  const text = el("div", "settings-row-text");
+  text.append(el("div", "settings-row-title", r.title), el("div", "settings-row-desc", r.desc));
+  const search = el("input", "settings-text settings-allparts-search");
+  search.type = "text";
+  search.placeholder = `Search ${CUSTOM_PARTS.length} parts`;
+  search.spellcheck = false;
+  search.value = allPartsQuery;
+  const list = el("div", "settings-allparts-list");
+  search.addEventListener("input", () => { allPartsQuery = search.value; fillAllParts(list); });
+  wrap.append(text, search, list);
+  fillAllParts(list);
+  return wrap;
+}
+function fillAllParts(list) {
+  const q = allPartsQuery.trim().toLowerCase();
+  const open = new Set([...list.querySelectorAll("details[open]")].map((d) => d.dataset.group));
+  list.replaceChildren();
+  const groups = [...new Set(CUSTOM_PARTS.map((p) => p.group))];
+  const changed = customParts();
+  let any = false;
+  for (const g of groups) {
+    const parts = CUSTOM_PARTS.filter((p) => p.group === g && (!q || `${p.name} ${p.group}`.toLowerCase().includes(q)));
+    if (!parts.length) continue;
+    any = true;
+    const det = el("details", "settings-allparts-group");
+    det.dataset.group = g;
+    if (q || open.has(g)) det.open = true;
+    const sum = el("summary", null);
+    const n = parts.filter((p) => changed[p.id]).length;
+    sum.append(el("span", null, g), el("span", "settings-allparts-count", n ? `${n} changed · ${parts.length}` : String(parts.length)));
+    det.appendChild(sum);
+    for (const p of parts) {
+      const item = el("button", "settings-allparts-item" + (changed[p.id] ? " changed" : ""));
+      item.type = "button";
+      item.append(el("span", "settings-allparts-name", p.name), el("span", "settings-allparts-edit", "Edit"));
+      item.addEventListener("click", () => editPart(p));
+      det.appendChild(item);
+    }
+    list.appendChild(det);
+  }
+  if (!any) list.appendChild(el("div", "settings-changes-empty", `No parts match "${allPartsQuery.trim()}".`));
+}
+
+async function copyThemeCode() {
+  const code = exportThemeCode();
+  try {
+    await navigator.clipboard.writeText(code);
+    return "Copied";
+  } catch {
+    // no clipboard access: show it so it can be copied by hand
+    showToast(code);
+    return null;
+  }
+}
+
+function buildThemePicker(r) {
+  const wrap = el("div", "settings-themes-row");
+  const text = el("div", "settings-row-text");
+  text.append(el("div", "settings-row-title", r.title), el("div", "settings-row-desc", r.desc));
+  const grid = el("div", "settings-themes");
+  for (const p of THEME_PRESETS) {
+    const b = el("button", "settings-theme");
+    b.type = "button";
+    b.dataset.theme = p.id;
+    // a tiny mock of the app in the theme's colors: sidebar, a card, a line of text, the accent
+    const sw = el("div", "settings-theme-swatch");
+    sw.style.background = p.colors.bg;
+    sw.innerHTML =
+      `<span class="tsw-side" style="background:${p.colors.surface};border-color:${p.colors.border}"></span>` +
+      `<span class="tsw-card" style="background:${p.colors.surface2};border-color:${p.colors.border}">` +
+        `<i style="background:${p.colors.text}"></i><i style="background:${p.colors.muted}"></i></span>` +
+      `<span class="tsw-accent" style="background:${p.accent || "var(--m-accent)"}"></span>`;
+    b.append(sw, el("span", "settings-theme-name", p.name));
+    b.addEventListener("click", () => setSetting("theme", p.id));
+    grid.appendChild(b);
+  }
+  wrap.append(text, grid);
+  return wrap;
+}
+
 // live preview for the Chat section: a sample line using the real chat styles
 function buildPreview() {
   const wrap = el("div", "settings-chat-preview");
@@ -489,6 +724,25 @@ function refreshValues() {
   });
   panelEl.querySelectorAll(".settings-text").forEach((input) => {
     if (document.activeElement !== input) input.value = String(getSetting(input.dataset.setting) || "");
+  });
+  panelEl.querySelectorAll(".settings-theme").forEach((b) => b.classList.toggle("on", b.dataset.theme === getSetting("theme")));
+  panelEl.querySelectorAll(".settings-changes-list").forEach((l) => fillChanges(l));
+  panelEl.querySelectorAll(".settings-allparts-list").forEach((l) => fillAllParts(l));
+  panelEl.querySelectorAll(".settings-code").forEach((ta) => {
+    if (document.activeElement !== ta) ta.value = String(getSetting(ta.dataset.setting) || "");
+  });
+  panelEl.querySelectorAll(".settings-accent").forEach((seg) => {
+    const a = getSetting("themeAccent");
+    seg.querySelectorAll(".settings-seg-btn").forEach((b) => b.classList.toggle("on", b.dataset.value === a));
+    const pick = seg.querySelector(".settings-accent-pick");
+    pick.classList.toggle("on", isHex(a));
+    if (document.activeElement !== pick) pick.value = isHex(a) ? a : (getComputedStyle(document.body).getPropertyValue("--m-accent").trim() || "#9147ff");
+  });
+  panelEl.querySelectorAll(".settings-color").forEach((w) => {
+    const input = w.querySelector("input");
+    if (document.activeElement !== input) input.value = partColor(w.dataset.part);
+    w.querySelector(".settings-color-hex").textContent = partColor(w.dataset.part).toUpperCase();
+    w.classList.toggle("custom", isHex(themeColors()[w.dataset.part]));
   });
   panelEl.querySelectorAll(".settings-select").forEach((b) => {
     const r = findRow(b.dataset.setting);

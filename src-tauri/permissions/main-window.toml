@@ -110,6 +110,7 @@ permissions = [
   "allow-search-twitch-channels",
   "allow-get-channel-clips",
   "allow-get-drop-campaigns",
+  "allow-drop-campaigns-more",
   "allow-channel-points-tick",
   "allow-heartbeat-status",
   "allow-heartbeat-watching",

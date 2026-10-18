@@ -16,6 +16,8 @@ const dropsBannerDismiss = document.getElementById("drops-banner-dismiss");
 const MESSAGES = {
   no_login: ["Drops need the Twitch connection to count here.", "Connect Twitch"],
   rejected: ["Drops aren't counting: Twitch won't accept your Twitch connection, even after Mosaic logged in again.", "Reconnect Twitch"],
+  // the minutes go through but the video check behind drops keeps failing (watch_heartbeat.rs, "stalled")
+  stalled: ["Drops aren't counting: Twitch stopped taking Mosaic's watch checks, even after it retried.", "Reconnect Twitch"],
 };
 
 let onReconnect = null;
@@ -84,7 +86,7 @@ export function hideDropsBanner() {
 
 dropsBannerLink.addEventListener("click", (e) => {
   e.preventDefault();
-  const reconnect = dropsBannerLink.dataset.mode === "rejected";
+  const reconnect = dropsBannerLink.dataset.mode === "rejected" || dropsBannerLink.dataset.mode === "stalled";
   onReconnect?.({ reconnect }, () => {
     quietUntil = Date.now() + 90000;
     dropsBanner.style.display = "none";

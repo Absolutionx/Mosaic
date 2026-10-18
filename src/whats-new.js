@@ -98,8 +98,19 @@ export async function openWhatsNew({ select, fresh = new Set(), current } = {}) 
     }
     title.textContent = `Version ${selected.version}`;
     rows.replaceChildren();
-    for (const [kind, label] of KINDS) {
-      const items = selected.items.filter((i) => i.kind === kind);
+    // an item marked top: true leads its version under its own kind's heading (e.g. the fix a release was
+    // made for), then the rest follow grouped as usual
+    const top = selected.items.filter((i) => i.top);
+    const groups = [];
+    // consecutive top items of the same kind share one heading
+    for (const i of top) {
+      const label = KINDS.find(([k]) => k === i.kind)?.[1] || "";
+      const last = groups[groups.length - 1];
+      if (last && last[0] === label) last[1].push(i);
+      else groups.push([label, [i]]);
+    }
+    for (const [kind, label] of KINDS) groups.push([label, selected.items.filter((i) => i.kind === kind && !i.top)]);
+    for (const [label, items] of groups) {
       if (!items.length) continue;
       rows.append(el("div", "settings-group", label));
       for (const i of items) {

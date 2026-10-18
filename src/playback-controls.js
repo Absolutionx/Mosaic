@@ -915,7 +915,7 @@ export class PlaybackControls {
     }
     this.videoEl.removeAttribute("src");
     this.videoEl.load();
-    this.videoFrame.classList.remove("controls-visible");
+    this.videoFrame.classList.remove("controls-visible", "cursor-idle");
     this.setPauseIcon(false);
     this.seekBarFill.style.width = "0%";
     this.renderMutedSegments([], 0);
@@ -1896,6 +1896,8 @@ export class PlaybackControls {
   }
 
   showControls() {
+    // any movement brings the cursor back, even while a stream is still loading (no controls yet)
+    this.videoFrame.classList.remove("cursor-idle");
     if (!this.active) return;
     this.videoFrame.classList.add("controls-visible");
     if (this.hideTimer) clearTimeout(this.hideTimer);
@@ -1904,6 +1906,9 @@ export class PlaybackControls {
 
   hideControls() {
     this.videoFrame.classList.remove("controls-visible");
+    // the cursor hides with the controls only once a stream is playing: while one loads there are no
+    // controls to bring back, so a hidden cursor stayed hidden over the frame
+    this.videoFrame.classList.toggle("cursor-idle", !!this.active);
     if (this.hideTimer) {
       clearTimeout(this.hideTimer);
       this.hideTimer = null;

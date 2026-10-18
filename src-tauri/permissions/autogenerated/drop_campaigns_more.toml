@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-drop-campaigns-more"
+description = "Enables the drop_campaigns_more command without any pre-configured scope."
+commands.allow = ["drop_campaigns_more"]
+
+[[permission]]
+identifier = "deny-drop-campaigns-more"
+description = "Denies the drop_campaigns_more command without any pre-configured scope."
+commands.deny = ["drop_campaigns_more"]

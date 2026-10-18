@@ -40,6 +40,17 @@ const SPADE_URL: &str = "https://spade.twitch.tv/track";
 const GQL_URL: &str = "https://gql.twitch.tv/gql";
 const BROADCAST_REFRESH: Duration = Duration::from_secs(900);
 const DROPS_INTERVAL: Duration = Duration::from_secs(20);
+// a signed playlist is replaced after this long even while it still answers: its segment links are signed
+// too, and a stale one can keep listing segments that no longer count (or none at all)
+const DROPS_PLAYLIST_MAX_AGE: Duration = Duration::from_secs(600);
+// rounds without new segments before the playlist is replaced (1 min), and before drops count as stalled
+// for the "Drops aren't counting" bar (2 min)
+const DROPS_REFRESH_AFTER_FAILS: u32 = 3;
+const DROPS_STALLED_AFTER_FAILS: u32 = 6;
+// heartbeat.log in the app's data folder: the last few hundred status lines, so a "drops stopped counting"
+// can be looked into afterwards (release builds have no console)
+const LOG_FILE: &str = "heartbeat.log";
+const LOG_CAP_BYTES: u64 = 256 * 1024;
 // segments remembered as already requested (a live media playlist lists ~15 at a time)
 const DROPS_SEEN_CAP: usize = 256;
 
@@ -62,13 +73,21 @@ pub struct WatchHeartbeatService {
     loop_started: AtomicBool,
     // what the last minute did, for heartbeat_status (Settings / devtools: is watching being credited?)
     last_status: std::sync::Mutex<String>,
-    // drops: (login, media playlist URL) signed for the account, and the segments already requested from it
-    drops_playlist: tokio::sync::Mutex<Option<(String, String)>>,
+    // drops: (login, media playlist URL, when it was signed) for the account, and the segments already
+    // requested from it
+    drops_playlist: tokio::sync::Mutex<Option<(String, String, Instant)>>,
+    // drops rounds in a row that requested no new segment (an error, or a playlist with nothing new): the
+    // signed playlist is replaced after DROPS_REFRESH_AFTER_FAILS, and drops count as stalled after
+    // DROPS_STALLED_AFTER_FAILS. Before this, a playlist that kept answering while its segments failed (or
+    // stopped listing new ones) was kept forever: drops stopped counting until chat reconnected (e.g. logging
+    // out and in), and nothing noticed because the minute reports still went through
+    drops_fail_rounds: std::sync::atomic::AtomicU32,
     drops_seen: std::sync::Mutex<std::collections::VecDeque<String>>,
     drops_status: std::sync::Mutex<String>,
     // whether watching can count at all, for the "drops aren't counting" bar (drops-banner.js):
     // "unknown" until the first minute, "ok", "no_login" (no Twitch connection token) or "rejected"
-    // (Twitch refused the token, so the connection has to be renewed)
+    // (Twitch refused the token, so the connection has to be renewed). health() also reports "stalled" when
+    // the minutes go through but the drops loop hasn't managed to request a segment for a while
     health: std::sync::Mutex<&'static str>,
 }
 
@@ -83,6 +102,7 @@ impl WatchHeartbeatService {
             loop_started: AtomicBool::new(false),
             last_status: std::sync::Mutex::new("no minute sent yet".into()),
             drops_playlist: tokio::sync::Mutex::new(None),
+            drops_fail_rounds: std::sync::atomic::AtomicU32::new(0),
             drops_seen: std::sync::Mutex::new(std::collections::VecDeque::new()),
             drops_status: std::sync::Mutex::new("no playlist check yet".into()),
             health: std::sync::Mutex::new("unknown"),
@@ -121,6 +141,7 @@ impl WatchHeartbeatService {
         let mut target = self.target.write().await;
         let previous = target.as_ref().map(|t| t.channel_id.clone());
         if previous.as_deref() != Some(channel_id.as_str()) {
+            self.log(&format!("watching {login}"));
             *target = Some(WatchTarget {
                 channel_id,
                 login,
@@ -137,6 +158,7 @@ impl WatchHeartbeatService {
         self.playing.store(false, Ordering::SeqCst);
         self.target.write().await.take();
         self.drops_playlist.lock().await.take();
+        self.drops_fail_rounds.store(0, Ordering::SeqCst);
     }
 
     pub fn set_playing(&self, playing: bool) {
@@ -199,6 +221,11 @@ impl WatchHeartbeatService {
             Ok(code) if (200..300).contains(code) => self.set_health("ok"),
             Err(e) if is_auth_error(e) => self.set_health("rejected"),
             _ => {}
+        }
+        match &gql {
+            Ok(code) if (200..300).contains(code) => {}
+            Ok(code) => self.log(&format!("{}: minute answered {code}", target.login)),
+            Err(e) => self.log(&format!("{}: minute failed: {e}", target.login)),
         }
         if let Err(e) = &gql {
             eprintln!("[heartbeat] gql send failed for {}: {e}", target.login);
@@ -283,6 +310,19 @@ impl WatchHeartbeatService {
                 self.set_health("rejected");
             }
         }
+        let fails = match &result {
+            Ok(n) if *n > 0 => {
+                self.drops_fail_rounds.store(0, Ordering::SeqCst);
+                0
+            }
+            _ => self.drops_fail_rounds.fetch_add(1, Ordering::SeqCst) + 1,
+        };
+        // nothing new for a while: the signed playlist (or its segment links) went stale, start over with a
+        // fresh one next round, the same thing reconnecting chat used to do
+        if fails > 0 && fails % DROPS_REFRESH_AFTER_FAILS == 0 {
+            self.drops_playlist.lock().await.take();
+            self.log(&format!("{}: {fails} drops rounds without a new segment, replacing the playlist", target.login));
+        }
         let now = chrono::Local::now().format("%H:%M:%S");
         let line = match &result {
             Ok(n) => format!("{now} {}: playlist ok, {n} new segment(s) requested", target.login),
@@ -290,6 +330,10 @@ impl WatchHeartbeatService {
         };
         if let Err(e) = &result {
             eprintln!("[heartbeat] drops playlist for {}: {e}", target.login);
+        }
+        // only changes and failures go in the log, not every healthy round
+        if !matches!(&result, Ok(n) if *n > 0) || fails == 0 && self.drops_status().contains("failed") {
+            self.log(&line[9..]);
         }
         if let Ok(mut g) = self.drops_status.lock() {
             *g = line;
@@ -302,10 +346,10 @@ impl WatchHeartbeatService {
         let mut cached = self.drops_playlist.lock().await;
         let mut fresh = false;
         let url = match cached.as_ref() {
-            Some((l, u)) if l == login => u.clone(),
+            Some((l, u, at)) if l == login && at.elapsed() < DROPS_PLAYLIST_MAX_AGE => u.clone(),
             _ => {
                 let u = self.media_playlist_url(login, token).await?;
-                *cached = Some((login.to_string(), u.clone()));
+                *cached = Some((login.to_string(), u.clone(), Instant::now()));
                 fresh = true;
                 u
             }
@@ -314,7 +358,7 @@ impl WatchHeartbeatService {
         if body.is_err() && !fresh {
             // signed playlists expire: one retry with a new one
             let u = self.media_playlist_url(login, token).await?;
-            *cached = Some((login.to_string(), u.clone()));
+            *cached = Some((login.to_string(), u.clone(), Instant::now()));
             body = self.get_playlist(&u).await;
         }
         drop(cached);
@@ -408,8 +452,13 @@ impl WatchHeartbeatService {
     }
 
     fn set_health(&self, h: &'static str) {
-        if let Ok(mut g) = self.health.lock() {
+        let changed = self.health.lock().map(|mut g| {
+            let changed = *g != h;
             *g = h;
+            changed
+        });
+        if changed.unwrap_or(false) {
+            self.log(&format!("health: {h}"));
         }
     }
 
@@ -434,13 +483,40 @@ impl WatchHeartbeatService {
         if let Some(t) = self.target.write().await.as_mut() {
             t.broadcast_checked_at = None;
         }
+        self.drops_fail_rounds.store(0, Ordering::SeqCst);
         self.set_health("unknown");
         self.tick().await;
-        self.health()
+        self.playlist_tick().await;
+        let h = self.health();
+        self.log(&format!("repair: token refresh {}, health now {h}", if refreshed { "ok" } else { "refused" }));
+        h
     }
 
     pub fn health(&self) -> &'static str {
-        self.health.lock().map(|g| *g).unwrap_or("unknown")
+        let h = self.health.lock().map(|g| *g).unwrap_or("unknown");
+        if h == "ok" && self.drops_fail_rounds.load(Ordering::SeqCst) >= DROPS_STALLED_AFTER_FAILS {
+            return "stalled";
+        }
+        h
+    }
+
+    // one line in heartbeat.log (see LOG_FILE), with the date and time; the file is cut in half past the cap
+    fn log(&self, line: &str) {
+        use std::io::Write;
+        use tauri::Manager;
+        let Ok(dir) = self.app.path().app_local_data_dir() else { return };
+        let path = dir.join(LOG_FILE);
+        if std::fs::metadata(&path).map(|m| m.len() > LOG_CAP_BYTES).unwrap_or(false) {
+            if let Ok(old) = std::fs::read(&path) {
+                let keep = &old[old.len() / 2..];
+                let start = keep.iter().position(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+                let _ = std::fs::write(&path, &keep[start..]);
+            }
+        }
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = writeln!(f, "{} {line}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+        }
     }
 
     pub fn drops_status(&self) -> String {

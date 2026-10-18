@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { pushEscape } from "./escape-stack.js";
 
 let viewEl = null, popEscape = null, opts = {};
+let scanObserver = null; // the paged Available list's "load more" watcher
 // the last load, kept so the search box can re-filter without asking Twitch again
 let data = null, query = "";
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -75,6 +76,8 @@ export function openDropsHub(o = {}) {
 }
 
 export function closeDropsHub() {
+  scanObserver?.disconnect();
+  scanObserver = null;
   viewEl?.remove();
   viewEl = null;
   popEscape?.();
@@ -88,18 +91,58 @@ async function load(body) {
     body.replaceChildren(el("div", "hub-empty", "Drops need the Twitch connection. Set it up under Settings › Twitch account."));
     return;
   }
-  const [inv, all, watching] = await Promise.allSettled([
-    invoke("get_drops_inventory"), invoke("get_drop_campaigns"), invoke("heartbeat_watching"),
-  ]);
+  const allP = invoke("get_drop_campaigns");
+  const [inv, watching] = await Promise.allSettled([invoke("get_drops_inventory"), invoke("heartbeat_watching")]);
   if (!viewEl || !body.isConnected) return;
-  data = {
+  const d = data = {
     inProgress: inv.status === "fulfilled" && Array.isArray(inv.value) ? inv.value : [],
     invError: inv.status === "rejected" ? inv.reason : null,
-    campaigns: all.status === "fulfilled" && Array.isArray(all.value) ? all.value : null,
-    allError: all.status === "rejected" ? all.reason : null,
+    campaigns: null, allError: null, allPending: true,
+    // paged: Twitch didn't share its list, so it's built a batch at a time as you scroll (drop_campaigns_more)
+    paged: false, scanDone: false, scanLoading: false, scanError: null,
     watching: watching.status === "fulfilled" ? watching.value : null,
   };
   render(body);
+  const [all] = await Promise.allSettled([allP]);
+  // a newer load (Refresh) or a closed hub: drop this answer
+  if (data !== d || !viewEl || !body.isConnected) return;
+  d.allPending = false;
+  if (all.status === "fulfilled") d.campaigns = Array.isArray(all.value) ? all.value : null;
+  else if (String(all.reason) === "unavailable") { d.paged = true; d.campaigns = []; }
+  else d.allError = all.reason;
+  refreshAvailable(body);
+  if (d.paged) loadMore(body, true);
+}
+
+// the next batch of the paged list (helix.rs drop_campaigns_more); reset on open resumes a recent scan
+async function loadMore(body, reset = false) {
+  const d = data;
+  if (!d?.paged || d.scanLoading || d.scanDone || d.scanError) return;
+  d.scanLoading = true;
+  refreshAvailable(body);
+  let r = null, err = null;
+  try { r = await invoke("drop_campaigns_more", { reset }); } catch (e) { err = e; }
+  if (data !== d || !viewEl || !body.isConnected) return;
+  d.scanLoading = false;
+  if (err) {
+    // nothing found yet: the whole list failed; otherwise keep what's shown and say the rest didn't load
+    if (!d.campaigns.length) { d.paged = false; d.allError = "unavailable"; } else d.scanError = err;
+  } else if (r?.busy) {
+    setTimeout(() => loadMore(body, reset), 1000);
+    return;
+  } else {
+    const seen = new Set(d.campaigns.map((c) => c.id));
+    d.campaigns.push(...(r?.campaigns || []).filter((c) => !seen.has(c.id)));
+    d.scanDone = !!r?.done;
+  }
+  refreshAvailable(body);
+}
+
+// redraw only the Available part, so the page doesn't jump while you're reading your drops
+function refreshAvailable(body) {
+  const avail = body.querySelector(".drops-available");
+  if (avail) fillAvailable(avail, words());
+  else render(body);
 }
 
 // lower-cased words of the search box; a campaign matches when every word appears in its game, its name or
@@ -113,12 +156,37 @@ const matches = (texts, ws) => {
 const ended = (c, now) => { const t = Date.parse(c.end || ""); return Number.isFinite(t) && t <= now; };
 
 function render(body) {
-  const { inProgress, invError, campaigns, allError, watching } = data;
+  const { inProgress, invError, watching } = data;
   const ws = words(), now = Date.now();
   body.replaceChildren();
   renderInProgress(body, inProgress, invError, watching, ws, now);
+  const avail = el("div", "drops-available");
+  body.appendChild(avail);
+  fillAvailable(avail, ws);
+}
+
+function fillAvailable(avail, ws) {
+  const { inProgress, campaigns, allError, allPending, paged, scanDone, scanLoading, scanError } = data;
+  scanObserver?.disconnect();
+  avail.replaceChildren();
+  if (allPending) {
+    avail.append(el("div", "hub-section", "Available on Twitch"), el("div", "hub-note", "Looking for drop campaigns on Twitch…"));
+    return;
+  }
   const mine = new Set(inProgress.map((c) => c.id));
-  renderAvailable(body, campaigns ? campaigns.filter((c) => !mine.has(c.id)) : null, allError, ws);
+  renderAvailable(avail, campaigns ? campaigns.filter((c) => !mine.has(c.id)) : null, allError, ws, paged && !scanDone);
+  if (!paged || scanDone) return;
+  if (scanError) { avail.appendChild(el("div", "hub-note error", `Couldn't load more campaigns (${String(scanError)}).`)); return; }
+  // scrolling this into view loads the next batch, like Browse
+  const more = el("div", "hub-note", scanLoading ? "Finding more campaigns…" : "Scroll for more");
+  avail.appendChild(more);
+  if (!scanLoading) {
+    const body = avail.parentElement;
+    scanObserver = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { scanObserver?.disconnect(); loadMore(body); }
+    }, { root: body, rootMargin: "300px" });
+    scanObserver.observe(more);
+  }
 }
 
 // the campaign the stream on screen is earning: same game, still running, with a reward left to earn
@@ -191,23 +259,38 @@ function renderInProgress(body, all, error, watching, ws, now) {
   }
 }
 
-function renderAvailable(body, campaigns, error, ws) {
+function renderAvailable(body, campaigns, error, ws, partial = false) {
   body.appendChild(el("div", "hub-section", "Available on Twitch"));
+  if (String(error) === "unavailable") {
+    // Twitch didn't share its list and the scan of live drops streams failed too (helix.rs drop_campaigns_more)
+    body.appendChild(el("div", "hub-note", "Couldn't get the drop campaigns from Twitch right now. Campaigns you've started still show above. Try Refresh in a minute."));
+    return;
+  }
   if (error || !campaigns) { body.appendChild(el("div", "hub-note error", `Couldn't load the campaign list${error ? ` (${String(error)})` : ""}.`)); return; }
   const now = Date.now();
   const active = campaigns
     .filter((c) => (c.status || "ACTIVE") === "ACTIVE" && (!c.end || Date.parse(c.end) > now))
-    .sort((a, b) => (Date.parse(a.end) || Infinity) - (Date.parse(b.end) || Infinity));
-  if (!active.length) { body.appendChild(el("div", "hub-note", "No drop campaigns are running right now.")); return; }
-  const shown = active.filter((c) => matches([c.game, c.name], ws));
-  if (!shown.length) { body.appendChild(el("div", "hub-note", `No campaigns match "${query.trim()}".`)); return; }
+    // soonest-ending first; the paged list stays in Twitch's order (most watched first), so tiles don't
+    // reshuffle as more batches arrive
+    .sort((a, b) => data.paged ? 0 : (Date.parse(a.end) || Infinity) - (Date.parse(b.end) || Infinity));
+  // partial: the paged list is still loading more, so "none" isn't known yet
+  if (!active.length) { if (!partial) body.appendChild(el("div", "hub-note", "No drop campaigns are running right now.")); return; }
+  const shown = active.filter((c) => matches([c.game, c.name, ...(c.rewards || [])], ws));
+  if (!shown.length) { body.appendChild(el("div", "hub-note", partial ? `No campaigns match "${query.trim()}" yet.` : `No campaigns match "${query.trim()}".`)); return; }
+  body.appendChild(tileGrid(shown));
+}
+
+function tileGrid(list) {
   const grid = el("div", "drops-grid");
-  for (const c of shown) {
+  for (const c of list) {
     const card = el("div", "drops-tile");
     const art = el("img", "drops-art small"); art.alt = ""; art.loading = "lazy";
     if (c.box_art) art.src = boxArt(c.box_art);
     const main = el("div", "drops-main");
     main.append(el("div", "drops-game", c.game || "Unknown game"), el("div", "drops-campaign-name", c.name || ""));
+    // reward names come with the paged list (helix.rs drop_campaigns_more)
+    const rewards = (c.rewards || []).filter((r) => r && r !== c.name);
+    if (rewards.length) main.appendChild(el("div", "drops-tile-meta", rewards.join(", ")));
     const meta = el("div", "drops-tile-meta", fmtEnds(c.end));
     if (!c.connected && c.link_url) meta.appendChild(el("span", "drops-unlinked", " · Account not linked"));
     main.appendChild(meta);
@@ -226,5 +309,5 @@ function renderAvailable(body, campaigns, error, ws) {
     card.append(art, main);
     grid.appendChild(card);
   }
-  body.appendChild(grid);
+  return grid;
 }

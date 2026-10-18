@@ -5,6 +5,8 @@
 // Four settings predate this module and are also toggled from the player's quality menu; they keep their
 // original localStorage keys (and value formats) so existing choices carry over and both UIs stay in sync.
 
+import { themeVars, themeIsLight, THEME_VARS, customPartsCss } from "./themes.js";
+
 const STORE_KEY = "mosaicSettings";
 
 export const DEFAULTS = {
@@ -110,6 +112,13 @@ export const DEFAULTS = {
   startMinimized: false,     // ...and go straight to the tray when it does
   uiZoom: 1,
   reduceMotion: false,
+  // appearance (themes.js)
+  theme: "mosaic",           // preset id
+  themeAccent: "theme",      // "theme" (the preset's own; Mosaic's is the platform color) | "platform" (Twitch purple / Kick green) | "#rrggbb"
+  themeColors: {},           // your overrides on top of the preset: { bg, surface, surface2, raised, border, text, muted }
+  customParts: {},           // Customize picker (customize.js): { partId: { bg, text, border, accent, radius, hidden } }
+  customCss: "",             // Appearance > Custom CSS, your own rules on top of everything
+  customCssOn: true,         // quick off switch for it, without losing what you wrote
   autoUpdateCheck: true,
 };
 
@@ -181,6 +190,17 @@ export function resetSettings() {
   }
 }
 
+// a <style> of ours at the end of <head> (created once, kept last so it wins ties)
+function styleTag(id) {
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement("style");
+    el.id = id;
+    document.head.appendChild(el);
+  }
+  return el;
+}
+
 // display-only settings apply through CSS (variables + body classes), so they change instantly, including
 // on messages already in chat
 export function applyAppearance() {
@@ -195,6 +215,17 @@ export function applyAppearance() {
   root.style.setProperty("--chat-emote-scale", String(Number(getSetting("emoteScale")) || 1));
   const body = document.body;
   if (!body) return;
+  // theme: inline variables on <body>, so they win over :root and body.kick-mode's accent (themes.js)
+  const vars = themeVars(getSetting("theme"), getSetting("themeColors"), getSetting("themeAccent"));
+  for (const v of THEME_VARS) {
+    if (vars && vars[v]) body.style.setProperty(v, vars[v]);
+    else body.style.removeProperty(v);
+  }
+  const light = themeIsLight(getSetting("theme"), getSetting("themeColors"));
+  body.classList.toggle("theme-light", light);
+  // your picked parts, then your own CSS, as the last stylesheets in the page so they win
+  styleTag("mosaic-custom-parts").textContent = customPartsCss(getSetting("customParts"), light);
+  styleTag("mosaic-custom-css").textContent = getSetting("customCssOn") ? String(getSetting("customCss") || "") : "";
   body.classList.toggle("chat-show-timestamps", !!getSetting("showTimestamps"));
   body.classList.toggle("chat-zebra", !!getSetting("zebraLines"));
   body.classList.toggle("chat-neutral-names", getSetting("usernameColors") === "neutral");

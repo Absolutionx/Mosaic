@@ -338,6 +338,7 @@ fn main() {
             helix::search_twitch_channels,
             helix::get_channel_clips,
             helix::get_drop_campaigns,
+            helix::drop_campaigns_more,
             helix::channel_points_tick,
             watch_heartbeat::heartbeat_status,
             watch_heartbeat::heartbeat_watching,
