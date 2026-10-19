@@ -8,10 +8,13 @@
 // - playback: resolve_clip_url (streamlink) resolves the clip and returns it routed through the local
 //   server: an MP4 via /clip-proxy (streamed, Range-aware, Twitch-player headers) or an HLS playlist via
 //   /hls-proxy, played with hls.js. the main stream is muted while a clip plays and restored on close
+// - watching it is reported to Twitch like its own clip player does (replay-watch.js), so a clip watched
+//   here counts, a broken watch streak's "watch a clip" included
 
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import Hls from "hls.js";
+import { watchReplay } from "../replay-watch.js";
 
 // clips.twitch.tv/<slug>, clips.twitch.tv/embed?clip=<slug>, (www.|m.)twitch.tv/<channel>/clip/<slug>
 const CLIP_RES = [
@@ -100,9 +103,11 @@ export function buildClipCard(slug, linkEl) {
 let playerEl = null;
 let restoreMain = null;
 let hls = null;
+let stopReplay = null;
 
 export function closeClipPlayer() {
   if (!playerEl) return;
+  if (stopReplay) { stopReplay(); stopReplay = null; }
   if (hls) { hls.destroy(); hls = null; }
   const v = playerEl.querySelector("video");
   if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
@@ -138,8 +143,12 @@ export async function openClipPlayer(info) {
       '<div class="clip-player-foot"><button type="button" class="clip-player-open">Open on Twitch</button></div>' +
     "</div>";
   el.querySelector(".clip-player-title").textContent = info.title || "Clip";
-  el.querySelector(".clip-player-sub").textContent =
-    `${info.channel || ""} · ${fmtViews(info.views)} views` + (info.creator ? ` · clipped by ${info.creator}` : "");
+  // a clip opened from a notification may have no details yet (logged out of Helix): show only what's known
+  el.querySelector(".clip-player-sub").textContent = [
+    info.channel || "",
+    info.views != null ? `${fmtViews(info.views)} views` : "",
+    info.creator ? `clipped by ${info.creator}` : "",
+  ].filter(Boolean).join(" · ");
   el.addEventListener("mousedown", (e) => { if (e.target === el) closeClipPlayer(); }); // click outside
   el.querySelector(".clip-player-close").addEventListener("click", closeClipPlayer);
   el.querySelector(".clip-player-open").addEventListener("click", () => {
@@ -151,6 +160,7 @@ export async function openClipPlayer(info) {
   document.addEventListener("keydown", onKey, true);
 
   const video = el.querySelector("video");
+  if (info.slug) stopReplay = watchReplay("clip", info.slug, video, () => playerEl === el);
   const status = el.querySelector(".clip-player-status");
   const fail = (msg, detail) => {
     if (playerEl !== el) return;

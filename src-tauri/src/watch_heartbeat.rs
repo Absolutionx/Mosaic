@@ -20,6 +20,14 @@
 // (f693b0c, 2026-10-09). It follows the same rules as the minute: one channel, the one on screen, only while
 // it plays and is live.
 //
+// Clips and VODs (1.8.1): Twitch's own players report replays too, and a broken watch streak ("watch a clip,
+// VOD or stream in the next 24h to save it") is saved from those reports. Mosaic's clip and VOD players used to
+// send nothing, so watching there never saved a streak. heartbeat_replay sends what the web player sends
+// (checked 10-19-26): a clip sends incrementClipViewCount + video-play when it starts, then
+// clips_minute_watched (first ~9 s in, then each minute); a VOD sends video-play, then minute-watched with
+// content_mode "vod" (first ~15 s in, then each minute). replay-watch.js times them, only while the clip or VOD
+// is actually playing, one at a time.
+//
 // Requires the Twitch device-login token (same one pins/predictions use). No device login -> no token
 // -> nothing is reported, exactly like not being logged in on the web.
 
@@ -89,6 +97,20 @@ pub struct WatchHeartbeatService {
     // (Twitch refused the token, so the connection has to be renewed). health() also reports "stalled" when
     // the minutes go through but the drops loop hasn't managed to request a segment for a while
     health: std::sync::Mutex<&'static str>,
+    // clips and VODs: who the last one belongs to ("clip:<slug>" / "vod:<id>" -> details), so each minute
+    // doesn't look it up again, and what the last replay report did (heartbeat_status)
+    replay_info: tokio::sync::Mutex<Option<(String, ReplayInfo)>>,
+    replay_status: std::sync::Mutex<String>,
+}
+
+// what a clip or VOD report names: its channel and category, and the video id Twitch's player puts in vod_id
+#[derive(Clone)]
+struct ReplayInfo {
+    channel_id: String,
+    login: String,
+    game_id: String,
+    game_name: String,
+    vod_id: String,
 }
 
 impl WatchHeartbeatService {
@@ -106,6 +128,8 @@ impl WatchHeartbeatService {
             drops_seen: std::sync::Mutex::new(std::collections::VecDeque::new()),
             drops_status: std::sync::Mutex::new("no playlist check yet".into()),
             health: std::sync::Mutex::new("unknown"),
+            replay_info: tokio::sync::Mutex::new(None),
+            replay_status: std::sync::Mutex::new("no clip or VOD reported yet".into()),
         }
     }
 
@@ -561,7 +585,13 @@ impl WatchHeartbeatService {
                 "user_id": user_id
             }
         }]);
-        let raw = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+        self.send_spade_events(&payload, token).await
+    }
+
+    // any list of spade events through GQL sendSpadeEvents (gzip + base64 JSON array, "twilight" repository),
+    // with the viewer's token. Returns the statusCode Twitch's spade answered with (204 = accepted)
+    async fn send_spade_events(&self, payload: &serde_json::Value, token: &str) -> Result<i64, String> {
+        let raw = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
         let mut gz = GzEncoder::new(Vec::new(), Compression::default());
         gz.write_all(&raw).map_err(|e| e.to_string())?;
         let data = general_purpose::STANDARD.encode(gz.finish().map_err(|e| e.to_string())?);
@@ -588,6 +618,130 @@ impl WatchHeartbeatService {
         json["data"]["sendSpadeEvents"]["statusCode"]
             .as_i64()
             .ok_or_else(|| format!("HTTP {status}: no statusCode in reply"))
+    }
+
+    // a clip's or VOD's channel and category, from Twitch (cached for the one being watched)
+    async fn replay_info(&self, kind: &str, id: &str, token: &str) -> Result<ReplayInfo, String> {
+        let key = format!("{kind}:{id}");
+        if let Some((k, info)) = self.replay_info.lock().await.as_ref() {
+            if *k == key {
+                return Ok(info.clone());
+            }
+        }
+        let (query, vars, root) = if kind == "clip" {
+            (
+                "query MosaicReplayClip($slug: ID!) { clip(slug: $slug) { id broadcaster { id login } game { id name } } }",
+                json!({ "slug": id }),
+                "clip",
+            )
+        } else {
+            (
+                "query MosaicReplayVod($id: ID!) { video(id: $id) { id owner { id login } game { id name } } }",
+                json!({ "id": id }),
+                "video",
+            )
+        };
+        let resp = self
+            .client
+            .post(GQL_URL)
+            .header("Client-Id", crate::twitch_device_auth::device_client_id())
+            .header("Authorization", format!("OAuth {token}"))
+            .json(&json!({ "query": query, "variables": vars }))
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        if let Some(msg) = body["errors"][0]["message"].as_str() {
+            return Err(format!("HTTP {status}: {msg}"));
+        }
+        let node = &body["data"][root];
+        let owner = if kind == "clip" { &node["broadcaster"] } else { &node["owner"] };
+        let (Some(vod_id), Some(channel_id), Some(login)) = (node["id"].as_str(), owner["id"].as_str(), owner["login"].as_str()) else {
+            return Err(format!("HTTP {status}: no such {kind}"));
+        };
+        let info = ReplayInfo {
+            channel_id: channel_id.to_string(),
+            login: login.to_string(),
+            game_id: node["game"]["id"].as_str().unwrap_or_default().to_string(),
+            game_name: node["game"]["name"].as_str().unwrap_or_default().to_string(),
+            vod_id: vod_id.to_string(),
+        };
+        *self.replay_info.lock().await = Some((key, info.clone()));
+        Ok(info)
+    }
+
+    // one clip/VOD report (see the header). kind: "clip" | "vod"; event: "start" | "minute"; minutes: how many
+    // minutes this one has reported so far, this one included; position: where in the clip/VOD it is (seconds)
+    pub async fn report_replay(&self, kind: &str, id: &str, event: &str, minutes: u32, position: f64, muted: bool) -> Result<String, String> {
+        let Some(token) = crate::twitch_device_auth::get_device_token(&self.app).await else {
+            return Ok("not connected".into());
+        };
+        let user_id = self.user_id(&token).await?;
+        let info = self.replay_info(kind, id, &token).await?;
+        let clip = kind == "clip";
+        let name = match (clip, event) {
+            (_, "start") => "video-play",
+            (true, _) => "clips_minute_watched",
+            (false, _) => "minute-watched",
+        };
+        let mut props = json!({
+            "channel_id": info.channel_id,
+            "channel": info.login,
+            "client_time": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            "content_mode": if clip { "clip" } else { "vod" },
+            "vod_type": if clip { "clip" } else { "archive" },
+            "vod_id": info.vod_id,
+            "vod_timestamp": if position.is_finite() { position.max(0.0) } else { 0.0 },
+            "game": info.game_name,
+            "game_id": info.game_id,
+            "category_id": info.game_id,
+            "hidden": false,
+            "is_live": false,
+            "live": false,
+            "location": "vod",
+            "logged_in": true,
+            "minutes_logged": if event == "start" { 0 } else { minutes },
+            "muted": muted,
+            "player": "site",
+            "stream_type": "vod",
+            "user_id": user_id
+        });
+        if clip {
+            props["clip_slug"] = json!(id);
+        }
+        // the web player counts the clip as viewed when it starts
+        if clip && event == "start" {
+            let bump = self
+                .client
+                .post(GQL_URL)
+                .header("Client-Id", crate::twitch_device_auth::device_client_id())
+                .header("Authorization", format!("OAuth {token}"))
+                .json(&json!({
+                    "operationName": "incrementClipViewCount",
+                    "variables": { "input": { "slug": id } },
+                    "extensions": { "persistedQuery": { "version": 1, "sha256Hash": "6b2f169f994f2b93ff68774f6928de66a1e8cdb70a42f4af3a5a1ecc68ee759b" } }
+                }))
+                .timeout(Duration::from_secs(15))
+                .send()
+                .await;
+            if let Err(e) = bump {
+                self.log(&format!("clip {id}: view count failed: {e}"));
+            }
+        }
+        let payload = json!([{ "event": name, "properties": props }]);
+        let result = self.send_spade_events(&payload, &token).await;
+        let line = match &result {
+            Ok(code) => format!("{} {kind} {} ({}): {name} {code}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
+            Err(e) => format!("{} {kind} {} ({}): {name} failed: {e}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
+        };
+        self.log(&line);
+        eprintln!("[heartbeat] {line}");
+        if let Ok(mut g) = self.replay_status.lock() {
+            *g = line.clone();
+        }
+        result.map(|code| code.to_string())
     }
 
     pub fn status(&self) -> String {
@@ -763,7 +917,50 @@ pub async fn heartbeat_repair(playing: bool, state: State<'_, Arc<WatchHeartbeat
 // watching is being credited (devtools: __TAURI_INTERNALS__.invoke("heartbeat_status"))
 #[tauri::command]
 pub fn heartbeat_status(state: State<'_, Arc<WatchHeartbeatService>>) -> String {
-    format!("points: {} | drops: {}", state.status(), state.drops_status())
+    let replay = state.replay_status.lock().map(|g| g.clone()).unwrap_or_default();
+    format!("points: {} | drops: {} | clips & VODs: {replay}", state.status(), state.drops_status())
+}
+
+// a Twitch clip or VOD playing in Mosaic: one report (see WatchHeartbeatService::report_replay; timed by
+// replay-watch.js). Returns Twitch's answer ("204") or "not connected"
+#[tauri::command]
+pub async fn heartbeat_replay(
+    kind: String,
+    id: String,
+    event: String,
+    minutes: u32,
+    position: f64,
+    muted: bool,
+    state: State<'_, Arc<WatchHeartbeatService>>,
+) -> Result<String, String> {
+    if !replay_args_ok(&kind, &id, &event) {
+        return Err("invalid clip or VOD".into());
+    }
+    state.report_replay(&kind, &id, &event, minutes.min(100_000), position, muted).await
+}
+
+fn replay_args_ok(kind: &str, id: &str, event: &str) -> bool {
+    let id_ok = match kind {
+        "clip" => !id.is_empty() && id.len() <= 100 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+        "vod" => !id.is_empty() && id.len() <= 20 && id.chars().all(|c| c.is_ascii_digit()),
+        _ => false,
+    };
+    id_ok && (event == "start" || event == "minute")
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::replay_args_ok;
+    #[test]
+    fn only_real_clips_and_vods() {
+        assert!(replay_args_ok("clip", "TrappedAgitatedShieldWholeWheat-NxKTIA1OqLXrwI9D", "start"));
+        assert!(replay_args_ok("vod", "2904279037", "minute"));
+        assert!(!replay_args_ok("vod", "29042abc", "minute"));
+        assert!(!replay_args_ok("clip", "a/b", "start"));
+        assert!(!replay_args_ok("clip", "", "start"));
+        assert!(!replay_args_ok("live", "123", "minute"));
+        assert!(!replay_args_ok("vod", "123", "claim"));
+    }
 }
 
 #[cfg(test)]

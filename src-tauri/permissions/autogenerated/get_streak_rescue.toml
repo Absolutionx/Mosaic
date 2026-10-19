@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-streak-rescue"
+description = "Enables the get_streak_rescue command without any pre-configured scope."
+commands.allow = ["get_streak_rescue"]
+
+[[permission]]
+identifier = "deny-get-streak-rescue"
+description = "Denies the get_streak_rescue command without any pre-configured scope."
+commands.deny = ["get_streak_rescue"]

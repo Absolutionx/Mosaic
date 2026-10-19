@@ -5,13 +5,15 @@
 // - the bell's count is Twitch's "unseen" count; opening the panel marks everything seen (the count clears,
 //   items stay unread until clicked, as on twitch.tv)
 // - two tabs like Twitch: My Twitch (VIEWER) and My Channel (CREATOR), each "Last 24 hours" then "Earlier"
-// - clicking an item marks it read and opens what it's about: a channel or VOD in Mosaic, anything else on
-//   twitch.tv in the browser
+// - clicking an item marks it read and opens what it's about: a channel, VOD or clip in Mosaic, anything else
+//   on twitch.tv in the browser. a watch streak's notice opens the clip or VOD Twitch picked to save it
 // - the count refreshes every 3 minutes, and when Mosaic comes back to the front
 // Settings > App > Notifications button hides the bell.
 
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { openClipPlayer } from "./chat/chat-clips.js";
+import { showAppToast } from "./app-toast.js";
 import { getSetting, onSettingChange } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
 import { fmtDateMDY } from "./format.js";
@@ -61,14 +63,71 @@ export function timeAgo(iso, now = Date.now()) {
   return fmtDateMDY(iso);
 }
 
-// what clicking an item does: { app: "channel", login } | { app: "vod", id, length, login } | { url } | null
+// a Twitch clip or VOD named by a link: { app: "clip", slug, url } | { app: "vod", id, length: 0, login: "" } | null
+export function replayFromUrl(url) {
+  let u;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  if (u.protocol !== "https:") return null;
+  const host = u.hostname.toLowerCase();
+  const parts = u.pathname.split("/").filter(Boolean);
+  const slugOk = (x) => /^[A-Za-z0-9_-]{1,100}$/.test(x || "");
+  if (host === "clips.twitch.tv" && slugOk(parts[0]) && parts[0] !== "embed") return { app: "clip", slug: parts[0], url: u.href };
+  if (host !== "www.twitch.tv" && host !== "twitch.tv" && host !== "m.twitch.tv") return null;
+  if (parts[1] === "clip" && slugOk(parts[2])) return { app: "clip", slug: parts[2], url: u.href };
+  if (parts[0] === "videos" && /^\d{1,20}$/.test(parts[1] || "")) return { app: "vod", id: parts[1], length: 0, login: "" };
+  return null;
+}
+
+// twitch.tv/<channel> (nothing after it) -> the channel's login; Twitch's own pages (directory, settings...) -> null
+const NOT_CHANNELS = new Set(["directory", "settings", "downloads", "videos", "search", "subscriptions", "inventory", "drops", "wallet", "friends", "messages", "p", "jobs", "turbo", "prime", "store", "following", "login", "signup", "save-streak", "annual-recap"]);
+export function channelFromUrl(url) {
+  let u;
+  try { u = new URL(String(url || "")); } catch { return null; }
+  if (u.protocol !== "https:" || !["www.twitch.tv", "twitch.tv", "m.twitch.tv"].includes(u.hostname.toLowerCase())) return null;
+  const parts = u.pathname.split("/").filter(Boolean);
+  if (parts.length !== 1 || !/^[A-Za-z0-9_]{1,25}$/.test(parts[0])) return null;
+  const login = parts[0].toLowerCase();
+  return NOT_CHANNELS.has(login) ? null : login;
+}
+
+const isStreakItem = (n) => /streak/i.test(`${n && n.category || ""} ${n && n.type || ""}`);
+
+// "Your streak on X broke! Watch a clip, VOD or stream in the next 24h to save it" links to twitch.tv's
+// /save-streak/<channel>, which picks what to watch (get_streak_rescue does the same)
+export function rescueLogin(n) {
+  for (const a of (n && n.actions) || []) {
+    const m = /^https:\/\/(?:www\.)?twitch\.tv\/save-streak\/([A-Za-z0-9_]{1,25})\/?(?:[?#]|$)/.exec(String(a && a.url || ""));
+    if (m) return m[1].toLowerCase();
+  }
+  if (n && n.destination === "WatchStreakRescue" && n.target && n.target.kind === "channel" && n.target.login) return String(n.target.login).toLowerCase();
+  return null;
+}
+
+// what clicking an item does: { app: "channel", login } | { app: "vod", id, length, login } |
+// { app: "clip", slug, url } | { app: "rescue", login } | { url } | null
 export function itemTarget(n) {
   const t = n && n.target;
+  // a broken watch streak is saved by watching a clip, VOD or stream; the channel is usually offline then, so
+  // the clip or VOD goes first (it plays in Mosaic, and counts: replay-watch.js)
+  const rescue = rescueLogin(n);
+  if (rescue) return { app: "rescue", login: rescue };
+  if (isStreakItem(n)) {
+    if (t && t.kind === "clip" && t.slug) return { app: "clip", slug: String(t.slug), url: t.url || "" };
+    if (t && t.kind === "vod" && t.id) return { app: "vod", id: String(t.id), length: t.length || 0, login: t.login || "" };
+    for (const a of (n.actions || [])) {
+      const r = replayFromUrl(a && a.url);
+      if (r) return r.app === "vod" ? { ...r, login: (t && t.login) || (n.creator && n.creator.login) || "" } : r;
+    }
+  }
   if (t && t.kind === "channel" && t.login) return { app: "channel", login: String(t.login).toLowerCase() };
   if (t && t.kind === "vod" && t.id) return { app: "vod", id: String(t.id), length: t.length || 0, login: t.login || "" };
-  if (t && t.kind === "clip" && (t.url || t.slug)) return { url: t.url || `https://clips.twitch.tv/${t.slug}` };
+  if (t && t.kind === "clip" && t.slug) return { app: "clip", slug: String(t.slug), url: t.url || "" };
+  if (t && t.kind === "clip" && t.url) return { url: t.url };
   if (t && t.kind === "link" && /^https:\/\//i.test(t.url || "")) return { url: t.url };
   const a = (n && n.actions || []).find((x) => /^https:\/\//i.test(x.url || ""));
+  // a link to a channel (twitch.tv/<channel>, e.g. "join the stream to keep your watch streak") opens it here
+  const login = a && channelFromUrl(a.url);
+  if (login) return { app: "channel", login };
   if (a) return { url: a.url };
   if (t && t.kind === "game" && t.name) return { url: `https://www.twitch.tv/directory/category/${encodeURIComponent(t.name)}` };
   return null;
@@ -341,7 +400,28 @@ function openItem(n) {
   closeNotificationsPanel();
   if (target.app === "channel") deps.watchChannel(target.login);
   else if (target.app === "vod") deps.openVod(target.id, target.length, target.login);
+  else if (target.app === "clip") openClip(target);
+  else if (target.app === "rescue") openRescue(target.login);
   else if (target.url) openUrl(target.url).catch(() => {});
+}
+
+// a clip plays in Mosaic's clip player (chat-clips.js); its details fill in when Twitch answers
+async function openClip(target) {
+  let info = null;
+  try { info = await invoke("get_clip_info", { slug: target.slug }); } catch { /* not logged in, or gone */ }
+  openClipPlayer(info && info.slug ? info : { slug: target.slug, url: target.url || `https://clips.twitch.tv/${target.slug}`, title: "Clip" });
+}
+
+// what twitch.tv's save-streak page would play: a clip, else a past broadcast, else the channel
+async function openRescue(login) {
+  let r = null;
+  try { r = await invoke("get_streak_rescue", { channelLogin: login }); } catch (e) { console.warn("[notifications] streak rescue:", e); }
+  if (r && r.clip && r.clip.slug) { openClipPlayer(r.clip); return; }
+  if (r && r.vod && r.vod.id) { deps.openVod(String(r.vod.id), r.vod.length || 0, login); return; }
+  deps.watchChannel(login);
+  if (r && r.state === "recovered") showAppToast("This watch streak is already saved.");
+  else if (r && r.state === "expired") showAppToast("This watch streak can't be saved anymore.");
+  else if (r && r.state === "suspended") showAppToast("There's no clip or past broadcast to watch yet. Watching the next stream saves the streak.");
 }
 
 async function removeItem(n) {

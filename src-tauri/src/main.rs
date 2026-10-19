@@ -344,6 +344,8 @@ fn main() {
             watch_heartbeat::heartbeat_status,
             watch_heartbeat::heartbeat_watching,
             watch_heartbeat::heartbeat_repair,
+            watch_heartbeat::heartbeat_replay,
+            helix::get_streak_rescue,
             downloads::start_vod_download,
             downloads::cancel_vod_download,
             downloads::reveal_download,

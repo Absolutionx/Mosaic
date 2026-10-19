@@ -4,6 +4,13 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.1",
+    items: [
+      { kind: "fixed", top: true, title: "Clips and VODs save watch streaks", desc: "Watching a clip or past broadcast in Mosaic now counts with Twitch, like it does on twitch.tv, so it can save a watch streak that's about to break. Before, only live streams counted." },
+      { kind: "fixed", title: "Watch streak notifications", desc: "Clicking a \"your watch streak broke\" notification now plays a clip or past broadcast from the stream you missed, right in Mosaic and picked the way twitch.tv picks it, instead of opening the streamer's offline channel. Clips and channel links in other notifications open in Mosaic too." },
+    ],
+  },
+  {
     version: "1.8.0",
     items: [
       { kind: "new", top: true, title: "While you lurked", desc: "Come back from lurk mode and a slim bar at the top of the video sums up what happened: how long you were away, the points you earned, bonus chests and drop progress. Click it for the details and a way into the Ledger." },

@@ -115,6 +115,8 @@ const APP_COMMANDS: &[&str] = &[
     "heartbeat_status",
     "heartbeat_watching",
     "heartbeat_repair",
+    "heartbeat_replay",
+    "get_streak_rescue",
     "start_vod_download",
     "cancel_vod_download",
     "reveal_download",

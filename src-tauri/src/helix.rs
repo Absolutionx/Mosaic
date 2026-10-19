@@ -2310,6 +2310,137 @@ pub async fn get_watch_streak(
     }))
 }
 
+// a broken watch streak's rescue: what twitch.tv's /save-streak/<channel> page (the "watch a clip, VOD or stream in
+// the next 24h" notification) plays, picked the same way (SaveStreakChannelPage, checked 10-19-26). While the
+// streak is suspended: a clip from the last day of a missed stream (featured first, then the channel's own), else
+// a past broadcast of a missed stream at least 5 minutes long. Twitch tries the channel's stories first; Mosaic
+// can't play those, so it goes straight to clips. Watching it in Mosaic counts (replay-watch.js).
+// { state: "suspended" | "recovered" | "expired", clip: { slug, url, title, channel, creator, views } | null,
+//   vod: { id, length, title } | null }, or null without a Twitch connection
+#[tauri::command]
+pub async fn get_streak_rescue(
+    channel_login: String,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, String> {
+    let login = channel_login.trim().to_lowercase();
+    if login.is_empty() || login.len() > 25 || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("invalid channel".to_string());
+    }
+    let token = match crate::twitch_device_auth::get_device_token(&app).await {
+        Some(t) => t,
+        None => return Ok(serde_json::Value::Null),
+    };
+    let channel_id = resolve_broadcaster_id(&login, &token).await?;
+    const HASH: &str = "0b1471876d7647993731b9e3c6a13bf304c67fb31d07f06a945d42286ee377c4";
+    let resp = crate::http::client()
+        .post("https://gql.twitch.tv/gql")
+        .headers(watch_streak_headers(&token))
+        .json(&serde_json::json!({
+            "operationName": "RewardList",
+            "variables": { "channelID": channel_id, "shouldIncludeAllSuspendedStreaks": true },
+            "extensions": { "persistedQuery": { "version": 1, "sha256Hash": HASH } }
+        }))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    if let Some(msg) = json["errors"][0]["message"].as_str() {
+        return Err(format!("RewardList: {msg}"));
+    }
+    let milestone = json.pointer("/data/channel/self/watchStreakMilestone").cloned().unwrap_or_default();
+    let missed = streak_broadcasts(&milestone, "SUSPENDED");
+    if milestone["state"].as_str() != Some("SUSPENDED") || missed.is_empty() {
+        let state = if !streak_broadcasts(&milestone, "RECOVERED").is_empty() { "recovered" } else { "expired" };
+        return Ok(serde_json::json!({ "state": state, "clip": null, "vod": null }));
+    }
+    const QUERY: &str = "query MosaicStreakRescue($login: String!) { user(login: $login) { \
+        clips(first: 20, criteria: { filter: LAST_DAY }) { edges { node { slug url title viewCount isFeatured \
+        broadcastIdentifier { id } broadcaster { id displayName } curator { displayName } } } } \
+        videos(first: 10, type: ARCHIVE, sort: TIME) { edges { node { id title lengthSeconds broadcastIdentifier { id } } } } } }";
+    let data = device_gql(&app, "MosaicStreakRescue", QUERY, serde_json::json!({ "login": login }))
+        .await?
+        .unwrap_or_default();
+    let user = data.pointer("/data/user").cloned().unwrap_or_default();
+    Ok(pick_streak_rescue(&missed, &channel_id, &user))
+}
+
+// the broadcast ids of a streak's missed streams in this state (SUSPENDED = still to save)
+fn streak_broadcasts(milestone: &serde_json::Value, state: &str) -> Vec<String> {
+    milestone["missedStreams"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|m| m["state"].as_str() == Some(state))
+                .flat_map(|m| m["broadcastIdentifiers"].as_array().cloned().unwrap_or_default())
+                .filter_map(|b| b["id"].as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn pick_streak_rescue(missed: &[String], channel_id: &str, user: &serde_json::Value) -> serde_json::Value {
+    let is_missed = |n: &serde_json::Value| n["broadcastIdentifier"]["id"].as_str().map_or(false, |id| missed.iter().any(|m| m == id));
+    let mut clips: Vec<&serde_json::Value> = user["clips"]["edges"]
+        .as_array()
+        .map(|e| e.iter().map(|x| &x["node"]).filter(|n| n["slug"].is_string() && is_missed(n)).collect())
+        .unwrap_or_default();
+    // Twitch's order: featured clips first, then the channel's own (sort_by is stable, like Twitch's)
+    clips.sort_by_key(|n| {
+        let featured = n["isFeatured"].as_bool().unwrap_or(false);
+        let own = n["broadcaster"]["id"].as_str() == Some(channel_id);
+        (!featured, !own)
+    });
+    let clip = clips.first().map(|n| {
+        serde_json::json!({
+            "slug": n["slug"], "url": n["url"], "title": n["title"], "views": n["viewCount"],
+            "channel": n["broadcaster"]["displayName"], "creator": n["curator"]["displayName"],
+        })
+    });
+    let vod = if clip.is_some() {
+        None
+    } else {
+        user["videos"]["edges"].as_array().and_then(|e| {
+            e.iter()
+                .map(|x| &x["node"])
+                .find(|n| is_missed(n) && n["lengthSeconds"].as_i64().unwrap_or(0) >= 301)
+                .map(|n| serde_json::json!({ "id": n["id"], "length": n["lengthSeconds"], "title": n["title"] }))
+        })
+    };
+    serde_json::json!({ "state": "suspended", "clip": clip, "vod": vod })
+}
+
+#[cfg(test)]
+mod streak_rescue_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn picks_like_twitch() {
+        let milestone = json!({ "state": "SUSPENDED", "missedStreams": [
+            { "state": "SUSPENDED", "broadcastIdentifiers": [{ "id": "b1" }] },
+            { "state": "RECOVERED", "broadcastIdentifiers": [{ "id": "b0" }] } ] });
+        let missed = streak_broadcasts(&milestone, "SUSPENDED");
+        assert_eq!(missed, vec!["b1".to_string()]);
+        let user = json!({
+            "clips": { "edges": [
+                { "node": { "slug": "other", "isFeatured": false, "broadcastIdentifier": { "id": "b9" }, "broadcaster": { "id": "1" } } },
+                { "node": { "slug": "raider", "isFeatured": false, "broadcastIdentifier": { "id": "b1" }, "broadcaster": { "id": "2" } } },
+                { "node": { "slug": "own", "isFeatured": false, "broadcastIdentifier": { "id": "b1" }, "broadcaster": { "id": "1" } } } ] },
+            "videos": { "edges": [ { "node": { "id": "v1", "lengthSeconds": 9000, "broadcastIdentifier": { "id": "b1" } } } ] } });
+        let r = pick_streak_rescue(&missed, "1", &user);
+        assert_eq!(r["clip"]["slug"], "own");
+        assert!(r["vod"].is_null());
+        let no_clips = json!({ "clips": { "edges": [] }, "videos": { "edges": [
+            { "node": { "id": "short", "lengthSeconds": 120, "broadcastIdentifier": { "id": "b1" } } },
+            { "node": { "id": "v2", "lengthSeconds": 4000, "broadcastIdentifier": { "id": "b1" } } } ] } });
+        let r = pick_streak_rescue(&missed, "1", &no_clips);
+        assert!(r["clip"].is_null());
+        assert_eq!(r["vod"]["id"], "v2");
+        let r = pick_streak_rescue(&missed, "1", &json!({}));
+        assert!(r["clip"].is_null() && r["vod"].is_null());
+    }
+}
+
 // share the streak milestone to chat -> grants the channel-points bonus
 #[tauri::command]
 pub async fn share_watch_streak(
@@ -3211,6 +3342,7 @@ fn notifications_list(json: &serde_json::Value) -> serde_json::Value {
                         "thumbnail": s(n.get("thumbnailURL")),
                         "type": s(n.get("type")),
                         "category": s(n.get("category")),
+                        "destination": s(n.get("destinationType")),
                         "actions": actions,
                         "creator": creator,
                         "target": target,

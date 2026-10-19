@@ -116,6 +116,8 @@ permissions = [
   "allow-heartbeat-status",
   "allow-heartbeat-watching",
   "allow-heartbeat-repair",
+  "allow-heartbeat-replay",
+  "allow-get-streak-rescue",
   "allow-start-vod-download",
   "allow-cancel-vod-download",
   "allow-reveal-download",

@@ -37,6 +37,7 @@ import { mutedSkipMode } from "./muted-skip.js";
 import { TrackId } from "./track-id.js";
 import { startVodHeatmap } from "./vod-heatmap.js";
 import { initTooltips } from "./tooltips.js";
+import { watchReplay } from "./replay-watch.js";
 
 // themed tooltips app-wide (replaces the OS-drawn `title` tooltips, see tooltips.js)
 initTooltips();
@@ -1948,6 +1949,9 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
     setStatus(`Playing VOD ${videoId}`);
     videoPlaceholder.style.display = "none";
     playbackControls.start(`vod:${videoId}`, m3u8Url, session.currentQuality, vodTotalSeconds, startPositionSecs);
+    // report watching it to Twitch like its own VOD player does (replay-watch.js): it counts toward a watch streak
+    watchReplay("vod", String(videoId), playbackControls.videoEl,
+      () => session.playing && session.intendedChannel === `vod:${videoId}` && playbackControls.currentChannel === `vod:${videoId}`);
     resolvePipVodUrl(videoId);
     updateBackToStreamBtn();
     // show the VOD's channel in the info bar (Follow / Subscribe / Videos), even when it was opened
