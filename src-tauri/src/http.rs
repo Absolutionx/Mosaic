@@ -14,6 +14,11 @@ pub fn client() -> reqwest::Client {
         .get_or_init(|| {
             reqwest::Client::builder()
                 .pool_idle_timeout(std::time::Duration::from_secs(90))
+                // a request that never answers (a half-dead connection after sleep, a stalled server) would
+                // otherwise wait forever, and whatever awaits it with it: the points check, chat commands,
+                // EventSub setup. a call that needs longer (the dependency download) sets its own .timeout()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new())
         })

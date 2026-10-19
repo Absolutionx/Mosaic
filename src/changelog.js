@@ -4,6 +4,28 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.0",
+    items: [
+      { kind: "new", top: true, title: "While you lurked", desc: "Come back from lurk mode and a slim bar at the top of the video sums up what happened: how long you were away, the points you earned, bonus chests and drop progress. Click it for the details and a way into the Ledger." },
+      { kind: "improved", title: "Lurking through raids", desc: "If the stream raids while you're lurking, the new channel keeps playing as audio only too. A raid or drops autopilot question that comes up while you're away now waits for you instead of disappearing after a minute." },
+      { kind: "improved", title: "Savings goal stays current", desc: "The goal in the Ledger now follows your balance as you earn, keeps up if the streamer changes the reward, and shows a Redeem button once you can afford it." },
+      { kind: "improved", title: "Tray icon", desc: "One click on Mosaic's tray icon now opens it. Right-click still shows the menu." },
+      { kind: "fixed", title: "Shared watch streaks", desc: "Sharing a watch streak showed up in the Ledger as points spent outside Mosaic. It's now recorded once, when the bonus arrives, and old entries are cleaned up." },
+      { kind: "fixed", title: "Watch time while lurking", desc: "Watch stats only counted about half the time you spent lurking." },
+      { kind: "fixed", title: "Ledger in MultiView", desc: "Points earned by watching in MultiView were listed as extra points instead of watching." },
+      { kind: "fixed", title: "Calmer Ledger", desc: "The Ledger no longer jumps back to the top or closes the reward picker when new points come in. \"Earned while Mosaic was closed\" now says \"while you were away\", since you may just have been on another channel." },
+      { kind: "improved", title: "Mentions while lurking", desc: "Chat pauses while you lurk, but a message that mentions you (Highlight my name) still shows and still chimes." },
+      { kind: "fixed", title: "Paused stays paused", desc: "Minimizing a stream you'd paused, with lurk mode on, no longer starts it playing again as audio." },
+      { kind: "fixed", title: "Ledger days", desc: "The Ledger's days stay right through daylight saving changes (the next is November 1), and watching past midnight counts toward the new day." },
+      { kind: "fixed", title: "Lighter in the background", desc: "Preload favorites pauses while you lurk, and the ambient glow and Home's feed now rest while Mosaic is minimized, not only when it's in the tray." },
+      { kind: "fixed", title: "MultiView layout", desc: "After closing and reopening MultiView, its tiles now resize with the window again." },
+      { kind: "fixed", title: "Keyboard shortcuts", desc: "T, F and M no longer fire along with Ctrl or Alt shortcuts or while a menu has focus. In MultiView, T and Escape now only affect MultiView, not the player behind it." },
+      { kind: "fixed", title: "Readable names everywhere", desc: "Dark name colors are now brightened in pinned messages, Mod Chat and reply threads too, like they already were in chat, and Neutral username colors covers them as well." },
+      { kind: "fixed", title: "Quiet hours", desc: "Quiet hours now also silences the chat mention chime." },
+      { kind: "fixed", title: "No more endless waits", desc: "Any Twitch or Kick request that gets no answer now gives up after 30 seconds, so the points check, chat commands and live alerts can't get stuck, for example after the computer wakes from sleep." },
+    ],
+  },
+  {
     version: "1.7.0",
     items: [
       { kind: "new", top: true, title: "Drops autopilot", desc: "When the stream you're earning drops on ends, Mosaic finds another live stream of that game with the same campaign and offers to switch. Set it to switch automatically after a 10-second countdown, or turn it off, in Settings > Twitch account." },

@@ -287,6 +287,8 @@ export function applyAppearance() {
 
 // ---- notifications (Settings > Notifications) ----
 // per-kind master switches + quiet hours; every desktop notification Mosaic sends goes through this
+// Settings > Notifications > Quiet hours: also silences the chat mention chime (chat.js)
+export function quietNow(now = new Date()) { return !!getSetting("quietHours") && inQuietHours(now); }
 function inQuietHours(now = new Date()) {
   const start = Number(getSetting("quietStart")), end = Number(getSetting("quietEnd"));
   const h = now.getHours();

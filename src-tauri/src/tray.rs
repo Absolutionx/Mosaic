@@ -23,9 +23,23 @@ pub fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // left double-click restores the window (single click opens the menu)
-            if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
-                restore_window(tray.app_handle());
+            // a left click opens the window, like most tray apps (a double-click still does too); the menu is on
+            // right-click. a double-click arrives as a click first, so once the window is back on screen the
+            // second one only brings it forward (restoring again would re-place a window that's already showing)
+            use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+            match event {
+                TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+                | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => {
+                    let app = tray.app_handle();
+                    if let Some(w) = app.get_webview_window("main") {
+                        if w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false) {
+                            let _ = w.set_focus();
+                            return;
+                        }
+                    }
+                    restore_window(app);
+                }
+                _ => {}
             }
         })
         .build(app)?;

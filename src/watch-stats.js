@@ -6,7 +6,9 @@ import { fmtDateMDY } from "./format.js";
 
 const KEY = "watchStats";
 const KEEP_DAYS = 400;
-const MAX_GAP_S = 30; // a tick never credits more than this (sleep / suspended timers can't inflate stats)
+// a tick never credits more than this (sleep / suspended timers can't inflate stats). above a minute because a
+// page that isn't on screen (lurk mode, lurk-mode.js) only gets its timers about once a minute
+const MAX_GAP_S = 75;
 
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 

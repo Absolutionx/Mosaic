@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { openDropsHub, fmtLeft, fmtEnds, boxArt } from "./drops-hub.js";
-import { noteKnown } from "./points-ledger.js";
+import { noteKnown, expectLater } from "./points-ledger.js";
 import { renderLedger } from "./ledger-view.js";
 import { renderWatchStats } from "./watch-stats.js";
 
@@ -191,7 +191,8 @@ export async function openRewardsModal(channelLogin, channelId, onNeedDeviceLogi
         L = { login: channelLogin, points: v(p, null), rewards: (Array.isArray(v(r, [])) ? v(r, []) : []).filter((x) => x.available), watching: v(w, null)?.playing ? v(w, null).login : null };
         lastLoaded = L;
       }
-      ledgerCleanup = renderLedger(body, { login: channelLogin, points: L.points, rewards: L.rewards, watching: L.watching });
+      ledgerCleanup = renderLedger(body, { login: channelLogin, points: L.points, rewards: L.rewards, watching: L.watching,
+        onRedeem: () => tabs.querySelector('.rw-tab[data-tab="rewards"]')?.click() });
     } else {
       await render(body, channelLogin, channelId);
     }
@@ -508,7 +509,9 @@ async function render(body, channelLogin, channelId, flash) {
       btn.textContent = "Sharing…";
       try {
         await invoke("share_watch_streak", { channelLogin, milestoneId: mid });
-        try { noteKnown(channelLogin, Number(btn.getAttribute("data-bonus")) || 0, "streak", "Shared watch streak"); } catch { /* ignore */ }
+        // Twitch adds the streak bonus a little after the share goes through, so the ledger records it when a balance
+        // check actually sees it (recording it right away read the not-yet-updated balance as 350 spent elsewhere)
+        try { expectLater(channelLogin, Number(btn.getAttribute("data-bonus")) || 0, "streak", "Shared watch streak"); } catch { /* ignore */ }
         await render(body, channelLogin, channelId);
       } catch (err) {
         btn.disabled = false;

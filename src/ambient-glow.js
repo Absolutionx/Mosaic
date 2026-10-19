@@ -10,6 +10,7 @@
 
 import { getSetting, onSettingChange } from "./settings.js";
 import { pictureBox } from "./chat-overlay.js";
+import { isAway } from "./lurk-mode.js";
 
 // the glow is made smooth IN THE CANVAS, so it doesn't depend on the CSS blur (which WebView2 didn't apply
 // together with the fade mask + scaling: the glow showed sharp streaks from the frame's top edge). the frame
@@ -62,6 +63,7 @@ export function initAmbientGlow(opts) {
   video.addEventListener("emptied", () => { ctx?.clearRect(0, 0, W, H); });
   new ResizeObserver(() => place()).observe(host);
   document.addEventListener("visibilitychange", apply);
+  document.addEventListener("mosaic:away", apply); // minimized: Windows doesn't mark the page hidden (lurk-mode.js)
   apply();
 }
 
@@ -76,7 +78,7 @@ function apply() {
   timer = null;
   if (!on) { ctx?.clearRect(0, 0, W, H); seeded = false; return; }
   requestAnimationFrame(place);
-  if (!document.hidden) timer = setInterval(draw, EVERY_MS);
+  if (!isAway()) timer = setInterval(draw, EVERY_MS);
 }
 
 // the canvas covers the column; record where the picture sits in it (in canvas pixels, for drawing) and as
@@ -108,7 +110,7 @@ function inOtherPage() {
 }
 
 export function draw() {
-  if (!ctx || !video || document.hidden || !glowEnabled()) return;
+  if (!ctx || !video || isAway() || !glowEnabled()) return;
   // only while the stream is in the player itself: not behind Home / Browse, nor in the mini player
   const inPlayer = isPlaying() && video.closest("#video-region") && video.getClientRects().length > 0 && !inOtherPage();
   if (!inPlayer) { canvas.classList.add("idle"); return; }

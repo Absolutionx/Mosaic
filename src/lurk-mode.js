@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getSetting, onSettingChange } from "./settings.js";
 import { session } from "./session.js";
+import { recapStart, recapStop } from "./lurk-recap.js";
 
 const MINIMIZE_DELAY_MS = 8000;
 
@@ -36,7 +37,8 @@ export function lurkEligible() {
   if (!ctx || getSetting("lurkMode") === "off") return false;
   const pc = ctx.playbackControls;
   const ch = String(session.intendedChannel || "");
-  return !!session.playing && !!ch && !ch.startsWith("vod:")
+  // and actually playing: switching quality restarts the stream, which would quietly un-pause one you'd paused
+  return !!session.playing && !!ch && !ch.startsWith("vod:") && !pc.videoEl?.paused
     && !ctx.multiview?.isOpen && !pc._nativePipRestore && !pc.docPipWindow;
 }
 
@@ -52,10 +54,13 @@ export function initLurkMode(c) {
       document.dispatchEvent(new CustomEvent("mosaic:away", { detail: { away: isAway() } }));
       sync();
     };
-    w.onResized(check);
+    // minimizing shrinks the window to nothing: only then (or on the way back) is it worth asking. a plain resize
+    // fires many times a second while you drag an edge
+    w.onResized(({ payload }) => { if (minimized || !payload || !(payload.width > 0 && payload.height > 0)) check(); });
     // a safety net: whenever the window has focus, it's on screen
     w.onFocusChanged(async ({ payload: focused }) => {
-      if (!focused) return;
+      // minimizing always takes focus away: a second way to notice it, whatever size the resize reported
+      if (!focused) { check(); return; }
       await check();
       sync();
       if (pageHidden && !minimized && !state) { pageHidden = false; invoke("set_page_visible", { visible: true }).catch(() => {}); }
@@ -104,6 +109,7 @@ function start() {
     state.muted = true;
   }
   try { ctx.chat?.setLurking?.(true); } catch { /* ignore */ }
+  try { recapStart(session.intendedChannel); } catch { /* ignore */ } // "while you lurked" (lurk-recap.js)
   // minimized: stop drawing the page entirely (the tray already does this by itself)
   if (minimized && !document.hidden) {
     pageHidden = true;
@@ -128,6 +134,7 @@ function stop() {
     pc.selectQuality(s.prevQuality || "auto");
   }
   try { ctx.chat?.setLurking?.(false, Date.now() - s.since); } catch { /* ignore */ }
+  recapStop({ audioOnly: s.switched, muted: s.muted, playing: !!session.playing, channel: () => session.intendedChannel }).catch(() => {});
   console.info(`[lurk] off after ${Math.round((Date.now() - s.since) / 1000)}s`);
   document.dispatchEvent(new CustomEvent("mosaic:lurk", { detail: { on: false } }));
 }

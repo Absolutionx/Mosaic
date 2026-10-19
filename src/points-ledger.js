@@ -3,9 +3,10 @@
 //   - chat.js's once-a-minute balance check (channel_points_tick) calls recordTick(). The change since the last
 //     check is split into what watching plausibly earned and anything above that ("extra": raids, streaks, ...)
 //   - a bonus chest Mosaic claimed is exact: the tick reports the balance just before the claim
-//   - things Mosaic itself does (redeeming, prediction bets, sharing a streak) are recorded right away by name
-//     with noteKnown(), which also moves the remembered balance so the next check doesn't count them twice
-//   - a prediction payout lands on Twitch's side a little later, so expectLater() holds it until a check sees it
+//   - things Mosaic itself spends (redeeming, prediction bets) are recorded right away by name with noteKnown(),
+//     which also moves the remembered balance so the next check doesn't count them twice
+//   - what Twitch pays out a little later (a prediction win or refund, a shared watch streak's bonus) waits in
+//     expectLater() until a balance check sees it arrive
 //   - a change Mosaic can't explain is still recorded, labeled for what it is (spent outside Mosaic, or while
 //     Mosaic was closed), so the totals always match your real balance
 // localStorage "pointsLedger" (part of Settings > App > Back up). events older than KEEP_DAYS are dropped.
@@ -30,9 +31,27 @@ const listeners = new Set();
 function load() {
   if (data) return data;
   try { data = JSON.parse(localStorage.getItem(KEY) || "null"); } catch { data = null; }
-  if (!data || typeof data !== "object" || !Array.isArray(data.ev)) data = { v: 1, ch: {}, ev: [], goals: {}, pending: {} };
+  if (!data || typeof data !== "object" || !Array.isArray(data.ev)) data = { v: 2, ch: {}, ev: [], goals: {}, pending: {} };
   data.ch ||= {}; data.goals ||= {}; data.pending ||= {};
+  if ((data.v || 1) < 2) repairStreakPairs(data);
   return data;
+}
+
+// 1.7.0 recorded a shared watch streak's bonus the moment you shared, before Twitch had added it, so the next
+// balance check booked the same amount as "Spent outside Mosaic". the pair cancels out; take both lines away
+function repairStreakPairs(d) {
+  const drop = new Set();
+  for (let i = 0; i < d.ev.length; i++) {
+    const s = d.ev[i];
+    if (s.k !== "streak" || drop.has(i)) continue;
+    for (let j = i + 1; j < d.ev.length && d.ev[j].t - s.t <= 10 * 60_000; j++) {
+      const x = d.ev[j];
+      if (x.c === s.c && x.k === "spendx" && x.a === -s.a && !drop.has(j)) { drop.add(i); drop.add(j); break; }
+    }
+  }
+  if (drop.size) d.ev = d.ev.filter((_, i) => !drop.has(i));
+  d.v = 2;
+  try { localStorage.setItem(KEY, JSON.stringify(d)); } catch { /* ignore */ }
 }
 
 function save() {
@@ -50,7 +69,13 @@ export function onLedgerChange(fn) { listeners.add(fn); return () => listeners.d
 // another window (or a restored backup) changed it
 window.addEventListener("storage", (e) => { if (e.key === KEY) { data = null; for (const fn of listeners) { try { fn(); } catch {} } } });
 
+// every entry as it's recorded: (login, kind, amount). lurk-recap.js tallies what came in while you lurked this way,
+// since a watch session that started before you left keeps growing as one entry
+const addListeners = new Set();
+export function onLedgerAdd(fn) { addListeners.add(fn); return () => addListeners.delete(fn); }
+
 function push(login, kind, amount, extra = {}) {
+  for (const fn of addListeners) { try { fn(login, kind, amount); } catch { /* ignore */ } }
   const d = load();
   const now = extra.t || Date.now();
   // a watch session or a run of chests keeps growing while you watch, instead of one line per minute
@@ -58,7 +83,9 @@ function push(login, kind, amount, extra = {}) {
     for (let i = d.ev.length - 1; i >= 0 && i >= d.ev.length - 40; i--) {
       const e = d.ev[i];
       if (e.c !== login || e.k !== kind) continue;
-      if (now - (e.e || e.t) <= JOIN_MS[kind]) {
+      // ...and only on the same calendar day: a session that runs past midnight carries on as a new entry, so
+      // what you earn after midnight counts for today rather than the day it started
+      if (now - (e.e || e.t) <= JOIN_MS[kind] && new Date(e.t).toDateString() === new Date(now).toDateString()) {
         e.a += amount; e.e = now;
         if (kind === "watch") e.m = (e.m || 0) + (extra.m || 0);
         if (kind === "chest") e.n = (e.n || 1) + 1;

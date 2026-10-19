@@ -1,4 +1,4 @@
-import { getSetting, onSettingChange, playChime } from "./settings.js";
+import { getSetting, onSettingChange, playChime, quietNow } from "./settings.js";
 import { HypeTrainView, parseHype } from "./hype-train.js";
 // Twitch chat: connection lifecycle and the message render pipeline. the IRC WebSocket lives in
 // Rust (chat.rs), WebView2's Tracking Prevention silently killed it in this webview. this file is
@@ -1663,7 +1663,7 @@ export class TwitchChat {
     if (m.id === this._openThreadRoot) line.classList.add("thread-root");
     const user = document.createElement("span");
     user.className = "thread-line-user";
-    user.style.color = m.color || "#9147ff";
+    user.style.color = this.normalizeColor(m.color); // readable on the chat background, like chat lines
     user.textContent = m.user;
     line.appendChild(user);
     line.appendChild(document.createTextNode(": "));
@@ -1893,7 +1893,8 @@ export class TwitchChat {
     const userEl = el.querySelector(".pinned-user");
     const textEl = el.querySelector(".pinned-text");
     userEl.textContent = pin.sender_name || "";
-    if (pin.sender_color && /^#[0-9a-fA-F]{6}$/.test(pin.sender_color)) userEl.style.color = pin.sender_color;
+    // lightened (or on light themes darkened) until readable, like names in chat: a dark red name was nearly invisible
+    if (pin.sender_color && /^#[0-9a-fA-F]{6}$/.test(pin.sender_color)) userEl.style.color = this.normalizeColor(pin.sender_color);
     try {
       // Twitch emotes by id from the pin's parts (incl. sub emotes from other channels); 7TV/BTTV/FFZ by name
       const emotesTag = this.pinnedEmotesTag(pin.text, pin.fragments);
@@ -2003,9 +2004,15 @@ export class TwitchChat {
       try {
         const r = await invoke("channel_points_tick", { channelLogin: login, claim: !!getSetting("autoClaimBonus") });
         setBal(r && r.balance != null ? fmtCount(r.balance) : "");
-        // the points ledger (points-ledger.js) learns from every check
-        const cur = String(session.intendedChannel || "").toLowerCase();
-        try { recordTick(login, r, !!session.playing && cur === String(login).toLowerCase()); } catch (e) { console.warn("[ledger]", e); }
+        // the points ledger (points-ledger.js) learns from every check. "watching" means what Mosaic's watch
+        // heartbeat is crediting (watch_heartbeat.rs), which is where points come from: the main player, or the
+        // MultiView tile it follows. without an answer, fall back to the main player
+        const me = String(login).toLowerCase();
+        const hb = await invoke("heartbeat_watching").catch(() => null);
+        const playing = hb && hb.login
+          ? !!hb.playing && String(hb.login).toLowerCase() === me
+          : !!session.playing && String(session.intendedChannel || "").toLowerCase() === me;
+        try { recordTick(login, r, playing); } catch (e) { console.warn("[ledger]", e); }
         if (r && r.claimed) this._flashBonusClaimed();
       } catch { setBal(""); }
     };
@@ -2050,8 +2057,12 @@ export class TwitchChat {
                 replyParentUser, replyParentBody, msgId, userId, isAction = false,
                 emotesTag = null, isFirstMsg = false, isHighlighted = false, replyParentMsgId = null,
                 replyThreadParentMsgId = null) {
-    // lurk mode (lurk-mode.js): nobody's looking, so don't build the lines at all
-    if (this._lurking) { this._lurkSkipped = (this._lurkSkipped || 0) + 1; return; }
+    // lurk mode (lurk-mode.js): nobody's looking, so don't build the lines at all, except one that mentions you
+    // (Settings > Chat > Highlight my name): that one still shows and still chimes, and is there when you're back
+    if (this._lurking && !(getSetting("highlightMentions") && this._mentionsMe(message))) {
+      this._lurkSkipped = (this._lurkSkipped || 0) + 1;
+      return;
+    }
     // words/phrases hide the whole message (see reloadChatFilter / the Chat Filter modal)
     if (this._shouldFilterMessage(username, message, emotesTag)) return;
 
@@ -2084,7 +2095,7 @@ export class TwitchChat {
     // before initialization") and was never shown at all
     if (!isOwnMsg && getSetting("highlightMentions") && this._mentionsMe(message)) {
       line.classList.add("chat-mention");
-      if (getSetting("highlightSound") && !this._vodReplayStop) playChime();
+      if (getSetting("highlightSound") && !this._vodReplayStop && !quietNow()) playChime(); // quiet hours: no chime
     }
     // synthetic local ids (our own un-echoed messages) go in the store for threading but must not be
     // exposed as dataset.msgId — they're not real Twitch ids, so Reply/Delete against them would fail

@@ -134,7 +134,7 @@ const SECTIONS = [
     { kind: "range", id: "notifyVolume", title: "Sound volume", desc: "How loud the chime is, for notifications and the chat highlight sound.",
       min: 0, max: 200, step: 5, unit: "%", preview: () => playChime({ preview: true }) },
     { kind: "group", title: "Quiet hours" },
-    { kind: "toggle", id: "quietHours", title: "Quiet hours", desc: "No notifications between the times below." },
+    { kind: "toggle", id: "quietHours", title: "Quiet hours", desc: "No notifications or chat mention chimes between the times below." },
     { kind: "select", id: "quietStart", title: "From", desc: "", options: HOUR_OPTIONS },
     { kind: "select", id: "quietEnd", title: "Until", desc: "", options: HOUR_OPTIONS },
   ]},
@@ -648,7 +648,9 @@ function fillLooks(list) {
     cancel.type = "button";
     const done = () => form.replaceWith(add);
     const go = () => {
-      try { const n = saveLook(input.value); showToast(`Saved "${n}".`); } catch (e) { showToast(e.message, true); return; }
+      // the same name replaces that look: say so, so it's not a surprise
+      const replacing = savedLooks().some((l) => l.name.toLowerCase() === String(input.value).trim().toLowerCase());
+      try { const n = saveLook(input.value); showToast(replacing ? `Updated "${n}" to your current look.` : `Saved "${n}".`); } catch (e) { showToast(e.message, true); return; }
       fillLooks(list);
     };
     save.addEventListener("click", go);

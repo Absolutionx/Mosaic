@@ -5,10 +5,27 @@
 // After arriving, "You followed the raid from …" shows briefly on the new stream. The chat line alone gave
 // no real feedback: following switches channels, which clears chat the moment the line appears.
 
+import { isAway } from "./lurk-mode.js";
+
 const COUNTDOWN_MS = 5000;
 let bannerEl = null, timer = null, clearTimer = null;
 
 function host() { return document.getElementById("video-region") || document.body; }
+
+// a banner that asks you something clears itself after ms, but that minute only starts once you can see it:
+// while Mosaic is minimized or in the tray (lurk mode keeps a stream playing) the question waits for you
+function clearWhenSeen(el, ms) {
+  const arm = () => { if (bannerEl === el) clearTimer = setTimeout(hideRaidBanner, ms); };
+  if (!isAway()) { arm(); return; }
+  const back = () => {
+    if (isAway() && bannerEl === el) return;
+    document.removeEventListener("mosaic:away", back);
+    document.removeEventListener("visibilitychange", back);
+    arm();
+  };
+  document.addEventListener("mosaic:away", back);
+  document.addEventListener("visibilitychange", back);
+}
 
 export function hideRaidBanner() {
   clearTimeout(timer); clearTimeout(clearTimer);
@@ -62,7 +79,7 @@ export function showRaidBanner(opts) {
     };
     timer = setTimeout(tick, 1000);
   } else {
-    clearTimer = setTimeout(hideRaidBanner, mode === "ask" ? 60000 : 20000);
+    clearWhenSeen(el, mode === "ask" ? 60000 : 20000);
   }
 }
 
@@ -126,6 +143,6 @@ export function showDropsAutopilotBanner(opts) {
     };
     timer = setTimeout(tick, 1000);
   } else {
-    clearTimer = setTimeout(hideRaidBanner, toName ? 60000 : 15000);
+    clearWhenSeen(el, toName ? 60000 : 15000);
   }
 }

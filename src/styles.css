@@ -8811,7 +8811,10 @@ body.cz-picking .cz-ui, body.cz-picking .cz-ui * { cursor: default !important; }
 body.chat-zebra #chat-pane .chat-line:nth-child(even),
 body.chat-zebra .multiview-chat-body .chat-line:nth-child(even) { background-color: color-mix(in srgb, var(--m-text) 4%, transparent); }
 /* neutral username colors (overrides each user's inline color and 7TV paints) */
-body.chat-neutral-names .chat-line .chat-username {
+body.chat-neutral-names .chat-line .chat-username,
+body.chat-neutral-names .pinned-message .pinned-user,
+body.chat-neutral-names .modchat-user,
+body.chat-neutral-names .thread-line-user {
   color: var(--m-text, #e7ebf2) !important;
   background: none !important;
   -webkit-text-fill-color: currentColor !important;
@@ -10259,6 +10262,7 @@ body.theme-light .lg { --lg-watch: #2a78d6; --lg-chest: #eb6834; --lg-other: #1b
 .lg-goal-btns { display: flex; gap: 4px; flex: none; }
 .lg-link { background: none; border: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--m-muted); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .lg-link:hover { color: var(--m-text); background: var(--m-raised); }
+.lg-link-go { color: var(--m-accent-text, var(--m-accent)); }
 .lg-goal-pick { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto; margin: 0 0 6px; border: 1px solid var(--m-border-soft); border-radius: 10px; padding: 4px; flex: none; }
 .lg-goal-pick[hidden] { display: none; }
 .lg-pick-row { display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: center; background: none; border: 0; font: inherit; color: var(--m-text); text-align: left; padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; }
@@ -10309,3 +10313,45 @@ body.theme-light .lg { --lg-watch: #2a78d6; --lg-chest: #eb6834; --lg-other: #1b
 .ws-side .stats-top { gap: 2px; margin: 0 -4px; }
 .ws-side .stats-row { width: 100%; }
 @media (max-width: 860px) { .ws { grid-template-columns: minmax(0, 1fr); overflow: auto; } .ws-col { overflow: visible; } }
+
+/* ---- "While you lurked" (lurk-recap.js): minimized like a poll card, click for the full card ---- */
+.lurk-recap { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 6; width: min(600px, calc(100% - 32px)); box-sizing: border-box;
+  background: color-mix(in srgb, var(--m-surface) 94%, transparent); border: 1px solid var(--m-border); border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5); backdrop-filter: blur(8px); color: var(--m-text); overflow: hidden;
+  animation: raid-in .2s cubic-bezier(.2, .8, .2, 1); transition: opacity .2s ease; }
+.lurk-recap.min { width: auto; max-width: calc(100% - 32px); }
+.lurk-recap.leaving { opacity: 0; }
+.lr-head { display: flex; align-items: center; gap: 8px; padding: 7px 6px 7px 10px; cursor: pointer; outline: none; }
+.lr-head:focus-visible { box-shadow: inset 0 0 0 2px var(--m-accent); border-radius: 12px; }
+.lr-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--m-muted);
+  background: var(--m-raised); padding: 3px 8px 3px 6px; border-radius: 999px; flex: none; }
+.lr-sum { font-size: 12.5px; color: var(--m-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-variant-numeric: tabular-nums; }
+.lr-sum b { color: var(--m-text); font-weight: 700; }
+.lr-sum i { display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: var(--m-faint); margin: 0 7px; vertical-align: middle; }
+.lr-sp { flex: 1; min-width: 8px; }
+.lr-ib { width: 24px; height: 24px; border-radius: 7px; border: 0; background: none; color: var(--m-muted); display: grid; place-items: center; cursor: pointer; flex: none; padding: 0; }
+.lr-ib:hover { background: var(--m-raised); color: var(--m-text); }
+.lr-chev svg { transition: transform .15s ease; }
+.lurk-recap.min .lr-chev svg { transform: rotate(-90deg); }
+.lr-body { padding: 2px 12px 14px; }
+.lurk-recap.min .lr-body { display: none; }
+.lr-title { font-size: 14px; font-weight: 800; margin: 2px 0 10px; }
+.lr-title span { font-weight: 500; color: var(--m-muted); font-size: 12.5px; }
+.lr-tiles { display: grid; gap: 8px; }
+.lr-tile { background: var(--m-bg); border: 1px solid var(--m-border-soft); border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.lr-big { font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.lr-big .u { font-size: 11.5px; font-weight: 700; color: var(--m-muted); }
+.lr-lbl { font-size: 11.5px; color: var(--m-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lr-meter { height: 4px; border-radius: 2px; background: var(--m-raised); margin-top: 6px; overflow: hidden; position: relative; }
+.lr-meter span { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.lr-m-watch { background: #3987e5; } .lr-m-chest { background: #d95926; } .lr-m-other { background: #199e70; }
+body.theme-light .lr-m-watch { background: #2a78d6; } body.theme-light .lr-m-chest { background: #eb6834; } body.theme-light .lr-m-other { background: #1baf7a; }
+.lr-m-was { background: var(--m-faint); } .lr-m-accent { background: var(--m-accent); }
+.lr-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.lr-foot .note { font-size: 11.5px; color: var(--m-faint); flex: 1; min-width: 0; }
+.lr-btn { font: inherit; font-size: 12.5px; font-weight: 700; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--m-border); background: var(--m-raised); color: var(--m-text); cursor: pointer; }
+.lr-btn.primary { background: var(--m-raised); border-color: var(--m-border); color: var(--m-text); }
+.lr-btn.primary:hover { background: color-mix(in srgb, var(--m-text) 12%, var(--m-raised)); }
+.lr-bar { position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; }
+.lr-bar span { display: block; height: 100%; background: var(--m-muted); opacity: .6; border-radius: 2px; transform-origin: left; }
+@media (prefers-reduced-motion: reduce) { .lurk-recap { animation: none; } }

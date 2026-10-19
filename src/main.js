@@ -65,6 +65,7 @@ import { checkStreamDeps } from "./deps-banner.js";
 import { checkForUpdate } from "./update-banner.js";
 import { MultiView } from "./multiview.js";
 import { initLurkMode, lurkNow, lurkActive, isAway } from "./lurk-mode.js";
+import { configureLurkRecap, hideLurkRecap } from "./lurk-recap.js";
 import { updateDropsBanner, hideDropsBanner, resetDropsDismissal, configureDropsBanner } from "./drops-banner.js";
 import { openHiddenChannelsModal } from "./hidden-channels.js";
 import { initMiniPlayer, activateMiniPlayer, deactivateMiniPlayer, resetMiniPlayerDismissal } from "./mini-player.js";
@@ -492,6 +493,7 @@ function openPointsPanel(tab) {
   });
 }
 document.getElementById("rewards-btn")?.addEventListener("click", () => openPointsPanel("rewards"));
+configureLurkRecap({ openLedger: () => openPointsPanel("ledger") });
 // Mod action log (fills in only on channels you moderate; see mod-log.js + channel.moderate in eventsub.rs)
 initModLog(chat);
 document.getElementById("modlog-btn")?.addEventListener("click", () => openModLogModal());
@@ -830,6 +832,16 @@ function paletteActions() {
   add("Drops", "Navigation", () => openDropsHub(), { nav: true });
   add("VOD bookmarks", "Navigation", () => openBookmarksList(), { nav: true });
   add("Check for updates", "App", () => checkForUpdatesNow().then((m) => setStatus(m)).catch(() => {}));
+  // dev build only (npm run tauri dev): try raids and lurk mode without waiting for a streamer to raid
+  if (import.meta.env.DEV && playing) {
+    add("Dev: simulate a raid in 1 minute", "Dev", () => {
+      const cur = String(session.intendedChannel || "").toLowerCase();
+      const to = (sidebar.followed || []).find((c) => c.live && String(c.login).toLowerCase() !== cur);
+      if (!to) { setStatus("Dev: no other live followed channel to raid to."); return; }
+      setStatus(`Dev: ${cur} will raid ${to.name || to.login} in 1 minute.`);
+      setTimeout(() => handleRaid({ to_login: to.login, to_name: to.name || to.login, viewers: 1234 }), 60_000);
+    });
+  }
   add("What's new", "App", () => openWhatsNew());
   return out;
 }
@@ -1239,7 +1251,8 @@ fullscreenBtn.addEventListener("click", toggleFullscreen);
 // dropped you out of theater mode and fullscreen. The check has to happen in the capture phase: by the time
 // the shortcut handler below runs, the panel's own handler has already closed it.
 const ESC_OWNERS = ".chat-filter-overlay, .hidden-channels-overlay, .modmenu-overlay, .hide-channel-menu, .chat-context-menu, " +
-  ".mod-timeout-menu, .badge-picker, .mv-quality-menu, .mvl-sound-menu, .emote-picker-menu, .emote-autocomplete, #chat-settings-menu, #track-id-panel";
+  ".mod-timeout-menu, .badge-picker, .mv-quality-menu, .mvl-sound-menu, .emote-picker-menu, .emote-autocomplete, #chat-settings-menu, #track-id-panel, " +
+  "#multiview.multiview-open";
 let escapeWasForAPanel = false;
 window.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
@@ -1250,6 +1263,9 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (escapeWasForAPanel) { escapeWasForAPanel = false; return; }
+    // MultiView backs out one step per Escape on its own (channel list, its theater, then closing it); exiting
+    // the app's fullscreen / theater too made the first Escape do two things at once
+    if (document.body.classList.contains("multiview-active")) return;
     // both checked independently (not else-if), theater mode and fullscreen are unrelated states that can be active together, so one Escape exits both at once (like every video app)
     if (appEl.classList.contains("theater-mode")) {
       setTheaterMode(false);
@@ -1270,17 +1286,24 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   // "T" toggles theater mode (the official shortcut), only when focus isn't in a text field so typing "t" doesn't trigger it
+  // T / F / M are plain keys: with Ctrl, Alt or the Windows key held they're someone else's shortcut
+  const plainKey = !e.ctrlKey && !e.altKey && !e.metaKey;
+  const typing = () => {
+    const a = document.activeElement;
+    return a?.tagName === "INPUT" || a?.tagName === "TEXTAREA" || a?.tagName === "SELECT" || !!a?.isContentEditable;
+  };
   if (e.key.toLowerCase() === "t") {
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (!plainKey || typing()) return;
+    // MultiView has its own T (multiview.js: show only the focused stream). toggling the app's theater mode as well
+    // collapsed the sidebar behind MultiView and left it that way after closing
+    if (document.body.classList.contains("multiview-active")) return;
     toggleTheaterModeAndResync();
     return;
   }
 
   // "F" toggles fullscreen, matching the official site's shortcut, same text-field guard as "T"
   if (e.key.toLowerCase() === "f") {
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (!plainKey || typing()) return;
     toggleFullscreen();
     return;
   }
@@ -1293,8 +1316,7 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key.toLowerCase() === "m") {
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (!plainKey || typing()) return;
     playbackControls.toggleMute();
   }
 
@@ -1615,6 +1637,7 @@ function maybeSaveVodProgress() {
 async function watchChannel(channel, stream) {
   if (!channel) return;
   hideRaidBanner(); // a raid banner belongs to the stream you were on
+  hideLurkRecap(); // so does "while you lurked"
   session.intendedChannel = channel;
   rememberRecentChannel(channel, stream);
   if (session.kickFailover) {
@@ -1714,7 +1737,9 @@ async function watchChannel(channel, stream) {
 
   // theater mode: collapse the channels sidebar so the video gets the extra width, same as clicking "Theater Mode" on the official site
   if (getSetting("autoTheater")) setTheaterMode(true); // Settings > Player > Auto theater mode
-  session.currentQuality = getSetting("defaultQuality"); // Settings > Player > Default quality
+  // Settings > Player > Default quality; still lurking (a raid or drops autopilot moved you while you were away),
+  // the new channel starts as audio only too, and lurk-mode.js brings your quality back when you return
+  session.currentQuality = lurkActive() ? "audio_only" : getSetting("defaultQuality");
 
   try {
     // don't spawn a streamlink pipeline for a channel already clicked away from. start_stream takes ~1-2s, so without this guard rapid switching runs every intermediate channel's pipeline in sequence and the player crawls. the Helix lookup is already guarded; this covers the expensive step
@@ -1840,8 +1865,10 @@ async function watchChannel(channel, stream) {
 // fired by Rust (eventsub.rs channel.raid) when the watched channel raids out. auto-follows the raid like Twitch's clients rather than freezing on the last frame. guarded on playing + channel match against a stale event
 // Settings > Player > Follow raids: auto (5s countdown banner), ask, or off. the banner is the real feedback:
 // following switches channels, which clears chat, so a chat line alone vanished the moment it appeared
-listen("eventsub-raid", (event) => {
-  const { to_login, to_name, viewers } = event.payload;
+listen("eventsub-raid", (event) => handleRaid(event.payload));
+// the channel you're watching raided out (EventSub). also the dev-only "simulate a raid" command below
+function handleRaid(payload) {
+  const { to_login, to_name, viewers } = payload || {};
   if (!session.playing || !to_login) return;
   session.lastRaidAt = Date.now(); // drops autopilot stays out of the way of a raid
   const watching = (playbackControls.currentChannel || "").toLowerCase();
@@ -1860,12 +1887,13 @@ listen("eventsub-raid", (event) => {
       showRaidArrived(fromName);
     },
   });
-});
+}
 
 // play a Twitch VOD via HLS.js pointed at the Twitch CDN M3U8 (from streamlink --stream-url). replaces the old relay approach, instant seeking, correct buffering, no timestamp overflow
 async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", startPositionSecs) {
   if (!videoId) return;
   hideRaidBanner(); // a raid banner belongs to the stream you were on
+  hideLurkRecap(); // so does "while you lurked"
 
   // startPositionSecs is undefined for a plain VOD-card click, only then do we consult saved progress. a chapter click or explicit resume always passes a number (including 0 for chapter 1), which wins outright over older saved progress
   if (startPositionSecs == null) {
@@ -1971,6 +1999,7 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
 // runs with kickVod:true so the Twitch-only side fetches don't fire. resume shares watchVod's store
 async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
   hideRaidBanner();
+  hideLurkRecap();
   if (!videoId) return;
 
   // same resume rules as watchVod: only a plain card click consults saved progress; an explicit number (even 0) always wins
@@ -2429,8 +2458,10 @@ initPreload({
   allFavorites: () => { try { return sidebar.getFavorites(); } catch { return []; } },
   lowLatency: () => !!session.lowLatency,
   // the macOS native-HLS path doesn't use the relay, so there's nothing to hand a preload to
-  paused: () => preloadPausedForTray || !!session.useNativeHlsForLive,
+  // nor while lurking (lurk-mode.js): background streams would undo what lurking saves
+  paused: () => preloadPausedForTray || lurkActive() || !!session.useNativeHlsForLive,
 });
+document.addEventListener("mosaic:lurk", (e) => syncPreload(e.detail?.on ? 0 : 3000));
 
 // Close-to-tray: push the saved preference to the backend at startup (default on), and stop playback
 // whenever the window is hidden to the tray so the app stays quiet and light while still receiving

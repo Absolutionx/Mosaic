@@ -10,6 +10,7 @@ import { streamHasDropsEnabled } from "./drops.js";
 import { filterHidden, isHidden, onHiddenChange, showHideChannelMenu } from "./hidden-channels.js";
 import { relativeDate } from "./format.js";
 import { attachLivePreview, attachVodPreview, vodPreviewStart } from "./live-preview.js";
+import { isAway } from "./lurk-mode.js";
 
 const REFRESH_INTERVAL_MS = 60_000;
 
@@ -82,15 +83,16 @@ export class HomeFeed {
           if (this._isShowing()) this.refresh(); else this._stale = true;
         }, REFRESH_INTERVAL_MS);
         // brought back from the tray while Home is the page on screen
-        document.addEventListener("visibilitychange", () => {
-          if (this._stale && this._isShowing()) { this._stale = false; this.refresh(); }
-        });
+        const back = () => { if (this._stale && this._isShowing()) { this._stale = false; this.refresh(); } };
+        document.addEventListener("visibilitychange", back);
+        document.addEventListener("mosaic:away", back); // back from minimized (lurk-mode.js)
       }
     }
   }
 
   _isShowing() {
-    return this.containerEl.style.display !== "none" && !document.hidden;
+    // minimized counts as not showing too (Windows doesn't mark a minimized page hidden; lurk-mode.js isAway)
+    return this.containerEl.style.display !== "none" && !isAway();
   }
 
   hide() {

@@ -6,7 +6,7 @@
 // Mosaic's dark and light surfaces (styles.css .lg).
 
 import {
-  CATEGORY, ledgerEvents, ledgerChannels, summarize, getGoal, setGoal, onLedgerChange,
+  CATEGORY, ledgerEvents, ledgerChannels, summarize, getGoal, setGoal, onLedgerChange, ledgerBalance,
 } from "./points-ledger.js";
 
 const RANGES = [7, 14, 30, 90];
@@ -24,10 +24,14 @@ function dur(min) {
 }
 const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 function startOfDay(t) { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); }
+// calendar days, not 24-hour steps: a day with a daylight saving change is 23 or 25 hours long, and stepping by
+// 24h from midnight would drift an hour off midnight after it (bars on the wrong day, no "Today")
+function addDays(dayStart, n) { const d = new Date(dayStart); d.setDate(d.getDate() + n); d.setHours(0, 0, 0, 0); return d.getTime(); }
+const daysBetween = (fromStart, toStart) => Math.round((toStart - fromStart) / DAY);
 function dayLabel(t, today) {
   const s = startOfDay(t);
   if (s === today) return "Today";
-  if (s === today - DAY) return "Yesterday";
+  if (s === addDays(today, -1)) return "Yesterday";
   return new Date(t).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 }
 function getRange() {
@@ -51,8 +55,9 @@ function describe(e) {
     case "refund": return ["↺", "other", "Prediction refunded", esc(e.n2 || "")];
     case "streak": return ["🔥", "other", "Shared watch streak", ""];
     case "extra": return ["＋", "other", "Extra points", "a raid, streak or Twitch bonus"];
-    case "away": return ["⏸", "other", "Earned while Mosaic was closed", e.f ? `since ${new Date(e.f).toLocaleDateString([], { month: "short", day: "numeric" })} ${clock(e.f)}` : ""];
-    case "awayx": return ["⏸", "spent", "Spent while Mosaic was closed", ""];
+    // Mosaic wasn't watching this channel in between (another channel, Twitch's own site or app, Mosaic closed)
+    case "away": return ["⏸", "other", "Earned while you were away", e.f ? `not watched here since ${new Date(e.f).toLocaleDateString([], { month: "short", day: "numeric" })} ${clock(e.f)}` : ""];
+    case "awayx": return ["⏸", "spent", "Spent while you were away", e.f ? `not watched here since ${new Date(e.f).toLocaleDateString([], { month: "short", day: "numeric" })} ${clock(e.f)}` : ""];
     case "spendx": return ["↗", "spent", "Spent outside Mosaic", "on Twitch's site or app"];
     default: return ["·", "other", esc(e.k), ""];
   }
@@ -61,15 +66,18 @@ function describe(e) {
 // opts: { login (channel on screen or null), points (its balance or null), rewards (channel rewards), watching (login playing) }
 export function renderLedger(body, opts) {
   let range = getRange();
+  const openedAt = Date.now();
   let unsub = null;
   let hover = null;
 
   const draw = () => {
     if (!body.isConnected) { unsub?.(); return; }
+    // redrawn every minute while you watch: keep where you'd scrolled to
+    const keep = [".lg-col", ".lg-side"].map((sel) => body.querySelector(sel)?.scrollTop || 0);
     const login = opts.login ? String(opts.login).toLowerCase() : null;
     const now = Date.now();
     const today = startOfDay(now);
-    const since = today - (range - 1) * DAY;
+    const since = addDays(today, -(range - 1));
     const mine = login ? ledgerEvents(since, login) : [];
     const sum = summarize(mine);
 
@@ -106,12 +114,18 @@ export function renderLedger(body, opts) {
     wireGoal(login);
     const chartEl = body.querySelector(".lg-chart");
     if (chartEl) drawChart(chartEl, mine, since, range, today);
+    [".lg-col", ".lg-side"].forEach((sel, i) => { const n = body.querySelector(sel); if (n) n.scrollTop = keep[i]; });
   };
 
   // ---- goal: a reward you're saving for, with how long it'll take at your usual rate ----
   function goalHtml(login, rangeRate) {
-    const goal = getGoal(login);
-    const bal = opts.points != null ? Number(opts.points) : null;
+    let goal = getGoal(login);
+    // the streamer changed the reward's cost or name since you picked it: follow along
+    const live = goal && (opts.rewards || []).find((x) => String(x.id) === String(goal.id));
+    if (live && (live.cost !== goal.cost || live.title !== goal.title)) { setGoal(login, live); goal = getGoal(login); }
+    // the balance: whichever is newer, what the panel loaded or the ledger's last check (every minute while you watch)
+    const seen = ledgerChannels()[login];
+    const bal = seen && seen.bal != null && (opts.points == null || seen.at > openedAt) ? Number(ledgerBalance(login)) : opts.points != null ? Number(opts.points) : null;
     if (goal && goal.cost > 0) {
       const have = bal != null ? bal : 0;
       const p = Math.max(0, Math.min(1, have / goal.cost));
@@ -124,7 +138,7 @@ export function renderLedger(body, opts) {
       return `<div class="lg-goal">
           <svg class="lg-goal-ring" width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="${r}" fill="none" stroke="var(--m-raised)" stroke-width="5"/><circle cx="22" cy="22" r="${r}" fill="none" stroke="var(--m-accent)" stroke-width="5" stroke-linecap="round" stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 22 22)"/><text x="22" y="26" text-anchor="middle">${Math.round(p * 100)}%</text></svg>
           <div class="lg-goal-text">Saving for <b>${esc(goal.title)}</b> (◈ ${num(goal.cost)})<br><span>${bal == null ? "Your balance didn't load" : eta}</span></div>
-          <div class="lg-goal-btns"><button type="button" class="lg-link" data-goal="change">Change</button><button type="button" class="lg-link" data-goal="clear">Remove</button></div>
+          <div class="lg-goal-btns">${left === 0 && opts.onRedeem && bal != null ? `<button type="button" class="lg-link lg-link-go" data-goal="redeem">Redeem</button>` : ""}<button type="button" class="lg-link" data-goal="change">Change</button><button type="button" class="lg-link" data-goal="clear">Remove</button></div>
         </div><div class="lg-goal-pick" hidden></div>`;
     }
     if (!(opts.rewards || []).some((x) => x.cost > 0)) return "";
@@ -136,6 +150,7 @@ export function renderLedger(body, opts) {
     const pick = body.querySelector(".lg-goal-pick");
     body.querySelectorAll("[data-goal]").forEach((b) => b.addEventListener("click", () => {
       if (b.dataset.goal === "clear") { setGoal(login, null); return; }
+      if (b.dataset.goal === "redeem") { opts.onRedeem?.(); return; }
       if (!pick) return;
       if (!pick.hidden) { pick.hidden = true; return; }
       const list = [...(opts.rewards || [])].filter((x) => x.cost > 0).sort((a, b2) => b2.cost - a.cost);
@@ -145,6 +160,7 @@ export function renderLedger(body, opts) {
       pick.hidden = false;
       pick.querySelectorAll(".lg-pick-row").forEach((row) => row.addEventListener("click", () => {
         const x = list.find((y) => String(y.id) === row.dataset.id);
+        pick.hidden = true; // first: saving redraws, and nothing redraws while the picker is open
         if (x) setGoal(login, x);
       }));
     }));
@@ -204,9 +220,9 @@ export function renderLedger(body, opts) {
 
   // ---- the chart: one bar per day, earnings stacked up by source, spending hanging below ----
   function drawChart(el, events, since, days, today) {
-    const buckets = Array.from({ length: days }, (_, i) => ({ t: since + i * DAY, watch: 0, chest: 0, other: 0, spent: 0, min: 0, chests: 0, notes: [] }));
+    const buckets = Array.from({ length: days }, (_, i) => ({ t: addDays(since, i), watch: 0, chest: 0, other: 0, spent: 0, min: 0, chests: 0, notes: [] }));
     for (const e of events) {
-      const i = Math.floor((startOfDay(e.t) - since) / DAY);
+      const i = daysBetween(since, startOfDay(e.t));
       const b = buckets[i];
       if (!b) continue;
       const cat = CATEGORY[e.k] || "other";
@@ -293,6 +309,9 @@ export function renderLedger(body, opts) {
 
   draw();
   // new checks arrive every minute while you watch; redraw unless you're pointing at the chart
-  unsub = onLedgerChange(() => { if (hover == null) draw(); });
+  unsub = onLedgerChange(() => {
+    // not while you're pointing at the chart or picking a reward to save for
+    if (hover == null && !body.querySelector(".lg-goal-pick:not([hidden])")) draw();
+  });
   return () => unsub?.();
 }

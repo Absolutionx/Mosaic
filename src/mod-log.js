@@ -211,7 +211,8 @@ function renderInto(body) {
       t.textContent = timeStr(m.time);
       const u = document.createElement("span");
       u.className = "modchat-user" + (m.broadcaster ? " is-broadcaster" : "");
-      u.style.color = m.color;
+      // readable on the panel background, like names in chat
+      u.style.color = m.color && typeof chatRef?.normalizeColor === "function" ? chatRef.normalizeColor(m.color) : (m.color || "");
       u.textContent = m.username;
       const txt = document.createElement("span");
       txt.className = "modchat-text";

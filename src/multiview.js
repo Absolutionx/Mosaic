@@ -162,8 +162,6 @@ export class MultiView {
     });
     this._revealBar = revealBar;
 
-    this._onResize = () => { if (this._open) this._refreshLayout(); };
-    window.addEventListener("resize", this._onResize);
 
     // only one shared chat is ever connected, so the global chat-message event stays unambiguous
     this._chat = new TwitchChat({
@@ -350,6 +348,12 @@ export class MultiView {
     }
     this._layoutChosen = false;
     this._ensureRoot();
+    // the window-resize relayout, attached on every open: close() removes it, and _ensureRoot only builds once,
+    // so attaching it there left every MultiView after the first ignoring window resizes and maximizing
+    if (!this._onResize) {
+      this._onResize = () => { if (this._open) this._refreshLayout(); };
+      window.addEventListener("resize", this._onResize);
+    }
     this._open = true;
     this._hooks = hooks;
     this.rootEl.classList.add("multiview-open");
@@ -359,11 +363,13 @@ export class MultiView {
     // Escape closes; T toggles theater. ignored while typing in a text field
     this._escHandler = (e) => {
       const tag = e.target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") {
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target?.isContentEditable) {
 
         return;
       }
       if (e.key === "Escape") {
+        // MultiView's own: the app's Escape (main.js: leave fullscreen / theater) shouldn't also run
+        e.stopPropagation();
         // back out one level at a time: followed panel, then theater, then close
         if (this.followedPanel && this.followedPanel.style.display !== "none") {
           this._toggleFollowedPanel(false);
@@ -373,7 +379,7 @@ export class MultiView {
           this.close();
         }
       }
-      else if (e.key === "t" || e.key === "T") this.toggleTheater();
+      else if ((e.key === "t" || e.key === "T") && !e.ctrlKey && !e.altKey && !e.metaKey) { e.stopPropagation(); this.toggleTheater(); }
     };
     document.addEventListener("keydown", this._escHandler);
     document.getElementById("multiview-tab")?.classList.add("nav-tab-active");
