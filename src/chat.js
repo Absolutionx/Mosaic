@@ -25,7 +25,7 @@ import { chatClock, fmtNum } from "./format.js";
 // most recently active chatters whose user-card history + message count are kept per channel
 const CHATTER_HISTORY_CAP = 3000;
 import { chatLiveEventsMixin } from "./chat/chat-live-events.js";
-import { recordTick } from "./points-ledger.js";
+import { recordTick, relabel } from "./points-ledger.js";
 import { session } from "./session.js";
 import { chatBadgePickerMixin } from "./chat/chat-badge-picker.js";
 
@@ -802,7 +802,9 @@ export class TwitchChat {
     if (!isCurrent()) return;
 
     try {
-      await invoke("start_chat", { channel: this.channel });
+      // the connection's number: this chat's disconnect stops only it (chat_commands.rs), never the connection
+      // the other chat (main / MultiView) made since
+      this._chatToken = await invoke("start_chat", { channel: this.channel });
     } catch (err) {
       this.setStatus("error");
       this.systemLine(`Failed to start chat: ${err}`);
@@ -846,7 +848,10 @@ export class TwitchChat {
       await invoke("stop_seventv_events");
     } catch (_) {}
     try {
-      await invoke("stop_chat");
+      const token = this._chatToken;
+      this._chatToken = null;
+      // never started one (or already stopped it): nothing of this chat's to stop
+      if (token != null) await invoke("stop_chat", { token });
     } catch (err) {
       console.error("stop_chat error:", err);
     }
@@ -2012,7 +2017,19 @@ export class TwitchChat {
         const playing = hb && hb.login
           ? !!hb.playing && String(hb.login).toLowerCase() === me
           : !!session.playing && String(session.intendedChannel || "").toLowerCase() === me;
-        try { recordTick(login, r, playing); } catch (e) { console.warn("[ledger]", e); }
+        let extra = null;
+        try { extra = recordTick(login, r, playing); } catch (e) { console.warn("[ledger]", e); }
+        // Twitch pays a watch streak's bonus (300-450) by itself early in a stream; the ledger books it as extra
+        // points, so a gain that size gets checked against the channel's streak and named for what it is
+        if (extra && extra.a >= 200) {
+          invoke("get_watch_streak", { channelLogin: login }).then((s) => {
+            const bonus = Number(s?.bonus) || 0, count = Number(s?.count) || 0;
+            // the split between watching and extra is a rough guess, and multipliers can raise the bonus
+            if (count >= 2 && bonus > 0 && Math.abs(extra.a - bonus) <= Math.max(60, bonus * 0.3)) {
+              relabel(extra, "streak", `${count} streams in a row`);
+            }
+          }).catch(() => {});
+        }
         if (r && r.claimed) this._flashBonusClaimed();
       } catch { setBal(""); }
     };

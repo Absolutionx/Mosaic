@@ -60,7 +60,12 @@ fn save_in(dir: Option<&Path>, service: &str, name: &str, data: &str) -> Result<
                     remove_file(dir, name); // an older copy on disk must not outlive the stored one
                     return Ok(());
                 }
-                Err(err) => eprintln!("[secret_store] Credential Manager refused {name} ({err}); using a file"),
+                Err(err) => {
+                    eprintln!("[secret_store] Credential Manager refused {name} ({err}); using a file");
+                    // an earlier value stored there would be read before the file (load_in looks there first),
+                    // handing back the old token forever: take it out
+                    let _ = e.delete_credential();
+                }
             }
         }
     }

@@ -33,19 +33,32 @@ fn sanitize(name: &str) -> String {
     let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
     let trimmed = collapsed.trim_matches(|c: char| c == '.' || c == ' ');
     let short: String = trimmed.chars().take(120).collect();
-    if short.is_empty() { "Mosaic VOD".to_string() } else { short }
+    if short.is_empty() {
+        return "Mosaic VOD".to_string();
+    }
+    // names Windows keeps for devices ("CON.mp4" is the console, not a file), whatever the extension
+    let base = short.split('.').next().unwrap_or("").trim().to_ascii_uppercase();
+    let reserved = matches!(base.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (base.len() == 4
+            && (base.starts_with("COM") || base.starts_with("LPT"))
+            && base.as_bytes()[3].is_ascii_digit());
+    if reserved { format!("{short} (VOD)") } else { short }
 }
 
-// "name.mp4", or "name (2).mp4" etc. when it already exists
-fn unique_path(dir: &std::path::Path, stem: &str, ext: &str) -> PathBuf {
-    let first = dir.join(format!("{stem}.{ext}"));
-    if !first.exists() {
-        return first;
+// "name.mp4", or "name (2).mp4" etc. when it already exists. the file is created (empty) right here, so two
+// downloads of the same VOD started together can't pick the same name: the second used to be refused by
+// ffmpeg, and its cleanup then deleted the first one's file
+fn unique_path(dir: &std::path::Path, stem: &str, ext: &str) -> Result<PathBuf, String> {
+    let candidates = std::iter::once(dir.join(format!("{stem}.{ext}")))
+        .chain((2..1000).map(|n| dir.join(format!("{stem} ({n}).{ext}"))));
+    for p in candidates {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(_) => return Ok(p),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
     }
-    (2..1000)
-        .map(|n| dir.join(format!("{stem} ({n}).{ext}")))
-        .find(|p| !p.exists())
-        .unwrap_or(first)
+    Err("too many files with this name in the Downloads folder".to_string())
 }
 
 #[tauri::command]
@@ -69,7 +82,7 @@ pub async fn start_vod_download(
     let dir = app.path().download_dir().or_else(|_| app.path().app_data_dir()).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let audio_only = quality == "audio_only";
-    let path = unique_path(&dir, &sanitize(&name), if audio_only { "m4a" } else { "mp4" });
+    let path = unique_path(&dir, &sanitize(&name), if audio_only { "m4a" } else { "mp4" })?;
 
     let mut cmd = Command::new(crate::stream_relay::resolve_dep_path("ffmpeg"));
     cmd.args(["-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-progress", "pipe:1"]);
@@ -83,7 +96,8 @@ pub async fn start_vod_download(
     if audio_only {
         cmd.arg("-vn");
     }
-    cmd.args(["-c", "copy", "-movflags", "+faststart", "-n"])
+    // -y: the (empty) file unique_path reserved is this download's own
+    cmd.args(["-c", "copy", "-movflags", "+faststart", "-y"])
         .arg(&path)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -92,7 +106,13 @@ pub async fn start_vod_download(
     cmd.creation_flags(CREATE_NO_WINDOW);
     crate::stream_relay::augment_child_path(&mut cmd);
 
-    let mut child = cmd.spawn().map_err(|e| format!("couldn't start ffmpeg: {e}"))?;
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&path); // the reserved empty file
+            return Err(format!("couldn't start ffmpeg: {e}"));
+        }
+    };
     let id = uuid::Uuid::new_v4().simple().to_string();
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     state.cancels.lock().map_err(|e| e.to_string())?.insert(id.clone(), cancel_tx);
@@ -197,4 +217,27 @@ pub fn reveal_download(state: State<'_, DownloadsState>, path: String) -> Result
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod download_name_tests {
+    #[test]
+    fn device_names_are_renamed() {
+        assert_eq!(super::sanitize("con"), "con (VOD)");
+        assert_eq!(super::sanitize("COM1"), "COM1 (VOD)");
+        assert_eq!(super::sanitize("nul.part2"), "nul.part2 (VOD)");
+        assert_eq!(super::sanitize("Console wars"), "Console wars");
+        assert_eq!(super::sanitize("COMx"), "COMx");
+    }
+
+    #[test]
+    fn same_name_twice_gets_two_files() {
+        let d = std::env::temp_dir().join(format!("mosaic-dl-test-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = super::unique_path(&d, "VOD", "mp4").unwrap();
+        let b = super::unique_path(&d, "VOD", "mp4").unwrap();
+        assert_ne!(a, b);
+        assert!(b.to_string_lossy().ends_with("VOD (2).mp4"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

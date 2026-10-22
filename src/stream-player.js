@@ -734,6 +734,10 @@ export function attachMseStream(videoEl, relayUrl, callbacks = {}) {
     expectTeardown() {
       _teardownExpected = true;
     },
+    // ...and it wasn't after all (the quality switch failed and this relay keeps playing): its end counts again
+    cancelTeardown() {
+      _teardownExpected = false;
+    },
     stop() {
       stopped = true;
       clearInterval(trimInterval);

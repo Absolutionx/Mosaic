@@ -135,6 +135,9 @@ export class TwitchAuth {
       this._setLoginLabel("Logging in…");
       this.loginBtn.disabled = true;
       await invoke("start_oauth_login");
+      // the login now waits in the browser. the button stays usable: closing that tab and clicking again opens
+      // the same login (oauth.rs). it used to stay disabled until Mosaic restarted when the tab was closed
+      this.loginBtn.disabled = false;
     } catch (err) {
       console.error("Failed to start login:", err);
       showAppToast(`Couldn't start the Twitch login: ${typeof err === "string" ? err : err?.message || "try again"}`, { error: true });

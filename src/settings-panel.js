@@ -74,7 +74,7 @@ const SECTIONS = [
     { kind: "toggle", id: "emoteColonTrigger", title: "\":\" opens emote suggestions", desc: "Type :name to see matching emotes. Tab always works." },
     { kind: "group", title: "In chat" },
     { kind: "toggle", id: "clipCards", title: "Clip cards", desc: "Twitch clip links become cards you can play right in Mosaic." },
-    { kind: "toggle", id: "linkPreviews", title: "Link previews", desc: "Show a preview when you hover a link." },
+    { kind: "toggle", id: "linkPreviews", title: "Link previews", desc: "Show a preview when you hover a link. The preview loads from the link's site, which can see your IP address." },
     { kind: "toggle", id: "predictionsPolls", title: "Predictions & polls", desc: "Show them above chat, with betting and voting." },
     { kind: "toggle", id: "hypeGiftBanners", title: "Hype train & gift banners", desc: "Banners for hype trains and big gift-sub drops. Click the hype train banner for details." },
     { kind: "toggle", id: "hypeTrainCelebrate", title: "Hype train level-up celebration", desc: "A big \"LEVEL N!\" with confetti over the video when the train levels up. Toned down with Reduce motion." },

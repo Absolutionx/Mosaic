@@ -164,10 +164,11 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
 
     // spawn the redirect-catcher; open the browser in parallel
     let app2 = app.clone();
+    let app_timeout = app.clone();
     tauri::async_runtime::spawn(async move {
         let mine = state.clone();
         // 5-minute timeout in case the user abandons the flow
-        let _ = tokio::time::timeout(
+        let finished = tokio::time::timeout(
             std::time::Duration::from_secs(300),
             run_redirect_server(listener, listener_v6, state, move |token| {
                 // the token stays in Rust: validated, stored and handed to chat here; the page only hears
@@ -182,6 +183,10 @@ pub async fn start_oauth_login(app: AppHandle) -> Result<(), String> {
             }),
         )
         .await;
+        // abandoned (no login within 5 minutes): tell the page, so the button stops saying "Logging in…"
+        if finished.is_err() {
+            let _ = app_timeout.emit("oauth-login-failed", "login timed out");
+        }
         // finished or abandoned: this state is spent (unless a newer attempt has already replaced it)
         if pending_state().as_deref() == Some(mine.as_str()) {
             set_pending_state(None);
@@ -454,28 +459,44 @@ pub async fn restore_session(app: AppHandle) -> Result<serde_json::Value, String
     let Some(token) = load_token(&app) else {
         return Ok(serde_json::Value::Null);
     };
-
-    match reqwest_lite_get(
-        "https://id.twitch.tv/oauth2/validate",
-        &[("Authorization", &format!("OAuth {token}"))],
-    )
-    .await
-    {
-        Ok(body) => match serde_json::from_str::<ValidateResponse>(&body) {
+    // only Twitch saying the token is no good (401) logs you out. starting Mosaic offline, or while Twitch's
+    // login service has a hiccup, used to delete the saved login too, so you had to log in again afterwards.
+    // a few tries a few seconds apart (Wi-Fi coming up after a cold boot), then the token is kept for next time
+    let mut last_err = String::new();
+    for wait in [0u64, 2, 5] {
+        if wait > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+        }
+        let resp = crate::http::client()
+            .get("https://id.twitch.tv/oauth2/validate")
+            .header("Authorization", format!("OAuth {token}"))
+            .timeout(std::time::Duration::from_secs(6))
+            .send()
+            .await;
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => { last_err = e.to_string(); continue; }
+        };
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::BAD_REQUEST {
+            // expired or revoked: this one is done
+            clear_token(&app);
+            return Ok(serde_json::Value::Null);
+        }
+        if !status.is_success() {
+            last_err = format!("Twitch answered {status}");
+            continue;
+        }
+        let body = resp.text().await.map_err(|e| e.to_string())?;
+        return match serde_json::from_str::<ValidateResponse>(&body) {
             Ok(parsed) => {
                 set_session(&app, Some((token, &parsed)));
                 Ok(session_info(&parsed))
             }
-            Err(e) => {
-                clear_token(&app);
-                Err(format!("Failed to parse validate response: {e}"))
-            }
-        },
-        Err(_) => {
-            clear_token(&app);
-            Ok(serde_json::Value::Null)
-        }
+            Err(e) => Err(format!("Failed to parse validate response: {e}")),
+        };
     }
+    Err(format!("Couldn't reach Twitch to restore your login ({last_err}); it's kept for next time"))
 }
 
 async fn reqwest_lite_get(url: &str, headers: &[(&str, &str)]) -> Result<String, String> {

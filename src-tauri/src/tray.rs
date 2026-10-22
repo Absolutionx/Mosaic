@@ -91,6 +91,14 @@ pub fn track_normal_bounds<R: tauri::Runtime>(w: &tauri::Window<R>) {
 
 // called when the main window is hidden to the tray (CloseRequested in main.rs)
 pub fn remember_placement<R: tauri::Runtime>(w: &tauri::Window<R>) {
+    // hidden while fullscreen: it comes back fullscreen as it was (restore_window). its screen-sized rect saved
+    // as the "normal" bounds made the restore un-maximize and resize a window that was still fullscreen
+    if w.is_fullscreen().unwrap_or(false) {
+        if let Ok(mut saved) = SAVED_PLACEMENT.lock() {
+            *saved = None;
+        }
+        return;
+    }
     let (Ok(position), Ok(size)) = (w.outer_position(), w.outer_size()) else { return };
     let current = Rect { position, size };
     let maximized = w.is_maximized().unwrap_or(false);
@@ -113,7 +121,8 @@ fn monitor_at<R: tauri::Runtime>(w: &tauri::WebviewWindow<R>, (cx, cy): (i64, i6
 // used by the tray menu, tray double-click, and the single-instance second-launch callback
 pub fn restore_window(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let saved = SAVED_PLACEMENT.lock().ok().and_then(|s| *s);
+        // a fullscreen window is shown as it is (see remember_placement)
+        let saved = if w.is_fullscreen().unwrap_or(false) { None } else { SAVED_PLACEMENT.lock().ok().and_then(|s| *s) };
         let mut maximize = false;
         if let Some(p) = saved {
             // only when the monitor it was on is connected right now (else Windows' own placement is kept)

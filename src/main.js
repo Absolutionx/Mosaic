@@ -574,23 +574,42 @@ initLurkMode({ playbackControls, multiview, chat });
 let _multiviewResume = null;
 const multiviewHooks = {
   onOpen: () => {
-    _multiviewResume =
-      session.playing && session.intendedChannel ? session.intendedChannel : null;
-    try { playbackControls.stop(); } catch {}
+    // what to bring back on close: a VOD or a Kick stream comes back as one (a VOD id or a Kick slug handed to
+    // watchChannel was a broken Twitch channel "vod:123", or the wrong platform)
+    const cur = session.playing ? session.intendedChannel : null;
+    _multiviewResume = !cur ? null
+      : cur.startsWith("vod:") ? { kind: isKick() ? "kickVod" : "vod", id: cur.slice(4) }
+      : session.kickFailover ? { kind: "kick", id: session.kickFailover.channel }
+      : { kind: "twitch", id: cur };
+    // a full stop: playbackControls.stop() alone left streamlink downloading the stream and the main chat
+    // connected (drawing the grid's focused chat a second time) for as long as the grid was open
+    try { stopPlayback({ returnToPage: true }); } catch {}
   },
   onClose: () => {
     // restart whatever was playing before, if anything
-    if (_multiviewResume) {
-      const ch = _multiviewResume;
-      _multiviewResume = null;
-      try { watchChannel(ch); } catch {}
-    }
+    const r = _multiviewResume;
+    _multiviewResume = null;
+    if (!r) return;
+    try {
+      if (r.kind === "vod") watchVod(r.id);
+      else if (r.kind === "kickVod") watchKickVod(r.id);
+      else if (r.kind === "kick") watchKickChannel(r.id);
+      else watchChannel(r.id);
+    } catch {}
   },
 };
+// closing to the tray: the grid goes too, without bringing back what played before it
+function closeMultiviewForTray() {
+  _multiviewResume = null;
+  if (multiview.isOpen) multiview.close();
+}
 document.getElementById("multiview-tab")?.addEventListener("click", () => {
   if (multiview.isOpen) { multiview.close(); return; }
   const seed = [];
-  if (session.playing && session.intendedChannel) seed.push(session.intendedChannel);
+  // only a live Twitch stream can be a tile (not a VOD, not Kick)
+  if (session.playing && session.intendedChannel && !session.intendedChannel.startsWith("vod:") && !session.kickFailover) {
+    seed.push(session.intendedChannel);
+  }
   multiview.open(seed, multiviewHooks);
   if (currentLogin) {
     multiview.setLoggedIn(currentLogin.login, currentLogin.userId, currentLogin.displayName);
@@ -1312,6 +1331,8 @@ window.addEventListener("keydown", (e) => {
   // "M" toggles mute (the official shortcut), same text-field guard as "T", reusing toggleMute(). no is-anything-playing check needed, toggleMute() is a harmless no-op against an empty <video>
   // < / > : VOD playback speed down / up (Shift+, / Shift+.), like YouTube
   if ((e.key === "<" || e.key === ">") && playbackControls.isVod) {
+    // typing < or > anywhere (whispers, a user note, a search box) must still type it
+    if (e.ctrlKey || e.altKey || e.metaKey || typing()) return;
     e.preventDefault();
     playbackControls.stepVodSpeed(e.key === ">" ? 1 : -1);
     return;
@@ -1323,8 +1344,7 @@ window.addEventListener("keydown", (e) => {
 
   // Space toggles pause/play (the official shortcut), blocked in text fields so a space in chat doesn't pause the stream
   if (e.key === " ") {
-    const tag = document.activeElement?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (typing()) return;
     e.preventDefault(); // stop the page from scrolling on space
     playbackControls.togglePause();
   }
@@ -1498,6 +1518,7 @@ function reportQualitySwitchTiming(quality, startedAt, relayReadyAt) {
 
 async function restartStreamWithQuality(quality, { auto = false } = {}) {
   if (!session.playing || !session.intendedChannel) return;
+  const previousQuality = session.currentQuality;
   session.currentQuality = quality;
 
   if (session.intendedChannel.startsWith("vod:")) {
@@ -1508,6 +1529,8 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
       const m3u8Url = await invoke("get_vod_m3u8_url", { videoId, quality });
       // the user may have switched away while the URL resolved; don't reattach a VOD they've navigated off of
       if (session.intendedChannel !== `vod:${videoId}`) return;
+      // picked another quality while this one resolved: that newer pick attaches, not this one
+      if (session.currentQuality !== quality) return;
       // reattach HLS.js at the saved position, no progress lost
       playbackControls.attachStream(m3u8Url, savedPosition);
     } catch (err) {
@@ -1519,7 +1542,7 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
     const restartChannel = session.intendedChannel;
     try {
       const m3u8Url = await invoke("get_live_m3u8_url", { channel: restartChannel, quality });
-      if (session.intendedChannel !== restartChannel) return;
+      if (session.intendedChannel !== restartChannel || session.currentQuality !== quality) return;
       playbackControls.start(restartChannel, m3u8Url, quality, 0, 0, { nativeHlsLive: true });
       if (session.kickFailover) {
         invoke("stop_kick_chat").catch(() => {});
@@ -1532,6 +1555,8 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
       setStatus(`Error switching quality: ${err}`);
     }
   } else {
+    // the channel this restart is for, also for the error path below (a newer pick moves intendedChannel)
+    const restartChannelForError = session.intendedChannel;
     try {
       // expectRelayTeardown, because the quality restart kills streamlink and EOFs the body the current
       // attachment still reads, and that attachment isn't replaced until start() an await later.
@@ -1584,6 +1609,17 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
         scheduleTwitchReconnect(String(err));
         return;
       }
+      // a quality switch you picked failed: start_stream left the stream that was playing running, so keep it,
+      // and watch it for its end again (it was told to expect one)
+      if (session.intendedChannel === restartChannelForError && !session.kickFailover) {
+        playbackControls.cancelRelayTeardown();
+        if (previousQuality && previousQuality !== quality) {
+          session.currentQuality = previousQuality;
+          if (!playbackControls.autoQualityMode) playbackControls.currentQuality = previousQuality;
+        }
+        setStatus(`Couldn't switch to ${quality}, kept the current quality (${err})`);
+        return;
+      }
       setStatus(`Error switching quality: ${err}`);
     }
   }
@@ -1614,6 +1650,10 @@ function startChatHeatmap(videoId, totalSeconds) {
   else v.addEventListener("loadedmetadata", onMeta, { once: true });
 }
 
+// bumped by every watch* start and every stop: a VOD start that waited on its saved position checks it didn't
+// change meanwhile (another channel or VOD was picked, or it was stopped, e.g. closed to the tray)
+let watchSeq = 0;
+
 function maybeSaveVodProgress() {
   if (!session.playing || !playbackControls.isVod || !session.intendedChannel?.startsWith("vod:")) return;
   const videoId = session.intendedChannel.slice("vod:".length);
@@ -1637,6 +1677,7 @@ function maybeSaveVodProgress() {
 
 async function watchChannel(channel, stream) {
   if (!channel) return;
+  watchSeq++;
   hideRaidBanner(); // a raid banner belongs to the stream you were on
   hideLurkRecap(); // so does "while you lurked"
   session.intendedChannel = channel;
@@ -1697,6 +1738,7 @@ async function watchChannel(channel, stream) {
   const isLive = Boolean(resolvedStream) && resolvedStream.type === "live";
 
   await chat.connect(channel);
+  if (session.intendedChannel !== channel) return; // stopped or switched while chat connected
 
   if (!isLive) {
     // Twitch reports offline, but simulcasters often keep Kick going, so check Kick before settling into offline chat-only. doubles as the practical way to exercise failover on demand. lookup errors mean "couldn't check", not "not on Kick" (unofficial API), and fall through
@@ -1893,6 +1935,7 @@ function handleRaid(payload) {
 // play a Twitch VOD via HLS.js pointed at the Twitch CDN M3U8 (from streamlink --stream-url). replaces the old relay approach, instant seeking, correct buffering, no timestamp overflow
 async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", startPositionSecs) {
   if (!videoId) return;
+  const seq = ++watchSeq;
   hideRaidBanner(); // a raid banner belongs to the stream you were on
   hideLurkRecap(); // so does "while you lurked"
 
@@ -1907,6 +1950,8 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
     } catch (err) {
       console.warn("Failed to check saved VOD progress:", err);
     }
+    // something else was picked, or it was stopped, while the saved position loaded
+    if (seq !== watchSeq) return;
   }
 
   if (session.playing) {
@@ -2005,6 +2050,7 @@ async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
   hideRaidBanner();
   hideLurkRecap();
   if (!videoId) return;
+  const seq = ++watchSeq;
 
   // same resume rules as watchVod: only a plain card click consults saved progress; an explicit number (even 0) always wins
   if (startPositionSecs == null) {
@@ -2017,6 +2063,8 @@ async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
     } catch (err) {
       console.warn("Failed to check saved VOD progress:", err);
     }
+    // something else was picked, or it was stopped, while the saved position loaded
+    if (seq !== watchSeq) return;
   }
 
   if (session.playing) {
@@ -2087,6 +2135,7 @@ async function watchKickChannel(channel) {
   hideRaidBanner();
   channel = (channel || "").trim().toLowerCase();
   if (!channel) return;
+  watchSeq++;
   session.intendedChannel = channel;
   if (session.kickFailover) invoke("stop_kick_chat").catch(() => {});
   session.kickFailover = null;
@@ -2402,7 +2451,10 @@ channelInput.addEventListener("keydown", (e) => {
 // tray-minimized app is quiet and lightweight rather than streaming in the background).
 function stopPlayback({ returnToPage = true, goHome = false } = {}) {
   syncPreload(3000); // what you were watching can be preloaded again
-  if (!session.playing) return;
+  watchSeq++; // a VOD still looking up where you left off doesn't start after this
+  // a stream still loading counts too: playing is only set once start_stream answers, and clearing
+  // intendedChannel below is what makes that in-flight start give up instead of playing on
+  if (!session.playing && !session.intendedChannel) return;
   hideRaidBanner();
   _heatmapHandle?.cancel(); // stop sampling a VOD we're leaving
   maybeSaveVodProgress();
@@ -2479,9 +2531,13 @@ document.addEventListener("mosaic:lurk", (e) => syncPreload(e.detail?.on ? 0 : 3
     syncPreload(0);
     // lurk mode keeps a live stream going as audio only instead (lurk-mode.js)
     if (lurkNow()) return;
+    // MultiView's tiles are their own players: left open, they kept playing in the tray
+    closeMultiviewForTray();
     // Fully stop and return to Home so reopening from the tray shows a clean home page rather than a
     // disconnected chat + empty black stream frame.
-    if (session.playing) stopPlayback({ returnToPage: true, goHome: true });
+    // also a stream or VOD still loading (playing is false until it starts): stopping keeps it from starting in
+    // the hidden window. with nothing at all going on, stopPlayback does nothing
+    stopPlayback({ returnToPage: true, goHome: true });
     // Strip the previous channel's chat so a restored window doesn't show stale messages.
     try { chat.clearChatMessages(); } catch { /* ignore */ }
   });

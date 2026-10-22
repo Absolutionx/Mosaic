@@ -875,6 +875,10 @@ async fn start_relay_with(
     quality: String,
     extra_args: Vec<String>,
     ready: Option<ReadyPipeline>,
+    // a quality switch on the channel already playing: if the new pipeline can't start, the one playing is
+    // left alone (the frontend keeps it and says the switch failed) instead of being killed with nothing to
+    // replace it
+    keep_current_on_fail: bool,
 ) -> Result<String, String> {
     // claim a ticket the instant we're called, BEFORE contending for the lock. if another start_relay is claimed after this, our ticket is no longer the newest and we're stale, checked after spawning below
     let my_ticket = state.start_requests.fetch_add(1, Ordering::SeqCst) + 1;
@@ -898,7 +902,10 @@ async fn start_relay_with(
         None => match launch_pipeline(&target_url, &quality, &extra_args).await {
             Ok(p) => p,
             Err(e) => {
-                stop_current_stream(&state).await; // failed switch: don't leave the old stream playing
+                // failed switch to another channel: don't leave the old one playing. a failed quality switch keeps it
+                if !keep_current_on_fail {
+                    stop_current_stream(&state).await;
+                }
                 return Err(e);
             }
         },
@@ -1232,6 +1239,8 @@ async fn handle_hls_proxy(
         socket.write_all(resp).await?;
         return Ok(());
     }
+    // what the log lines print: the address without its query, which can hold a signed playback token
+    let log_url = raw_url.split('?').next().unwrap_or("").to_string();
 
     let port = state.port.load(Ordering::Relaxed);
     let proxy_base = format!("http://127.0.0.1:{port}");
@@ -1265,9 +1274,10 @@ async fn handle_hls_proxy(
                 break;
             }
             Err(e) => {
+                let e = e.without_url();
                 eprintln!(
                     "[hls-proxy] fetch attempt {attempt}/{HLS_PROXY_MAX_ATTEMPTS} \
-                     failed for {raw_url}: {e}"
+                     failed for {log_url}: {e}"
                 );
                 last_err = Some(e);
                 if attempt < HLS_PROXY_MAX_ATTEMPTS {
@@ -1284,7 +1294,7 @@ async fn handle_hls_proxy(
         Some(r) => r,
         None => {
             eprintln!(
-                "[hls-proxy] all {HLS_PROXY_MAX_ATTEMPTS} attempts failed for {raw_url}: \
+                "[hls-proxy] all {HLS_PROXY_MAX_ATTEMPTS} attempts failed for {log_url}: \
                  {}",
                 last_err.map(|e| e.to_string()).unwrap_or_default()
             );
@@ -1297,7 +1307,7 @@ async fn handle_hls_proxy(
     // the CDN responded, but not successfully (e.g. a real 403/404), NOT retried (see HLS_PROXY_MAX_ATTEMPTS), but a meaningfully different failure than the connection-level one above, so it gets its own status passed through rather than flattened into a generic 502, lets the browser console show the real status instead of every failure looking identical
     if !response.status().is_success() {
         let status = response.status();
-        eprintln!("[hls-proxy] upstream returned {status} for {raw_url}");
+        eprintln!("[hls-proxy] upstream returned {status} for {log_url}");
         let resp = format!(
             "HTTP/1.1 {} {}\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: 0\r\n\r\n",
             status.as_u16(),
@@ -2001,6 +2011,12 @@ pub async fn start_stream(
         // enables Twitch's native low-latency mode (TLLS): smaller HLS segments and a tighter PLR delay target, typically cutting stream delay from ~10-15s to ~3-5s. live channels only; VODs don't go through the relay at all
         extra_args.push("--twitch-low-latency".to_string());
     }
+    // the same channel as the one playing (or starting): a quality switch (or a reconnect)
+    let same_channel = state
+        .current_login
+        .lock()
+        .map(|cur| cur.as_deref() == Some(channel.to_ascii_lowercase().as_str()))
+        .unwrap_or(false);
     // claimed before taking the preload, so a preload_set landing in between doesn't start it again
     if let Ok(mut cur) = state.current_login.lock() {
         *cur = Some(channel.to_ascii_lowercase());
@@ -2015,6 +2031,7 @@ pub async fn start_stream(
         quality,
         extra_args,
         ready,
+        same_channel,
     )
     .await
 }

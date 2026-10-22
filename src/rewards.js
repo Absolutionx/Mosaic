@@ -3,7 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { openDropsHub, fmtLeft, fmtEnds, boxArt } from "./drops-hub.js";
-import { noteKnown, expectLater } from "./points-ledger.js";
+import { noteKnown } from "./points-ledger.js";
 import { renderLedger } from "./ledger-view.js";
 import { renderWatchStats } from "./watch-stats.js";
 
@@ -255,7 +255,7 @@ async function render(body, channelLogin, channelId, flash) {
   if (streak && streak.count) {
     const canShare = streak.share_status === "CAN_SHARE";
     html += `<div class="rw-chips"><span class="rw-chip"><span class="rw-chip-icon">🔥</span>${Number(streak.count).toLocaleString()} stream${streak.count === 1 ? "" : "s"} in a row</span>`;
-    if (canShare) html += `<button class="rewards-claim rewards-share rw-chip-btn" data-mid="${esc(streak.milestone_id)}" data-bonus="${Number(streak.bonus || 0)}">Share +${Number(streak.bonus || 0).toLocaleString()}</button>`;
+    if (canShare) html += `<button class="rewards-claim rewards-share rw-chip-btn" data-mid="${esc(streak.milestone_id)}" title="Post your watch streak in chat">Share</button>`;
     else if (streak.share_status === "SHARED") html += `<span class="rw-chip rw-chip-ok">Shared</span>`;
     html += `</div>`;
   }
@@ -273,7 +273,7 @@ async function render(body, channelLogin, channelId, flash) {
         ? `<img class="reward-img" src="${esc(r.image)}" alt="">`
         : `<span class="reward-img reward-img-fallback">◈</span>`;
       const cost = Number(r.cost).toLocaleString();
-      html += `<div class="reward-row${afford ? "" : " rw-locked"}" data-id="${esc(r.id)}" data-cost="${r.cost}" data-title="${esc(r.title)}" data-input="${r.requires_input ? 1 : 0}" data-prompt="${esc(r.prompt)}">
+      html += `<div class="reward-row${afford ? "" : " rw-locked"}" data-id="${esc(r.id)}" data-cost="${Number(r.cost) || 0}" data-title="${esc(r.title)}" data-input="${r.requires_input ? 1 : 0}" data-prompt="${esc(r.prompt)}">
         ${img}
         <span class="reward-title">${esc(r.title)}</span>`;
       if (afford) {
@@ -318,8 +318,8 @@ async function render(body, channelLogin, channelId, flash) {
         <div class="rw-camp-head">
           ${c.box_art ? `<img class="rw-camp-art" src="${esc(boxArt(c.box_art))}" alt="">` : `<span class="rw-camp-art"></span>`}
           <div class="rw-camp-info">
-            <div class="rw-camp-game">${esc(c.game || "Drops")}${earn ? `<span class="rw-earning">Earning now</span>` : ""}</div>
-            <div class="rw-camp-meta">${meta}</div>
+            <div class="rw-camp-game">${esc(c.game || "Drops")}</div>
+            <div class="rw-camp-meta">${earn ? `<span class="rw-earning" title="Earning now">Earning</span>` : ""}<span class="rw-camp-meta-text">${meta}</span></div>
           </div>
           <span class="rw-camp-count" title="Rewards claimed">${done}/${all.length}</span>
           <button class="rewards-drop-hide" data-cid="${esc(c.id)}" title="Hide these drops">×</button>
@@ -509,9 +509,8 @@ async function render(body, channelLogin, channelId, flash) {
       btn.textContent = "Sharing…";
       try {
         await invoke("share_watch_streak", { channelLogin, milestoneId: mid });
-        // Twitch adds the streak bonus a little after the share goes through, so the ledger records it when a balance
-        // check actually sees it (recording it right away read the not-yet-updated balance as 350 spent elsewhere)
-        try { expectLater(channelLogin, Number(btn.getAttribute("data-bonus")) || 0, "streak", "Shared watch streak"); } catch { /* ignore */ }
+        // sharing only posts the streak in chat: Twitch pays the streak's bonus by itself when the streak counts,
+        // and the ledger names it then (chat.js points poll)
         await render(body, channelLogin, channelId);
       } catch (err) {
         btn.disabled = false;

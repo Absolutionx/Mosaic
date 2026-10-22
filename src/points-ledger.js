@@ -5,8 +5,10 @@
 //   - a bonus chest Mosaic claimed is exact: the tick reports the balance just before the claim
 //   - things Mosaic itself spends (redeeming, prediction bets) are recorded right away by name with noteKnown(),
 //     which also moves the remembered balance so the next check doesn't count them twice
-//   - what Twitch pays out a little later (a prediction win or refund, a shared watch streak's bonus) waits in
-//     expectLater() until a balance check sees it arrive
+//   - what Twitch pays out a little later (a prediction win or refund) waits in expectLater() until a balance
+//     check sees it arrive
+//   - a watch streak's bonus (300-450, paid by Twitch on its own early in a stream, shared or not) first books as
+//     "extra"; chat.js then checks the channel's streak and relabels it with relabel()
 //   - a change Mosaic can't explain is still recorded, labeled for what it is (spent outside Mosaic, or while
 //     Mosaic was closed), so the totals always match your real balance
 // localStorage "pointsLedger" (part of Settings > App > Back up). events older than KEEP_DAYS are dropped.
@@ -60,7 +62,10 @@ function save() {
   if (d.ev.length && (d.ev[0].t < cutoff || d.ev.length > MAX_EVENTS)) {
     d.ev = d.ev.filter((e) => (e.e || e.t) >= cutoff).slice(-MAX_EVENTS);
   }
-  try { localStorage.setItem(KEY, JSON.stringify(d)); } catch { /* storage full: keep going in memory */ }
+  // a backup is being restored (backup.js): this ledger in memory would overwrite the restored one
+  if (!window.__mosaicRestoring) {
+    try { localStorage.setItem(KEY, JSON.stringify(d)); } catch { /* storage full: keep going in memory */ }
+  }
   for (const fn of listeners) { try { fn(); } catch { /* ignore */ } }
 }
 
@@ -104,9 +109,11 @@ function push(login, kind, amount, extra = {}) {
 }
 
 // called by chat.js after every balance check. r = channel_points_tick's answer ({ balance, before?, claimed });
-// playing = this channel is what's playing (minutes count towards the watch session)
+// playing = this channel is what's playing (minutes count towards the watch session). returns the "extra"
+// entry it booked, if any, so the caller can find out what it was (relabel)
 export function recordTick(login, r, playing) {
-  if (!login || !r || r.balance == null) return;
+  if (!login || !r || r.balance == null) return null;
+  let extraEv = null;
   login = String(login).toLowerCase();
   const d = load();
   const now = Date.now();
@@ -114,7 +121,7 @@ export function recordTick(login, r, playing) {
   if (!c || c.bal == null) {
     d.ch[login] = { bal: r.balance, at: now };
     save();
-    return;
+    return null;
   }
   const minutes = Math.max(0, (now - c.at) / 60_000);
   const pre = r.claimed && r.before != null ? r.before : r.balance;
@@ -145,7 +152,7 @@ export function recordTick(login, r, playing) {
       const cap = !playing ? 0 : sinceLump >= 4 ? 24 + Math.ceil(minutes * 2) : Math.ceil(minutes * 4);
       const watch = Math.min(delta, cap);
       if (watch > 0) { push(login, "watch", watch, { m: 0 }); if (watch >= 8) c.lump = now; }
-      if (delta - watch > 0) push(login, "extra", delta - watch);
+      if (delta - watch > 0) extraEv = push(login, "extra", delta - watch);
     } else {
       push(login, "spendx", delta);
     }
@@ -157,6 +164,18 @@ export function recordTick(login, r, playing) {
   if (r.claimed && r.before != null && r.balance > r.before) push(login, "chest", r.balance - r.before);
 
   c.bal = r.balance; c.at = now;
+  save();
+  return extraEv;
+}
+
+// say what an entry turned out to be (an "extra" that was the channel's watch streak bonus)
+export function relabel(ev, kind, note) {
+  if (!ev) return;
+  const d = load();
+  const e = d.ev.find((x) => x.t === ev.t && x.c === ev.c && x.k === ev.k && x.a === ev.a);
+  if (!e) return;
+  e.k = kind;
+  if (note) e.n2 = String(note).slice(0, 120);
   save();
 }
 

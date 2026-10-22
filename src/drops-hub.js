@@ -175,8 +175,17 @@ function fillAvailable(avail, ws) {
     avail.append(el("div", "hub-section", "Available on Twitch"), el("div", "hub-note", "Looking for drop campaigns on Twitch…"));
     return;
   }
-  const mine = new Set(inProgress.map((c) => c.id));
-  renderAvailable(avail, campaigns ? campaigns.filter((c) => !mine.has(c.id)) : null, allError, ws, paged && !scanDone);
+  // one card per campaign: Twitch can run the same campaign under two ids (one per region), so game + name
+  // count as the same campaign too, and one you're already earning isn't offered again
+  const key = (game, name) => `${String(game || "").toLowerCase()}\u001f${String(name || "").trim().toLowerCase()}`;
+  const seen = new Set(inProgress.flatMap((c) => [c.id, key(c.game, c.campaign)]));
+  const shown = campaigns ? campaigns.filter((c) => {
+    const k = key(c.game, c.name);
+    if (seen.has(c.id) || seen.has(k)) return false;
+    seen.add(c.id); seen.add(k);
+    return true;
+  }) : null;
+  renderAvailable(avail, shown, allError, ws, paged && !scanDone);
   if (!paged || scanDone) return;
   if (scanError) { avail.appendChild(el("div", "hub-note error", `Couldn't load more campaigns (${String(scanError)}).`)); return; }
   // scrolling this into view loads the next batch, like Browse
@@ -280,6 +289,9 @@ function renderAvailable(body, campaigns, error, ws, partial = false) {
   const shown = active.filter((c) => matches([c.game, c.name, ...(c.rewards || [])], ws));
   if (!shown.length) { body.appendChild(el("div", "hub-note", partial ? `No campaigns match "${query.trim()}" yet.` : `No campaigns match "${query.trim()}".`)); return; }
   body.appendChild(tileGrid(shown));
+  // the list built from live channels (helix.rs drop_campaigns_more) can't be complete: Twitch tells apps only
+  // one campaign per channel
+  if (data.paged && !partial) body.appendChild(el("div", "hub-note", "Twitch only shares some campaigns with apps, so this list may be missing a few. Find streams for a game to check it directly."));
 }
 
 function tileGrid(list) {

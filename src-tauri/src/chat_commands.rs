@@ -12,8 +12,13 @@ use crate::{ChatState, EventSubState, SevenTvEventsState};
 // avoid WebView2's Tracking Prevention, which blocks/kills WebSocket connections to
 // irc-ws.chat.twitch.tv from the webview (see chat.rs's module comment). if the user has logged in
 // connects authenticated and able to send; otherwise anonymous/read-only
+// There is one Twitch chat connection, shared by the main chat and MultiView's. start_chat answers a number for
+// the connection it made, and stop_chat with that number only stops that connection: a chat closing late (the
+// main chat as MultiView opens, MultiView's as it closes) used to stop the other one's fresh connection
+static CHAT_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[tauri::command]
-pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: String) -> Result<(), String> {
+pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: String) -> Result<u64, String> {
     // the name goes into a raw IRC line ("JOIN #channel"): a space or line break there would be a second command
     if !crate::stream_relay::valid_twitch_login(&channel) {
         return Err("invalid channel".to_string());
@@ -29,10 +34,12 @@ pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: Strin
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
     let (outgoing_tx, outgoing_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    {
+    let token = {
         let mut guard = state.stop_tx.lock().map_err(|e| e.to_string())?;
         *guard = Some(stop_tx);
-    }
+        // under the same lock as the connection it names
+        CHAT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    };
     {
         let mut guard = state.outgoing_tx.lock().map_err(|e| e.to_string())?;
         *guard = Some(outgoing_tx);
@@ -47,12 +54,16 @@ pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: Strin
         chat::run_chat_client(app, channel, auth, outgoing_rx, stop_rx).await;
     });
 
-    Ok(())
+    Ok(token)
 }
 
+// token: the connection to stop (from start_chat); a newer connection is left running. None stops whatever runs
 #[tauri::command]
-pub fn stop_chat(state: State<ChatState>) -> Result<(), String> {
+pub fn stop_chat(state: State<ChatState>, token: Option<u64>) -> Result<(), String> {
     let mut guard = state.stop_tx.lock().map_err(|e| e.to_string())?;
+    if token.is_some_and(|t| t != CHAT_TOKEN.load(std::sync::atomic::Ordering::SeqCst)) {
+        return Ok(());
+    }
     if let Some(tx) = guard.take() {
         let _ = tx.send(());
     }

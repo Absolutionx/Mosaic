@@ -39,7 +39,38 @@ export function importThemeCode(text) {
   if (!raw.startsWith(PREFIX)) throw new Error("That isn't a Mosaic theme code (they start with MOSAIC-THEME:).");
   let data;
   try { data = JSON.parse(fromB64(raw.slice(PREFIX.length).replace(/\s+/g, ""))); } catch { throw new Error("That theme code is damaged or incomplete."); }
-  return applyLook(data);
+  let removed = 0;
+  if (data && typeof data === "object" && typeof data.css === "string" && data.css.length <= MAX_CSS) {
+    ({ css: data.css, removed } = stripOutsideLinks(data.css));
+  }
+  const summary = applyLook(data);
+  return removed ? `${summary} ${removed} link${removed === 1 ? "" : "s"} to outside images or fonts in its CSS ${removed === 1 ? "was" : "were"} left out.` : summary;
+}
+
+// A shared theme's CSS could load an image (or font, or another stylesheet) from someone else's server, which
+// would tell that server your IP address, and when you open Mosaic. Imported codes keep only what's inside the
+// code itself (data: URLs); every link elsewhere becomes "none". Your own CSS (typed in Settings, saved looks)
+// is never touched. The CSS is first read by the browser and written back out, which spells every url() the
+// same plain way (no escapes or comments to hide one in); without that (tests), the text is checked as is.
+export function stripOutsideLinks(css) {
+  let text = String(css || "");
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(text); // @import is ignored here, so it never survives
+    text = [...sheet.cssRules].map((r) => r.cssText).join("\n");
+  } catch { /* no CSSStyleSheet: check the raw text */ }
+  // escapes left in custom properties (\75 rl( is url( in disguise): drop hex escapes, unescape the rest
+  text = text.replace(/\\[0-9a-f]{1,6}\s?/gi, "").replace(/\\(.)/g, "$1");
+  let removed = 0;
+  text = text.replace(/@import\b[^;]*;?/gi, () => { removed++; return ""; });
+  text = text.replace(/url\(\s*(["']?)([\s\S]*?)\1\s*\)/gi, (m, q, u) => {
+    if (/^data:/i.test(u.trim())) return m;
+    removed++;
+    return "none";
+  });
+  // image-set("https://...") and the like name an address as a plain string
+  text = text.replace(/(["'])\s*(?:[a-z][a-z0-9+.-]*:)?\/\/[^"']*\1/gi, () => { removed++; return '""'; });
+  return { css: text, removed };
 }
 
 // check a look object and apply it (theme codes and saved looks both come through here); returns a summary

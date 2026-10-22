@@ -53,7 +53,7 @@ function describe(e) {
     case "bet": return ["◆", "spent", esc(e.n2 || "Prediction"), "your bet"];
     case "predwin": return ["★", "other", "Won prediction", esc(e.n2 || "")];
     case "refund": return ["↺", "other", "Prediction refunded", esc(e.n2 || "")];
-    case "streak": return ["🔥", "other", "Shared watch streak", ""];
+    case "streak": return ["🔥", "other", "Watch streak bonus", esc(e.n2 && e.n2 !== "Shared watch streak" ? e.n2 : "")];
     case "extra": return ["＋", "other", "Extra points", "a raid, streak or Twitch bonus"];
     // Mosaic wasn't watching this channel in between (another channel, Twitch's own site or app, Mosaic closed)
     case "away": return ["⏸", "other", "Earned while you were away", e.f ? `not watched here since ${new Date(e.f).toLocaleDateString([], { month: "short", day: "numeric" })} ${clock(e.f)}` : ""];

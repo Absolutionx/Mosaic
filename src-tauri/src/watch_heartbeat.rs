@@ -28,6 +28,12 @@
 // content_mode "vod" (first ~15 s in, then each minute). replay-watch.js times them, only while the clip or VOD
 // is actually playing, one at a time.
 //
+// The reports alone (answered 204) didn't save a streak (10-21-26). Mosaic plays clips and VODs anonymously,
+// while Twitch's player fetches them with a playback token signed for the viewer, so Twitch never saw the
+// account watch them. The same thing stopped drops counting (see above). So when a clip or VOD starts, it's
+// also fetched the way the player does it, with the account: a VOD's playlist from usher, or the first bytes
+// of a clip's video. And the reports now carry the session ids the web player sends with each one.
+//
 // Requires the Twitch device-login token (same one pins/predictions use). No device login -> no token
 // -> nothing is reported, exactly like not being logged in on the web.
 
@@ -101,6 +107,8 @@ pub struct WatchHeartbeatService {
     // doesn't look it up again, and what the last replay report did (heartbeat_status)
     replay_info: tokio::sync::Mutex<Option<(String, ReplayInfo)>>,
     replay_status: std::sync::Mutex<String>,
+    // the web player's device id (the same one for every report in a run)
+    device_id: String,
 }
 
 // what a clip or VOD report names: its channel and category, and the video id Twitch's player puts in vod_id
@@ -111,6 +119,15 @@ struct ReplayInfo {
     game_id: String,
     game_name: String,
     vod_id: String,
+    // one playback session per clip or VOD opened, like the web player's play_session_id
+    play_session_id: String,
+}
+
+// 32 hex characters, the shape of the web player's device and session ids
+fn random_hex_id() -> String {
+    let mut rnd = [0u8; 16];
+    let _ = getrandom::getrandom(&mut rnd);
+    rnd.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 impl WatchHeartbeatService {
@@ -130,6 +147,7 @@ impl WatchHeartbeatService {
             health: std::sync::Mutex::new("unknown"),
             replay_info: tokio::sync::Mutex::new(None),
             replay_status: std::sync::Mutex::new("no clip or VOD reported yet".into()),
+            device_id: random_hex_id(),
         }
     }
 
@@ -667,6 +685,7 @@ impl WatchHeartbeatService {
             game_id: node["game"]["id"].as_str().unwrap_or_default().to_string(),
             game_name: node["game"]["name"].as_str().unwrap_or_default().to_string(),
             vod_id: vod_id.to_string(),
+            play_session_id: random_hex_id(),
         };
         *self.replay_info.lock().await = Some((key, info.clone()));
         Ok(info)
@@ -706,10 +725,21 @@ impl WatchHeartbeatService {
             "muted": muted,
             "player": "site",
             "stream_type": "vod",
-            "user_id": user_id
+            "user_id": user_id,
+            "platform": "web",
+            "client_app": "twilight",
+            "device_id": self.device_id,
+            "distinct_id": self.device_id,
+            "session_device_id": self.device_id,
+            "play_session_id": info.play_session_id,
+            "player_state": "Playing",
+            "playback_rate": 1,
+            "is_dvr": false
         });
         if clip {
             props["clip_slug"] = json!(id);
+        } else {
+            props["vod"] = json!(info.vod_id);
         }
         // the web player counts the clip as viewed when it starts
         if clip && event == "start" {
@@ -730,11 +760,21 @@ impl WatchHeartbeatService {
                 self.log(&format!("clip {id}: view count failed: {e}"));
             }
         }
+        // starting: fetch it with the account, as Twitch's player does (see the header)
+        let fetched = if event == "start" {
+            Some(match self.replay_playback(kind, id, &token).await {
+                Ok(s) => s,
+                Err(e) => format!("account fetch failed: {e}"),
+            })
+        } else {
+            None
+        };
         let payload = json!([{ "event": name, "properties": props }]);
         let result = self.send_spade_events(&payload, &token).await;
+        let extra = fetched.map(|f| format!(", {f}")).unwrap_or_default();
         let line = match &result {
-            Ok(code) => format!("{} {kind} {} ({}): {name} {code}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
-            Err(e) => format!("{} {kind} {} ({}): {name} failed: {e}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
+            Ok(code) => format!("{} {kind} {} ({}): {name} {code}{extra}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
+            Err(e) => format!("{} {kind} {} ({}): {name} failed: {e}{extra}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
         };
         self.log(&line);
         eprintln!("[heartbeat] {line}");
@@ -742,6 +782,95 @@ impl WatchHeartbeatService {
             *g = line.clone();
         }
         result.map(|code| code.to_string())
+    }
+
+    // what Twitch's player fetches with the account when a clip or VOD starts: a playback token signed for the
+    // viewer, then the VOD's master playlist from usher, or the start of the clip's video (smallest quality).
+    // Nothing is played from it; it only lets Twitch see the account watching
+    async fn replay_playback(&self, kind: &str, id: &str, token: &str) -> Result<String, String> {
+        if kind == "clip" {
+            let json = self
+                .gql_as_viewer(
+                    json!({
+                        "query": "query MosaicClipPlayback($slug: ID!) { clip(slug: $slug) { \
+                            playbackAccessToken(params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) \
+                            { signature value } videoQualities { quality sourceURL } } }",
+                        "variables": { "slug": id }
+                    }),
+                    token,
+                )
+                .await?;
+            let clip = &json["data"]["clip"];
+            let tok = &clip["playbackAccessToken"];
+            let (Some(sig), Some(value)) = (tok["signature"].as_str(), tok["value"].as_str()) else {
+                return Err(json["errors"][0]["message"].as_str().unwrap_or("no clip playback token").to_string());
+            };
+            // listed best first; the last is the smallest
+            let src = clip["videoQualities"]
+                .as_array()
+                .and_then(|q| q.iter().filter_map(|x| x["sourceURL"].as_str()).filter(|u| u.starts_with("https://")).last())
+                .ok_or_else(|| "no clip video".to_string())?;
+            let sep = if src.contains('?') { '&' } else { '?' };
+            let url = format!(
+                "{src}{sep}sig={}&token={}",
+                crate::stream_relay::pct_encode(sig),
+                crate::stream_relay::pct_encode(value)
+            );
+            let resp = self
+                .client
+                .get(&url)
+                .header("Range", "bytes=0-65535")
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(format!("clip video {}", resp.status().as_u16()))
+        } else {
+            let json = self
+                .gql_as_viewer(
+                    json!({
+                        "operationName": "PlaybackAccessToken",
+                        "query": "query PlaybackAccessToken($id: ID!, $playerType: String!) { \
+                            videoPlaybackAccessToken(id: $id, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: $playerType}) \
+                            { value signature } }",
+                        "variables": { "id": id, "playerType": "site" }
+                    }),
+                    token,
+                )
+                .await?;
+            let tok = &json["data"]["videoPlaybackAccessToken"];
+            let (Some(value), Some(sig)) = (tok["value"].as_str(), tok["signature"].as_str()) else {
+                return Err(json["errors"][0]["message"].as_str().unwrap_or("no VOD playback token").to_string());
+            };
+            let usher = format!(
+                "https://usher.ttvnw.net/vod/{id}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
+&p={}&player_backend=mediaplayer&playlist_include_framerate=true",
+                crate::stream_relay::pct_encode(sig),
+                crate::stream_relay::pct_encode(value),
+                rand::random::<u32>() % 10_000_000,
+            );
+            let master = self.get_playlist(&usher).await?;
+            // and the smallest rendition's playlist, as the player loads one right after
+            if let Some(variant) = master.lines().map(str::trim).filter(|l| l.starts_with("https://")).last() {
+                self.get_playlist(variant).await?;
+            }
+            Ok("VOD playlist ok".into())
+        }
+    }
+
+    // one GQL request with the viewer's (device login) token
+    async fn gql_as_viewer(&self, body: serde_json::Value, token: &str) -> Result<serde_json::Value, String> {
+        let resp = self
+            .client
+            .post(GQL_URL)
+            .header("Client-Id", crate::twitch_device_auth::device_client_id())
+            .header("Authorization", format!("OAuth {token}"))
+            .json(&body)
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        resp.json().await.map_err(|e| e.to_string())
     }
 
     pub fn status(&self) -> String {

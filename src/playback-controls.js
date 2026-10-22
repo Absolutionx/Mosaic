@@ -504,6 +504,11 @@ export class PlaybackControls {
     this.mseController?.expectTeardown?.();
   }
 
+  // the restart failed and the relay keeps playing (start_stream leaves it running on a failed quality switch)
+  cancelRelayTeardown() {
+    this.mseController?.cancelTeardown?.();
+  }
+
   attachLiveMse(relayUrl) {
     // reaching the live relay only happens for a Twitch session, belt-and-braces reset alongside start()'s so a stale true from a Kick session can't linger
     this._isKickSession = false;

@@ -246,8 +246,11 @@ function handleFeederDeath(reason) {
   lastDeadAt = now;
   const delay = Math.min(1000 * deadRetries, 5000);
   console.warn(`[pip] stream died (${reason}) - reattaching in ${delay}ms (attempt ${deadRetries}/5)`);
-  try { feeder?.stop?.(); } catch (_) {}
-  setTimeout(() => attachLiveFeeder(), delay);
+  // an MSE feeder stops, an hls.js one (MultiView's pop-out) is destroyed
+  try { if (feeder?.stop) feeder.stop(); else feeder?.destroy?.(); } catch (_) {}
+  // a MultiView pop-out has no relay URL: it resolves its own stream again. it used to be handed to the relay
+  // path with nothing to play, so it never came back after a hiccup
+  setTimeout(() => (mode === "mv" ? attachMvLiveFeeder() : attachLiveFeeder()), delay);
 }
 function attachVodFeeder(url, isLowQuality) {
   feeder = attachHlsVod(videoEl, url, {

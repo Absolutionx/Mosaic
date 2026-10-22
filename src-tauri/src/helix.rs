@@ -1935,14 +1935,13 @@ async fn public_gql(app: &tauri::AppHandle, query: &str) -> Result<serde_json::V
     Err(why.join("; "))
 }
 
-// The Available list when Twitch won't share it with the connection's app id (see get_drop_campaigns), built a
-// batch at a time as the hub scrolls: each call reads the next few pages of Twitch's live streams filtered to
-// drops-enabled ones (the directory's "Drops Enabled" filter, most viewers first), and for each game not seen
-// yet asks its top channels which campaigns they carry (channel.viewerDropCampaigns). Only game campaigns are
+// The Available list when Twitch won't share it with the connection's app id (see get_drop_campaigns), built in a
+// single pass: Twitch's live streams filtered to drops-enabled ones (the directory's "Drops Enabled" filter;
+// first pages only, see drop_scan_step), and for each game asks its top channels which campaigns they carry
+// (channel.viewerDropCampaigns). Only game campaigns are
 // kept: a streamer's own channel-only drops are left out. Covers every campaign someone is live with, which
 // is what "Find streams" needs anyway. The scan is kept for a few minutes, so reopening the hub resumes it
 struct DropScan {
-    after: String,
     done: bool,
     games: std::collections::HashSet<String>,
     ids: std::collections::HashSet<String>,
@@ -1968,7 +1967,7 @@ pub async fn drop_campaigns_more(reset: bool, app: tauri::AppHandle) -> Result<s
     impl Drop for Busy { fn drop(&mut self) { DROP_SCAN_BUSY.store(false, std::sync::atomic::Ordering::Release); } }
     let _busy = Busy;
     let taken = DROP_SCAN.lock().ok().and_then(|mut g| g.take());
-    let fresh = || DropScan { after: String::new(), done: false, games: Default::default(), ids: Default::default(), found: Vec::new(), at: std::time::Instant::now() };
+    let fresh = || DropScan { done: false, games: Default::default(), ids: Default::default(), found: Vec::new(), at: std::time::Instant::now() };
     let mut scan = match taken {
         Some(s) if !reset || s.at.elapsed() < std::time::Duration::from_secs(180) => s,
         _ => fresh(),
@@ -1990,37 +1989,115 @@ pub async fn drop_campaigns_more(reset: bool, app: tauri::AppHandle) -> Result<s
 }
 
 async fn drop_scan_step(app: &tauri::AppHandle, scan: &mut DropScan) -> Result<Vec<serde_json::Value>, String> {
-    const PAGES: usize = 3;
-    const PER_GAME: usize = 3;
+    const PER_GAME: usize = 4;
     const CHUNK: usize = 15;
-    const STREAMS: &str = "edges { cursor node { broadcaster { login } game { id } } } pageInfo { hasNextPage }";
-    // new games in this batch -> channels to ask, most viewers first
+    // categories by viewers, 100 a page: the games past the top 300 rarely have a campaign
+    const TOP_GAME_PAGES: usize = 3;
+    // Twitch now refuses the next page of a stream list ("failed integrity check" on any `after` cursor,
+    // checked 10-21-26), so the scan could only ever see the first 30 streams: a handful of campaigns, after
+    // several refused retries. Instead, one pass of first pages only: drops-enabled streams by most viewers,
+    // fewest viewers and newest, and by most viewers in each common language. ~70 games in two requests
+    // (Twitch allows 15 aliased lists per request)
+    const SORTS: [&str; 3] = ["VIEWER_COUNT", "VIEWER_COUNT_ASC", "RECENT"];
+    const LANGS: [&str; 19] = ["EN", "ES", "PT", "DE", "FR", "RU", "JA", "KO", "IT", "PL", "TR", "ZH", "TH", "UK", "AR", "NL", "SV", "HU", "CS"];
+    const STREAMS: &str = "edges { node { broadcaster { login } game { id } } }";
+    let lists: Vec<String> = SORTS
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("s{i}: streams(first: 30, options: {{systemFilters: [DROPS_ENABLED], sort: {s}}}) {{ {STREAMS} }}"))
+        .chain(LANGS.iter().map(|l| {
+            format!("l{l}: streams(first: 30, options: {{systemFilters: [DROPS_ENABLED], broadcasterLanguages: [{l}]}}) {{ {STREAMS} }}")
+        }))
+        .collect();
+    // new games -> channels to ask, most viewers first (the lists are read in order, most viewers first)
     let mut batch: Vec<(String, Vec<String>)> = Vec::new();
-    for _ in 0..PAGES {
-        // values go in as JSON-escaped string literals (valid GraphQL strings), the form tested against Twitch
-        let query = format!("query MosaicDrops {{ streams(first: 30{}, options: {{systemFilters: [DROPS_ENABLED]}}) {{ {STREAMS} }} }}", scan.after);
-        let json = public_gql(app, &query).await?;
-        let Some(edges) = json.pointer("/data/streams/edges").and_then(|v| v.as_array()) else {
-            let why = json.get("errors").map(|e| e.to_string()).unwrap_or_else(|| "no stream list".into());
-            return Err(why.chars().take(300).collect());
+    let mut answered = 0usize;
+    let mut last_err = String::new();
+    for chunk in lists.chunks(CHUNK) {
+        let json = match public_gql(app, &format!("query MosaicDrops {{ {} }}", chunk.join(" "))).await {
+            Ok(j) => j,
+            Err(e) => { last_err = e; continue; }
         };
-        for e in edges {
-            let (Some(login), Some(game)) = (
-                e.pointer("/node/broadcaster/login").and_then(|v| v.as_str()),
-                e.pointer("/node/game/id").and_then(|v| v.as_str()),
-            ) else { continue };
-            if scan.games.contains(game) { continue; }
-            match batch.iter_mut().find(|g| g.0 == game) {
-                Some(g) => { if g.1.len() < PER_GAME { g.1.push(login.to_string()); } }
-                None => batch.push((game.to_string(), vec![login.to_string()])),
+        let Some(data) = json.get("data").and_then(|v| v.as_object()) else {
+            last_err = json.get("errors").map(|e| e.to_string()).unwrap_or_else(|| "no stream list".into());
+            continue;
+        };
+        answered += 1;
+        for list in data.values() {
+            for e in list.pointer("/edges").and_then(|v| v.as_array()).into_iter().flatten() {
+                let (Some(login), Some(game)) = (
+                    e.pointer("/node/broadcaster/login").and_then(|v| v.as_str()),
+                    e.pointer("/node/game/id").and_then(|v| v.as_str()),
+                ) else { continue };
+                if scan.games.contains(game) { continue; }
+                match batch.iter_mut().find(|g| g.0 == game) {
+                    Some(g) => { if g.1.len() < PER_GAME && !g.1.iter().any(|x| x == login) { g.1.push(login.to_string()); } }
+                    None => batch.push((game.to_string(), vec![login.to_string()])),
+                }
             }
         }
-        let more = json.pointer("/data/streams/pageInfo/hasNextPage").and_then(|v| v.as_bool()).unwrap_or(false);
-        match edges.last().and_then(|e| e.get("cursor")).and_then(|v| v.as_str()).filter(|c| !c.is_empty()) {
-            Some(c) if more => scan.after = format!(", after: {}", serde_json::json!(c)),
-            _ => { scan.done = true; break; }
+    }
+    // those lists all lean on the same big games, so on their own they found about ten campaigns. Also go
+    // through Twitch's top categories (the official API pages fine, unlike the stream lists) and ask each one
+    // for its drops-enabled streams, 15 games per request
+    let mut known: std::collections::HashSet<String> = scan.games.clone();
+    known.extend(batch.iter().map(|g| g.0.clone()));
+    let mut game_ids: Vec<String> = Vec::new();
+    {
+        use tauri::Manager;
+        let token = app.state::<ChatState>().auth.lock().ok().and_then(|a| a.as_ref().map(|a| a.access_token.clone()));
+        let mut cursor: Option<String> = None;
+        for _ in 0..TOP_GAME_PAGES {
+            let url = match &cursor {
+                Some(c) => format!("https://api.twitch.tv/helix/games/top?first=100&after={c}"),
+                None => "https://api.twitch.tv/helix/games/top?first=100".to_string(),
+            };
+            let Ok(body) = helix_get(&url, token.clone()).await else { break };
+            let Ok(page) = serde_json::from_str::<serde_json::Value>(&body) else { break };
+            for g in page.get("data").and_then(|v| v.as_array()).into_iter().flatten() {
+                if let Some(id) = g.get("id").and_then(|v| v.as_str()) {
+                    if !id.is_empty() && known.insert(id.to_string()) { game_ids.push(id.to_string()); }
+                }
+            }
+            cursor = page.pointer("/pagination/cursor").and_then(|v| v.as_str()).filter(|c| !c.is_empty()).map(String::from);
+            if cursor.is_none() { break; }
         }
     }
+    {
+        use futures_util::StreamExt;
+        let answers: Vec<(Vec<String>, Result<serde_json::Value, String>)> = futures_util::stream::iter(
+            game_ids.chunks(CHUNK).map(|c| c.to_vec()).collect::<Vec<_>>(),
+        )
+        .map(|chunk| {
+            let app = app.clone();
+            let body: Vec<String> = chunk.iter().enumerate()
+                .map(|(i, id)| format!("g{i}: game(id: {}) {{ streams(first: {PER_GAME}, options: {{systemFilters: [DROPS_ENABLED]}}) {{ {STREAMS} }} }}", serde_json::json!(id)))
+                .collect();
+            async move {
+                let r = public_gql(&app, &format!("query MosaicDrops {{ {} }}", body.join(" "))).await;
+                (chunk, r)
+            }
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+        for (chunk, answer) in answers {
+            let Ok(json) = answer else { continue };
+            answered += 1;
+            for (i, game) in chunk.iter().enumerate() {
+                let logins: Vec<String> = json.pointer(&format!("/data/g{i}/streams/edges")).and_then(|v| v.as_array()).into_iter().flatten()
+                    .filter_map(|e| e.pointer("/node/broadcaster/login").and_then(|v| v.as_str()).map(String::from))
+                    .take(PER_GAME)
+                    .collect();
+                if !logins.is_empty() { batch.push((game.clone(), logins)); }
+            }
+        }
+    }
+    if answered == 0 {
+        return Err(last_err.chars().take(300).collect());
+    }
+    // one pass covers everything there is to find this way
+    scan.done = true;
     scan.games.extend(batch.iter().map(|g| g.0.clone()));
     let channels: Vec<String> = batch.into_iter().flat_map(|g| g.1).collect();
     // a few channels per request (aliased fields); when Twitch refuses a batch, that batch's channels one per
@@ -2031,13 +2108,27 @@ async fn drop_scan_step(app: &tauri::AppHandle, scan: &mut DropScan) -> Result<V
     let field = |i: usize, l: &str| format!("c{i}: channel(name: {}) {{ {FIELDS} }}", serde_json::json!(l));
     let mut lists: Vec<serde_json::Value> = Vec::new();
     let (mut refused, asked) = (0usize, channels.len());
-    for chunk in channels.chunks(CHUNK) {
+    // the chunks run a few at a time (they used to go one after another)
+    use futures_util::StreamExt;
+    let chunk_answers: Vec<(Vec<String>, Result<serde_json::Value, String>)> = futures_util::stream::iter(
+        channels.chunks(CHUNK).map(|c| c.to_vec()).collect::<Vec<_>>(),
+    )
+    .map(|chunk| {
+        let app = app.clone();
         let body: Vec<String> = chunk.iter().enumerate().map(|(i, l)| field(i, l)).collect();
-        if let Ok(json) = public_gql(app, &format!("query MosaicDrops {{ {} }}", body.join(" "))).await {
+        async move {
+            let r = public_gql(&app, &format!("query MosaicDrops {{ {} }}", body.join(" "))).await;
+            (chunk, r)
+        }
+    })
+    .buffer_unordered(4)
+    .collect()
+    .await;
+    for (chunk, answer) in chunk_answers {
+        if let Ok(json) = answer {
             lists.extend((0..chunk.len()).filter_map(|i| json.pointer(&format!("/data/c{i}/viewerDropCampaigns")).cloned()));
             continue;
         }
-        use futures_util::StreamExt;
         let queries: Vec<String> = chunk.iter().map(|l| format!("query MosaicDrops {{ {} }}", field(0, l))).collect();
         let answers: Vec<Result<serde_json::Value, String>> = futures_util::stream::iter(queries)
             .map(|query| {
@@ -2059,6 +2150,9 @@ async fn drop_scan_step(app: &tauri::AppHandle, scan: &mut DropScan) -> Result<V
         let game = c.pointer("/game/displayName").and_then(|v| v.as_str()).unwrap_or("");
         // no game: a streamer's own channel-only campaign, left out
         if id.is_empty() || game.is_empty() || !scan.ids.insert(id.to_string()) { continue; }
+        // Twitch sometimes runs the same campaign under two ids (one per region): one card for both
+        let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if !scan.ids.insert(format!("{}\u{1f}{}", game.to_lowercase(), name.trim().to_lowercase())) { continue; }
         let rewards: Vec<String> = c.get("timeBasedDrops").and_then(|v| v.as_array()).into_iter().flatten()
             .flat_map(|d| {
                 let names: Vec<String> = d.pointer("/benefitEdges").and_then(|v| v.as_array()).into_iter().flatten()

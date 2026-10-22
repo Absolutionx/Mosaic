@@ -505,9 +505,13 @@ export class MultiView {
     });
 
     await this._loadVideo(record, loadingEl);
-    // first tile added becomes the audio focus automatically, unless Settings > MultiView starts muted
-    // (a stream Home's launcher picks for sound is focused explicitly, so it still gets it)
-    if (!this.focusedChannel && getSetting("multiviewSound") !== "muted") this.focus(channel);
+    // closed, or this tile removed, while it loaded: focusing it now would connect chat for a stream that's gone
+    // (with MultiView closed, a second chat running next to the main one)
+    if (!this._open || this.tiles.get(channel) !== record) return;
+    // first tile added becomes the focus automatically. with Settings > MultiView starting muted it still gets
+    // the chat and the highlight, just not the sound (a stream Home's launcher picks for sound is focused
+    // explicitly, so it still gets it)
+    if (!this.focusedChannel) this.focus(channel, { keepAudio: getSetting("multiviewSound") === "muted" });
     this._refreshLayout();
   }
 

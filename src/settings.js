@@ -166,11 +166,12 @@ export function setSetting(id, value) {
   if (!(id in DEFAULTS)) return;
   const legacy = LEGACY[id];
   try {
-    if (legacy) localStorage.setItem(legacy.key, legacy.write(value));
+    if (legacy) { if (!window.__mosaicRestoring) localStorage.setItem(legacy.key, legacy.write(value)); }
     else {
       const s = load();
       s[id] = value;
-      localStorage.setItem(STORE_KEY, JSON.stringify(s));
+      // a backup is being restored (backup.js): saving the settings still in memory would undo it
+      if (!window.__mosaicRestoring) localStorage.setItem(STORE_KEY, JSON.stringify(s));
     }
   } catch { /* quota: the change still applies this session */ }
   applyAppearance();

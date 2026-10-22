@@ -9443,10 +9443,13 @@ body.chat-overlay-active #chat-overlay { display: flex; }
 .rw-camp-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .rw-camp-art { flex: 0 0 auto; width: 30px; height: 40px; border-radius: 5px; object-fit: cover; background: var(--m-raised, #232b36); }
 .rw-camp-info { flex: 1; min-width: 0; }
-.rw-camp-game { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 800; color: var(--m-text, #e7ebf2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rw-camp-meta { margin-top: 2px; font-size: 11.5px; color: var(--m-muted, #9aa5b4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the game's name is never cut: a long one wraps onto a second line */
+.rw-camp-game { font-size: 13.5px; font-weight: 800; line-height: 1.25; color: var(--m-text, #e7ebf2); overflow-wrap: anywhere; }
+/* the "Earning" pill leads the line below, and the campaign name and end date give way to it */
+.rw-camp-meta { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 3px; font-size: 11.5px; color: var(--m-muted, #9aa5b4); white-space: nowrap; }
+.rw-camp-meta-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .rw-earning {
-  flex: 0 0 auto; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 800;
+  flex: 0 0 auto; white-space: nowrap; line-height: 16px; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 800;
   background: var(--m-accent, #9147ff); color: var(--m-accent-fg, #fff);
 }
 .rw-camp-count { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--m-faint, #697386); font-variant-numeric: tabular-nums; }
@@ -9504,9 +9507,10 @@ body.chat-overlay-active #chat-overlay { display: flex; }
 .rw-wide .rw-camps { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; align-items: start; }
 .rw-wide .rw-camp { margin: 0; }
 /* wide cards are narrower than the old single column: let long names wrap to two lines instead of cutting */
-.rw-wide .rw-camp-meta, .rw-wide .rw-drop .rewards-drop-name, .rw-wide .rw-rewards .reward-title {
+.rw-wide .rw-camp-meta-text, .rw-wide .rw-drop .rewards-drop-name, .rw-wide .rw-rewards .reward-title {
   white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.3;
 }
+.rw-wide .rw-camp-meta { align-items: flex-start; }
 .rw-wide .rw-drop .rewards-drop-top { align-items: flex-start; }
 @media (max-width: 760px) {
   .rw-wide .rw-cols { flex-direction: column; overflow-y: auto; }
@@ -9565,8 +9569,14 @@ body.chat-overlay-active #app.theater-mode .win-btn { color: #fff; }
 body.kick-mode #drops-tab { display: none; }
 
 /* balance pill: "+Bonus" after an automatic bonus claim */
-#rewards-btn.bonus-claimed { color: color-mix(in srgb, #5fe3a8, #000 var(--m-shade, 0%)); border-color: rgba(62, 207, 142, 0.5); }
-#rewards-btn.bonus-claimed .rewards-balance { color: color-mix(in srgb, #5fe3a8, #000 var(--m-shade, 0%)); font-weight: 800; }
+/* neutral, the app's usual white glow (follows the theme's text colour, so it reads on light themes too) */
+#rewards-btn.bonus-claimed {
+  color: var(--m-text, #e7ebf2);
+  border-color: color-mix(in srgb, var(--m-text, #fff) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-text, #fff) 10%, transparent);
+  transition: background .12s ease, color .12s ease, border-color .3s ease, box-shadow .3s ease;
+}
+#rewards-btn.bonus-claimed .rewards-balance { color: var(--m-text, #e7ebf2); font-weight: 800; }
 
 /* ==== VOD bookmarks (vod-bookmarks.js) ==== */
 .seek-bar-bookmarks { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
@@ -9710,6 +9720,11 @@ body.kick-mode .chat-settings-menu-item[data-action="drops"] { display: none; }
   filter: blur(var(--amb-blur, 36px)) saturate(var(--amb-sat, 1.1)) brightness(var(--amb-br, .9));
 }
 body.ambient-glow #video-column { position: relative; isolation: isolate; overflow: hidden; }
+/* ...but not while the stream floats as the mini player (mini-player.js): isolation makes the column its own
+   stacking layer, so the floating box's z-index only counted inside it and chat painted over it. The glow
+   isn't shown behind a page anyway */
+body.ambient-glow #app.mini-player-active #video-column { isolation: auto; }
+#app.mini-player-active #ambient-glow-wrap { display: none; }
 body.ambient-glow #video-region, body.ambient-glow #video-element { background: transparent; }
 body.ambient-glow #ambient-glow { opacity: var(--amb-o, .75); }
 body.ambient-glow #ambient-glow.idle { opacity: 0; }

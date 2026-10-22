@@ -4,6 +4,30 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.2",
+    items: [
+      { kind: "fixed", top: true, title: "Closing to the tray stops everything", desc: "Closing Mosaic to the tray while a stream or VOD was still loading could start it playing in the background. MultiView now closes too, instead of playing on in the tray." },
+      { kind: "improved", title: "Drops hub finds more campaigns", desc: "Twitch stopped letting apps page through its drops-enabled streams, so the Available list only found a handful of campaigns, slowly. It now checks Twitch's top categories too, in one quick pass, and the same campaign no longer shows up twice. Twitch only tells apps one campaign per channel, so some campaigns can still be missing." },
+      { kind: "improved", title: "Watch streak bonus in the Ledger", desc: "The streak bonus Twitch pays early in a stream now shows as \"Watch streak bonus\" instead of extra points. Sharing your streak no longer promises points: Twitch pays the bonus either way." },
+      { kind: "improved", title: "Saving streaks with clips and VODs", desc: "A clip or past broadcast you watch to save a watch streak now also loads with your Twitch account, the way twitch.tv's player does." },
+      { kind: "improved", title: "Drop cards", desc: "A campaign's game name is shown in full, with the Earning tag on the line below it." },
+      { kind: "improved", title: "Calmer bonus flash", desc: "The points button's \"+Bonus\" flash is a soft white glow instead of green." },
+      { kind: "improved", title: "Safer theme codes", desc: "A shared theme code can't load images or fonts from someone else's server any more, which could tell them your IP address. Images built into the code still work." },
+      { kind: "improved", title: "Safer backups", desc: "Restoring a backup someone else sent you can't turn on the developer tools, and its custom CSS can't load anything from someone else's server, the same as theme codes." },
+      { kind: "improved", title: "Backups include your clips", desc: "Settings backups now also keep the list of clips you've made." },
+      { kind: "fixed", title: "Failed quality switch", desc: "If switching quality failed, the stream you were watching froze. It now keeps playing at the quality you had, and says the switch didn't work." },
+      { kind: "fixed", title: "Mini player behind chat", desc: "With Ambient glow on, the little player that floats over Home and Browse was hidden behind chat." },
+      { kind: "fixed", title: "Picking quickly", desc: "Clicking a VOD and then a live channel right away could end with the VOD taking over." },
+      { kind: "fixed", title: "MultiView", desc: "Opening MultiView during a VOD or a Kick stream brings that back when MultiView closes, instead of a broken tile. The main stream fully stops while MultiView is open, its chat connects even when MultiView starts muted, and a stream popped out of MultiView recovers after a hiccup." },
+      { kind: "fixed", title: "Typing < and > during a VOD", desc: "The VOD speed keys swallowed < and > in whispers, notes and search boxes." },
+      { kind: "fixed", title: "Staying logged in", desc: "Starting Mosaic without internet, or while Twitch's login service had a hiccup, logged you out of Twitch." },
+      { kind: "fixed", title: "Log in button", desc: "Closing the Twitch login tab no longer leaves the button stuck on \"Logging in\" until Mosaic restarts." },
+      { kind: "fixed", title: "Fullscreen and the tray", desc: "Reopening Mosaic from the tray after closing it in fullscreen brings it back fullscreen, the way you left it." },
+      { kind: "fixed", title: "VOD downloads", desc: "Two downloads of the same VOD at once no longer clash, and a VOD named like a Windows device (\"CON\", \"NUL\") can be saved." },
+      { kind: "fixed", title: "Restoring a backup", desc: "Settings or the Ledger could be saved over a backup you were restoring in the moment before Mosaic reloads." },
+    ],
+  },
+  {
     version: "1.8.1",
     items: [
       { kind: "fixed", top: true, title: "Clips and VODs save watch streaks", desc: "Watching a clip or past broadcast in Mosaic now counts with Twitch, like it does on twitch.tv, so it can save a watch streak that's about to break. Before, only live streams counted." },
