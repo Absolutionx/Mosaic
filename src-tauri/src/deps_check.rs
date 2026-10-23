@@ -50,10 +50,10 @@ pub async fn install_stream_deps() -> Result<String, String> {
     let mut messages = Vec::new();
 
     if !status.streamlink {
-        messages.push(run_winget_install("Streamlink.Streamlink", "streamlink").await?);
+        messages.push(run_winget_install("Streamlink.Streamlink", "streamlink", "--version").await?);
     }
     if !status.ffmpeg {
-        messages.push(run_winget_install("Gyan.FFmpeg", "ffmpeg").await?);
+        messages.push(run_winget_install("Gyan.FFmpeg", "ffmpeg", "-version").await?);
     }
 
     if messages.is_empty() {
@@ -75,93 +75,91 @@ On Linux: use your distro's package manager - see the README."
         .to_string())
 }
 
+// winget's "nothing to do" answers to an install: the package is already installed (it then tries an upgrade,
+// and with no newer version that fails as UPDATE_NOT_APPLICABLE), as signed 32-bit exit codes
 #[cfg(windows)]
-async fn run_winget_install(package_id: &str, display_name: &str) -> Result<String, String> {
-    // uninstall first, tolerating any failure ("not found" is the expected case and fine). winget's
-    // `install` auto-redirects to an upgrade whenever its package database still has an entry for that
-    // id, even if the files/PATH entry are long gone, and with no newer version to upgrade TO it treats
-    // that as a hard failure (UPDATE_NOT_APPLICABLE). forcing a clean uninstall-then-install sidesteps that
-    let mut uninstall_cmd = Command::new("winget");
-    uninstall_cmd.args(["uninstall", "--id", package_id, "-e", "--silent", "--accept-source-agreements"]);
-    uninstall_cmd.creation_flags(CREATE_NO_WINDOW);
-    let uninstall_output = uninstall_cmd.output().await;
-    // logged (visible in the `npm run tauri dev` terminal) AND kept as a summary for the error message
-    // below, needed either way since the previous version discarded it, giving zero visibility into
-    // whether this step ran, found anything, or failed. a built app has no visible console, so the
-    // summary is also folded into the error text
-    let uninstall_summary = match &uninstall_output {
-        Ok(out) => {
-            let combined = [
-                String::from_utf8_lossy(&out.stdout).trim().to_string(),
-                String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            ]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" | ");
-            let summary = format!(
-                "uninstall exit={:?}{}",
-                out.status.code(),
-                if combined.is_empty() { String::new() } else { format!(" ({combined})") }
-            );
-            println!("[deps_check] winget {summary}");
-            summary
-        }
-        Err(e) => {
-            let summary = format!("uninstall failed to spawn: {e}");
-            println!("[deps_check] winget {summary}");
-            summary
-        }
-    };
+const WINGET_ALREADY_INSTALLED: [i32; 2] = [
+    0x8A15002Bu32 as i32, // APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE
+    0x8A150061u32 as i32, // APPINSTALLER_CLI_ERROR_PACKAGE_ALREADY_INSTALLED
+];
 
+// one winget run, with its output folded into one line: (exit code, "stdout | stderr"). Err when winget itself
+// couldn't be started
+#[cfg(windows)]
+async fn winget(args: &[&str]) -> Result<(Option<i32>, String), std::io::Error> {
     let mut cmd = Command::new("winget");
-    cmd.args([
-        "install",
-        "--id",
-        package_id,
-        "-e",
-        "--accept-package-agreements",
-        "--accept-source-agreements",
-        "--silent",
-    ]);
+    cmd.args(args);
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd.output().await.map_err(|e| {
-        // distinct from a nonzero exit below: this means winget itself couldn't be spawned
-        // (ErrorKind::NotFound), i.e. it isn't installed. winget ships as "App Installer" and is
-        // preinstalled on current Windows 10/11, but older/de-bloated Windows 10 images can lack it
+    let out = cmd.output().await?;
+    let text = [
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        String::from_utf8_lossy(&out.stderr).trim().to_string(),
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect::<Vec<_>>()
+    .join(" | ");
+    Ok((out.status.code(), text))
+}
+
+// installs one package. winget is asked to install it outright; when it says the package is already installed,
+// that copy is looked for where Mosaic looks (PATH and the installers' folders, stream_relay::locate_tool) and
+// used as it is. only a package winget remembers but whose files are gone gets uninstalled and installed again.
+// (this used to uninstall first every time: with two copies on the PC, the uninstall removed one and the
+// install then failed on the other)
+#[cfg(windows)]
+async fn run_winget_install(package_id: &str, display_name: &str, version_flag: &str) -> Result<String, String> {
+    // the winget source only: both packages live there, and on a new PC the Microsoft Store source is the one
+    // that tends to fail (agreements, certificates, a Store that hasn't set itself up yet)
+    let install_args = [
+        "install", "--id", package_id, "-e", "--source", "winget",
+        "--accept-package-agreements", "--accept-source-agreements", "--silent",
+    ];
+    let not_started = |e: std::io::Error| {
+        // winget ships as "App Installer", preinstalled on current Windows 10/11, but older or trimmed-down
+        // Windows 10 images can lack it, and a brand-new account only gets it a few minutes after first sign-in
         format!(
             "Couldn't run winget ({e}) - it may not be installed. \
              Get it from the Microsoft Store (\"App Installer\"), or \
              install {display_name} manually."
         )
-    })?;
-    if output.status.success() {
+    };
+    let (code, text) = winget(&install_args).await.map_err(not_started)?;
+    println!("[deps_check] winget install {package_id} exit={code:?}");
+    if code == Some(0) {
+        return Ok(format!("Installed {display_name}."));
+    }
+    let failed = |code: Option<i32>, text: &str, note: &str| {
+        // winget often writes its actual reason to STDOUT, which is why both streams are in here; both empty
+        // with a nonzero exit happens when an installer wanted Windows' permission and didn't get it
+        let detail = if text.is_empty() {
+            "no output from winget - it may need permission to install (try again and click Yes when Windows asks)".to_string()
+        } else {
+            text.to_string()
+        };
+        format!(
+            "winget failed installing {display_name} (exit code {}): {detail}{note}",
+            code.map_or("unknown".to_string(), |c| c.to_string())
+        )
+    };
+    if !code.is_some_and(|c| WINGET_ALREADY_INSTALLED.contains(&c)) {
+        return Err(failed(code, &text, ""));
+    }
+    // already installed: fine, as long as Mosaic can find and run it
+    if is_on_path(display_name, version_flag).await {
+        return Ok(format!("{display_name} was already installed."));
+    }
+    // winget remembers it, but it isn't where it should be: reinstall it from scratch
+    let (ucode, utext) = winget(&["uninstall", "--id", package_id, "-e", "--source", "winget", "--silent", "--accept-source-agreements"])
+        .await
+        .map_err(not_started)?;
+    println!("[deps_check] winget uninstall {package_id} exit={ucode:?}");
+    let (code, text) = winget(&install_args).await.map_err(not_started)?;
+    println!("[deps_check] winget reinstall {package_id} exit={code:?}");
+    if code == Some(0) {
         Ok(format!("Installed {display_name}."))
     } else {
-        // winget often writes its actual diagnostic text ("No package found matching input criteria",
-        // agreement prompts, dependency errors) to STDOUT, not stderr, a previous version surfaced only
-        // stderr, which is why the error shown to the user had nothing useful after the package name. both streams plus the exit code are included now
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = [stdout.trim(), stderr.trim()]
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" | ");
-        let detail = if combined.is_empty() {
-            // both streams empty with a nonzero exit is real winget behavior, not a bug here: it can happen
-            // when winget needs interactive elevation/UAC it didn't get as a hidden background process. the fix
-            // would be re-spawning with an explicit elevation request, not parsing output that was never produced
-            "no output from winget - it may need to run elevated \
-             (try installing manually from an admin terminal instead)"
-                .to_string()
-        } else {
-            combined
-        };
-        Err(format!(
-            "winget failed installing {display_name} (exit code {}): {detail} [{uninstall_summary}]",
-            output.status.code().map_or("unknown".to_string(), |c| c.to_string())
-        ))
+        Err(failed(code, &text, &format!(" [uninstall first: exit {ucode:?}: {utext}]")))
     }
 }
 
@@ -255,13 +253,14 @@ fn installed_from_version_output(text: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-// the streamlink.exe Mosaic launches: the first one on PATH, the same lookup Command::new("streamlink") does.
+// the streamlink.exe Mosaic launches: the first one on PATH, else the installers' folders (resolve_dep_path).
 // two copies at once is real (a per-user install plus a system-wide one, found on a test PC), and the update
 // has to go to the copy that's actually used
 #[cfg(windows)]
 fn streamlink_exe_on_path() -> Option<std::path::PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).map(|d| d.join("streamlink.exe")).find(|p| p.is_file())
+    // the same lookup playback uses (PATH, then the installers' folders)
+    let p = crate::stream_relay::resolve_dep_path("streamlink");
+    p.is_file().then_some(p)
 }
 
 #[cfg(not(windows))]

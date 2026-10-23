@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { showAppToast } from "./app-toast.js";
 
 const appEl = document.getElementById("app");
 const depsBanner = document.getElementById("deps-banner");
@@ -39,6 +40,8 @@ function hideDepsBanner() {
 depsBannerInstallBtn.addEventListener("click", async () => {
   depsBannerInstallBtn.disabled = true;
   depsBannerInstallBtn.textContent = "Installing…";
+  // winget gives no progress, and an installer can stop to ask Windows for permission: say so up front
+  showAppToast("Installing with winget. This can take a few minutes, and Windows may ask for permission.", { ms: 10000 });
   try {
     const message = await invoke("install_stream_deps");
     console.log("[deps] install result:", message);
@@ -50,6 +53,8 @@ depsBannerInstallBtn.addEventListener("click", async () => {
     depsBannerInstallBtn.disabled = false;
     depsBannerInstallBtn.textContent = "Retry";
     depsBannerMissingList.parentElement.title = String(err);
+    // the reason used to be only in that tooltip, so a failed install just showed "Retry"
+    showAppToast(`Couldn't install: ${err}`, { error: true, ms: 20000 });
   }
 });
 

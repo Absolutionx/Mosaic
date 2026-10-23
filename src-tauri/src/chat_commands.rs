@@ -17,6 +17,12 @@ use crate::{ChatState, EventSubState, SevenTvEventsState};
 // main chat as MultiView opens, MultiView's as it closes) used to stop the other one's fresh connection
 static CHAT_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// whether the connection with this number is still the one running (chat.rs ChatEmitter): stopping or replacing
+// it moves the number on
+pub fn is_current_chat(token: u64) -> bool {
+    CHAT_TOKEN.load(std::sync::atomic::Ordering::SeqCst) == token
+}
+
 #[tauri::command]
 pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: String) -> Result<u64, String> {
     // the name goes into a raw IRC line ("JOIN #channel"): a space or line break there would be a second command
@@ -51,7 +57,7 @@ pub fn start_chat(app: tauri::AppHandle, state: State<ChatState>, channel: Strin
     };
 
     tauri::async_runtime::spawn(async move {
-        chat::run_chat_client(app, channel, auth, outgoing_rx, stop_rx).await;
+        chat::run_chat_client(app, token, channel, auth, outgoing_rx, stop_rx).await;
     });
 
     Ok(token)
@@ -66,6 +72,8 @@ pub fn stop_chat(state: State<ChatState>, token: Option<u64>) -> Result<(), Stri
     }
     if let Some(tx) = guard.take() {
         let _ = tx.send(());
+        // the stopped connection may still be finishing a batch of lines: nothing it emits counts any more
+        CHAT_TOKEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
     Ok(())
 }

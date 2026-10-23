@@ -308,7 +308,10 @@ export class BrowsePage {
     } catch (err) {
       console.error("Failed to load streams for game:", err);
     }
+    // went Back, or opened another category, while this one loaded: leave the page alone
+    if (this.activeGame !== game) return;
     await this.hydrateAvatars(streams);
+    if (this.activeGame !== game) return;
 
     this.containerEl.innerHTML = "";
     this.containerEl.appendChild(this.buildBackRow(game.name));
@@ -333,7 +336,7 @@ export class BrowsePage {
   async openPillCategory(pillKey) {
     const categoryName = PILL_CATEGORIES[pillKey];
     this.activePill = pillKey;
-    this.activeGame = { id: null, name: categoryName, isPill: true };
+    const game = (this.activeGame = { id: null, name: categoryName, isPill: true });
     this.containerEl.innerHTML = "";
     this.containerEl.appendChild(this.buildPillsRow());
     this.containerEl.appendChild(this.buildBackRow(categoryName));
@@ -350,7 +353,9 @@ export class BrowsePage {
     } catch (err) {
       console.error(`Failed to load streams for ${categoryName}:`, err);
     }
+    if (this.activeGame !== game) return;
     await this.hydrateAvatars(streams);
+    if (this.activeGame !== game) return;
 
     this.containerEl.innerHTML = "";
     this.containerEl.appendChild(this.buildPillsRow());

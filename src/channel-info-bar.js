@@ -288,7 +288,8 @@ export function startChannelInfoRefresh(channel, isStillCurrent) {
     if (!isStillCurrent()) return;
     if (document.hidden) return; // nobody can see the bar (tray / minimized); the next tick catches up
     invoke("get_stream_for_login", { login: channel })
-      .then((json) => updateChannelInfoBar(channel, JSON.parse(json)))
+      // switched channels while this was out: the answer would put the old channel back on the bar
+      .then((json) => { if (isStillCurrent()) updateChannelInfoBar(channel, JSON.parse(json)); })
       .catch((err) => console.error("Failed to refresh channel info bar:", err));
   }, 60_000);
 }

@@ -167,6 +167,10 @@ export class ChannelsSidebar {
       console.error("Failed to load followed channels:", err);
       return;
     }
+    // switched the sidebar to Kick, or logged out, while Twitch answered: that answer is no longer wanted (it
+    // used to draw the Twitch follows over the Kick list, or bring the last account's list back after logging out)
+    const stillWanted = () => this.loggedIn && !isKick();
+    if (!stillWanted()) return;
     const { followedRows, ids } = fetched;
     if (ids.length === 0) {
       this.followed = [];
@@ -184,6 +188,7 @@ export class ChannelsSidebar {
         : Promise.resolve(null),
     ]);
 
+    if (!stillWanted()) return;
     let liveRows = [];
     if (liveResult.status === "fulfilled") {
       liveRows = JSON.parse(liveResult.value);
@@ -370,6 +375,8 @@ export class ChannelsSidebar {
     } catch (err) {
       console.error("Failed to load Kick following statuses:", err);
     }
+    // back on Twitch while Kick answered: leave the Twitch list alone
+    if (!isKick()) return;
     const bySlug = new Map(statuses.map((st) => [st.slug, st]));
     this.followed = follows
       .map((f) => {

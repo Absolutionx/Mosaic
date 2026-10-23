@@ -58,7 +58,26 @@ impl Default for KickChatState {
     }
 }
 
+// which Kick chat client may still emit: stopping or replacing one moves this on, so a client that is still
+// finishing a batch of lines can't put its last messages into the next chat
+static KICK_CHAT_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+struct KickEmitter {
+    app: AppHandle,
+    gen: u64,
+}
+
+impl KickEmitter {
+    fn emit<S: serde::Serialize + Clone>(&self, event: &str, payload: S) -> tauri::Result<()> {
+        if KICK_CHAT_GEN.load(std::sync::atomic::Ordering::SeqCst) != self.gen {
+            return Ok(());
+        }
+        self.app.emit(event, payload)
+    }
+}
+
 fn stop_current(state: &KickChatState) {
+    KICK_CHAT_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut guard) = state.stop_tx.lock() {
         if let Some(tx) = guard.take() {
             let _ = tx.send(());
@@ -76,7 +95,8 @@ pub async fn start_kick_chat(
     stop_current(&state);
     let (tx, rx) = tokio::sync::oneshot::channel();
     *state.stop_tx.lock().map_err(|e| e.to_string())? = Some(tx);
-    tauri::async_runtime::spawn(run(app, chatroom_id, rx));
+    let gen = KICK_CHAT_GEN.load(std::sync::atomic::Ordering::SeqCst);
+    tauri::async_runtime::spawn(run(KickEmitter { app, gen }, chatroom_id, rx));
     Ok(())
 }
 
@@ -87,7 +107,7 @@ pub async fn stop_kick_chat(state: tauri::State<'_, KickChatState>) -> Result<()
     Ok(())
 }
 
-fn system_line(app: &AppHandle, text: impl Into<String>) {
+fn system_line(app: &KickEmitter, text: impl Into<String>) {
     let _ = app.emit("chat-system", ChatSystemEvent { text: text.into(), msg_id: None });
 }
 
@@ -213,7 +233,7 @@ async fn fetch_token(client_id: &str) -> Result<String, String> {
 // ---- websocket loop ------------------------------------------------------------------------------
 
 async fn run(
-    app: AppHandle,
+    app: KickEmitter,
     chatroom_id: u64,
     mut stop_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -515,7 +535,7 @@ fn classify_line(line: &str) -> (LineAction, Option<Value>) {
     (LineAction::None, None)
 }
 
-fn handle_line(app: &AppHandle, line: &str) -> LineAction {
+fn handle_line(app: &KickEmitter, line: &str) -> LineAction {
     let (action, event) = classify_line(line);
     if let Some(env) = event {
         if let Some(e) = chat_event_from(&env) {

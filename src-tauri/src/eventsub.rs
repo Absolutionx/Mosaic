@@ -28,7 +28,7 @@ struct Metadata {
 //
 // account_mode distinguishes the two kinds of connection that use this loop:
 //   - false (the default, per-channel): subscribes to channel-scoped events (redemptions, automod,
-//     moderate, raid, hype train, predictions) for broadcaster_id, plus whispers. Torn down and
+//     moderate, raid) for broadcaster_id. Torn down and
 //     recreated on each channel switch. On an unexpected close it just exits (a new channel start
 //     will make a fresh one).
 //   - true (account-level, persistent): subscribes ONLY to whispers (account-scoped, always
@@ -147,27 +147,10 @@ async fn run_inner(
                                         eprintln!("[eventsub] raid subscription failed: {e}");
                                     }
 
-                                    // Hype Train and Predictions. these need channel:read:hype_train / channel:read:predictions, which
-                                    // ONLY the broadcaster can grant, so for most viewers they 403 and are skipped (same as
-                                    // redemptions/automod). they light up when you watch your own channel. failures logged quietly
-                                    for (kind, ver) in [
-                                        ("channel.hype_train.begin", "1"),
-                                        ("channel.hype_train.progress", "1"),
-                                        ("channel.hype_train.end", "1"),
-                                        ("channel.prediction.begin", "1"),
-                                        ("channel.prediction.progress", "1"),
-                                        ("channel.prediction.lock", "1"),
-                                        ("channel.prediction.end", "1"),
-                                    ] {
-                                        if let Err(e) = subscribe_broadcaster_event(
-                                            &session_id, &broadcaster_id, &access_token, kind, ver,
-                                        ).await {
-                                            eprintln!(
-                                                "[eventsub] {kind} subscription skipped \
-                                                 (needs broadcaster scope): {e}"
-                                            );
-                                        }
-                                    }
+                                    // no Hype Train / Predictions subscriptions: they need scopes only the broadcaster can grant,
+                                    // so for viewers they always failed (7 refused requests on every channel switch), Twitch
+                                    // retired hype train v1 (10-21-26: "invalid subscription type and version"), and both are
+                                    // shown for every channel from Twitch's GQL instead (hype-train.js, chat-live-events.js)
                                     } // end !account_mode
 
                                     // whispers (Twitch DMs): account-level, needs user:read:whispers.
@@ -427,44 +410,6 @@ async fn subscribe_user_whispers(
         return Err(format!("{status}: {body}"));
     }
     eprintln!("[eventsub] subscribed to whispers for {user_id}");
-    Ok(())
-}
-
-// generic subscribe for events conditioned only on broadcaster_user_id (hype train, predictions).
-// kept separate from the bespoke helpers above, which have distinct conditions. most viewers lack the
-// read scopes these need, so callers treat failure as an expected skip
-async fn subscribe_broadcaster_event(
-    session_id: &str,
-    broadcaster_id: &str,
-    access_token: &str,
-    event_type: &str,
-    version: &str,
-) -> Result<(), String> {
-    let client = crate::http::client();
-
-    let body = json!({
-        "type":    event_type,
-        "version": version,
-        "condition": { "broadcaster_user_id": broadcaster_id },
-        "transport": { "method": "websocket", "session_id": session_id }
-    });
-
-    let resp = client
-        .post("https://api.twitch.tv/helix/eventsub/subscriptions")
-        .header("Client-ID",     crate::oauth::CLIENT_ID)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body   = resp.text().await.unwrap_or_default();
-        return Err(format!("{status}: {body}"));
-    }
-
-    eprintln!("[eventsub] subscribed to {event_type} for {broadcaster_id}");
     Ok(())
 }
 

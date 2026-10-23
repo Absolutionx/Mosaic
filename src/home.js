@@ -112,6 +112,9 @@ export class HomeFeed {
   }
 
   async refresh() {
+    // only the newest refresh draws: one still running when you switch Twitch / Kick could otherwise land
+    // after the new platform's and put the old platform's streams back
+    const seq = (this._refreshSeq = (this._refreshSeq || 0) + 1);
     // rows below the grid are platform-shaped: Twitch keeps its hand-picked RPGs row (exact
     // Helix names), Kick builds rows from whatever's biggest now (a Twitch game list resolved
     // to nothing on Kick)
@@ -123,10 +126,12 @@ export class HomeFeed {
             rpgs.length > 0 ? [{ key: "rpgs", title: "RPGs", streams: rpgs }] : []
           ),
     ]);
+    if (seq !== this._refreshSeq) return;
     await this.hydrateAvatars([
       ...topLive,
       ...extraRows.flatMap((r) => r.streams),
     ]);
+    if (seq !== this._refreshSeq) return;
     this.topLive = topLive;
     this.extraRows = extraRows;
     await this._loadContinue();

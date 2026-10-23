@@ -1675,6 +1675,18 @@ function maybeSaveVodProgress() {
   });
 }
 
+// a stream or VOD that couldn't start: back to the page you came from, and say why. the reason only went to the
+// status pill (which leaves errors out) and the player's placeholder (hidden again by the page), so a failed
+// start looked like a click that did nothing, e.g. on a first install before streamlink is installed
+function showPageAfterFailedStart(what, err) {
+  if (session.lastActivePage === "browse") browsePage.show();
+  // a VOD opened from Home has no VODs page to go back to (vodsChannel is empty: that page then asked
+  // Twitch for the videos of "null")
+  else if (session.lastActivePage === "vods" && session.vodsChannel) vodsPage.show(session.vodsChannel, { kick: session.vodsChannelIsKick });
+  else homeFeed.show();
+  showAppToast(`Couldn't play ${what}: ${err}`, { error: true, ms: 9000 });
+}
+
 async function watchChannel(channel, stream) {
   if (!channel) return;
   watchSeq++;
@@ -1895,9 +1907,7 @@ async function watchChannel(channel, stream) {
     setTheaterMode(false);
     setStatus(`Error: ${err}`);
     videoPlaceholder.textContent = `Failed to start: ${err}`;
-    if (session.lastActivePage === "browse") browsePage.show();
-    else if (session.lastActivePage === "vods") vodsPage.show(session.vodsChannel, { kick: session.vodsChannelIsKick });
-    else homeFeed.show();
+    showPageAfterFailedStart(channel, err);
     session.pageVisible = true;
     session.intendedChannel = null;
     updateBackToStreamBtn();
@@ -2031,10 +2041,14 @@ async function watchVod(videoId, vodTotalSeconds = 0, broadcastLogin = "", start
       .then((r) => playbackControls.setTopClips(r?.clips || [], videoId))
       .catch((err) => console.warn("Failed to load top clips:", err));
   } catch (err) {
+    // something else was picked meanwhile: that one owns the screen now
+    if (seq !== watchSeq || session.intendedChannel !== `vod:${videoId}`) return;
     setTheaterMode(false);
     setStatus(`Error: ${err}`);
     videoPlaceholder.textContent = `Failed to start VOD: ${err}`;
-    vodsPage.show(session.vodsChannel, { kick: session.vodsChannelIsKick });
+    // the VOD's chat replay was already started next to the URL lookup: stop it with the VOD
+    chat.disconnect();
+    showPageAfterFailedStart("this VOD", err);
     session.pageVisible = true;
     session.intendedChannel = null;
     updateBackToStreamBtn();
@@ -2117,10 +2131,11 @@ async function watchKickVod(videoId, vodTotalSeconds = 0, startPositionSecs) {
     updateBackToStreamBtn();
     resyncChannelInfoBarVisibility();
   } catch (err) {
+    if (seq !== watchSeq || session.intendedChannel !== `vod:${videoId}`) return;
     setTheaterMode(false);
     setStatus(`Error: ${err}`);
     videoPlaceholder.textContent = `Failed to start Kick VOD: ${err}`;
-    vodsPage.show(session.vodsChannel, { kick: session.vodsChannelIsKick });
+    showPageAfterFailedStart("this VOD", err);
     session.pageVisible = true;
     session.intendedChannel = null;
     updateBackToStreamBtn();

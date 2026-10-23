@@ -110,7 +110,7 @@ pub async fn start_vod_download(
         Ok(c) => c,
         Err(e) => {
             let _ = std::fs::remove_file(&path); // the reserved empty file
-            return Err(format!("couldn't start ffmpeg: {e}"));
+            return Err(crate::stream_relay::launch_error("ffmpeg", &e));
         }
     };
     let id = uuid::Uuid::new_v4().simple().to_string();

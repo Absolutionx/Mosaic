@@ -4,6 +4,22 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.3",
+    items: [
+      { kind: "fixed", top: true, title: "Chat from the last channel", desc: "Right after switching channels, a few messages from the channel you left could show up in the new channel's chat. They no longer do, in the main chat or MultiView's, on Twitch or Kick." },
+      { kind: "fixed", title: "First install", desc: "Clicking a stream or VOD before streamlink was installed did nothing at all. It now says streamlink isn't installed and to click Install in the banner." },
+      { kind: "fixed", title: "Install button", desc: "Installing streamlink could fail with \"No available upgrade found\" on a PC that had more than one copy. Mosaic also finds streamlink and ffmpeg in their usual folders now, so it no longer asks you to install something that's already there." },
+      { kind: "improved", title: "Installing streamlink and ffmpeg", desc: "Mosaic says the install can take a few minutes and that Windows may ask for permission, and shows why if it fails instead of only offering Retry." },
+      { kind: "fixed", title: "VODs that can't start", desc: "A VOD from Home that couldn't play opened an empty videos page and left its chat replay running. It now goes back to where you were and says why." },
+      { kind: "fixed", title: "Whispers", desc: "Going back while a conversation was still loading caused an error, and a long incoming whisper stopped the conversation from scrolling to the newest message." },
+      { kind: "fixed", title: "Browse", desc: "Opening a category and then going back, or opening another one, before it loaded could show the first category's streams anyway." },
+      { kind: "fixed", title: "Sidebar after logging out", desc: "Logging out, or switching to Kick, while the follow list was refreshing could bring your Twitch follows back." },
+      { kind: "fixed", title: "Home when switching Twitch and Kick", desc: "An older refresh could land after you switched and put the other platform's streams back on Home." },
+      { kind: "fixed", title: "Channel info bar", desc: "Switching channels during a refresh could put the previous channel's name and viewer count back on the bar for up to a minute." },
+      { kind: "improved", title: "Fewer wasted requests", desc: "Every channel switch sent seven requests Twitch always refused (hype train and prediction updates only the streamer can get). Hype trains and predictions still show, as before." },
+    ],
+  },
+  {
     version: "1.8.2",
     items: [
       { kind: "fixed", top: true, title: "Closing to the tray stops everything", desc: "Closing Mosaic to the tray while a stream or VOD was still loading could start it playing in the background. MultiView now closes too, instead of playing on in the tray." },

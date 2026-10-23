@@ -860,6 +860,8 @@ export class TwitchChat {
     this._isKickChat = false;
     this._kickBroadcasterId = null;
     this._applyTwitchInputState();
+    // nothing connected any more: a leftover "replay" / "connecting…" in the header would say otherwise
+    this.setStatus("");
   }
 
   // Wipes the visible chat pane and the recent-message store. Used when restoring from the tray so a
@@ -1022,6 +1024,7 @@ export class TwitchChat {
   async setupListeners() {
     this.unlisteners.push(
       await listen("chat-message", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         const { username, color, message, badges, bits, custom_reward_id,
                 reply_parent_user, reply_parent_body, msg_id, user_id, is_action,
                 emotes_tag, is_first_msg, is_highlighted, reply_parent_msg_id,
@@ -1043,6 +1046,7 @@ export class TwitchChat {
 
     this.unlisteners.push(
       await listen("chat-system", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         const p = event.payload || {};
         this.systemLine(p.text);
         // Twitch refused our message because we're banned / timed out (e.g. the panel was dismissed with
@@ -1077,6 +1081,7 @@ export class TwitchChat {
 
     this.unlisteners.push(
       await listen("chat-status", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         this.setStatus(event.payload.status);
       })
     );
@@ -1117,6 +1122,7 @@ export class TwitchChat {
 
     this.unlisteners.push(
       await listen("chat-room", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         // persist so setLoggedIn() can reload badges/cheermotes after login
         this.roomId = event.payload.room_id;
         this.loadSevenTvChannelEmotes(this.roomId);
@@ -1163,6 +1169,7 @@ export class TwitchChat {
 
     this.unlisteners.push(
       await listen("user-state", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         // cache the badge string to retry after the badge maps finish loading (USERSTATE often arrives before loadGlobalBadges/loadChannelBadges complete)
         this._ownBadgesTag = event.payload.badges;
         this._renderInputBadges(this._ownBadgesTag);
@@ -1177,12 +1184,14 @@ export class TwitchChat {
 
     this.unlisteners.push(
       await listen("chat-clearchat", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         this._handleClearChat(event.payload);
       })
     );
 
     this.unlisteners.push(
       await listen("chat-clearmsg", (event) => {
+        if (!this._isForThisChannel(event.payload)) return;
         this._handleClearMsg(event.payload);
       })
     );
@@ -1451,12 +1460,20 @@ export class TwitchChat {
     return { backgroundImage: images.join(", "), filter };
   }
 
+  // Twitch chat events name their channel (chat.rs ChatEmitter): one for another channel is a straggler from the
+  // connection this chat (or the other one, main / MultiView) just left, and is dropped. Kick's events carry no
+  // channel and always count
+  _isForThisChannel(payload) {
+    const ch = payload && payload.channel;
+    return !ch || ch === this.channel;
+  }
+
   // --- chat mode indicators (emote-only / subs-only / followers / slow / unique) + timeout panel ---
   _setupRoomListeners() {
     if (this._roomListenersBound) return;
     this._roomListenersBound = true;
-    listen("chat-roomstate", (e) => this._onRoomState(e.payload || {})).catch(() => {});
-    listen("chat-clearchat", (e) => this._onClearChat(e.payload || {})).catch(() => {});
+    listen("chat-roomstate", (e) => { if (this._isForThisChannel(e.payload)) this._onRoomState(e.payload || {}); }).catch(() => {});
+    listen("chat-clearchat", (e) => { if (this._isForThisChannel(e.payload)) this._onClearChat(e.payload || {}); }).catch(() => {});
   }
 
   _onRoomState(p) {

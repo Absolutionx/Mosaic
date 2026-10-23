@@ -73,6 +73,16 @@ fn resolve_streamlink_path() -> std::path::PathBuf {
     resolve_dep_path("streamlink")
 }
 
+// what to say when streamlink / ffmpeg couldn't be started. missing is by far the usual reason (a first install
+// before the "Install" banner was used), and Windows' own words for it ("program not found") said nothing useful
+pub(crate) fn launch_error(tool: &str, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        format!("{tool} isn't installed. Click Install in the banner at the top of Mosaic")
+    } else {
+        format!("couldn't run {tool}: {e}")
+    }
+}
+
 // what may be handed to streamlink from the frontend. both end up on streamlink's command line: an
 // unchecked quality like "--player=..." or "--plugin-dirs=..." would be read as an OPTION (writing files,
 // loading code), so only plain values get through. Twitch logins are 1-25 of [A-Za-z0-9_]; a quality is
@@ -127,7 +137,72 @@ pub(crate) fn resolve_dep_path(name: &str) -> std::path::PathBuf {
              falling back to bare name (PATH lookup)"
         );
     }
+    // Windows: PATH first, then the folders the installers use. a copy that's installed but not on PATH (the
+    // PATH change not picked up yet, a second copy that winget's uninstall left behind, an entry removed by
+    // hand) is then still found, instead of the "Missing streamlink" banner offering to reinstall it
+    #[cfg(windows)]
+    {
+        let lad = std::env::var("LOCALAPPDATA").ok();
+        let pf: Vec<String> = ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .collect();
+        if let Some(p) = locate_tool(name, std::env::var_os("PATH").as_deref(), lad.as_deref(), &pf) {
+            return p;
+        }
+    }
     std::path::PathBuf::from(name)
+}
+
+// where a Windows install of streamlink / ffmpeg is: the first <name>.exe on PATH, else the official
+// installers' folders. streamlink's installer puts it in <root>\Streamlink\bin (root: %LOCALAPPDATA%\Programs
+// for a per-user copy, Program Files for a system-wide one) with its own ffmpeg in <root>\Streamlink\ffmpeg;
+// winget's ffmpeg (Gyan.FFmpeg) lives under %LOCALAPPDATA%\Microsoft\WinGet (a Links shortcut, and the
+// package folder itself). platform-neutral so it can be tested anywhere; only Windows calls it
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn locate_tool(
+    name: &str,
+    path: Option<&std::ffi::OsStr>,
+    local_app_data: Option<&str>,
+    program_files: &[String],
+) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+    let exe = format!("{name}.exe");
+    if let Some(path) = path {
+        if let Some(p) = std::env::split_paths(path).map(|d| d.join(&exe)).find(|p| p.is_file()) {
+            return Some(p);
+        }
+    }
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(l) = local_app_data.filter(|l| !l.is_empty()) {
+        roots.push(Path::new(l).join("Programs"));
+    }
+    roots.extend(program_files.iter().filter(|p| !p.is_empty()).map(PathBuf::from));
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    match name {
+        "streamlink" => candidates.extend(roots.iter().map(|r| r.join("Streamlink").join("bin").join(&exe))),
+        "ffmpeg" => {
+            if let Some(l) = local_app_data.filter(|l| !l.is_empty()) {
+                let winget = Path::new(l).join("Microsoft").join("WinGet");
+                candidates.push(winget.join("Links").join(&exe));
+                // Packages\Gyan.FFmpeg_<source id>\ffmpeg-<version>-full_build\bin\ffmpeg.exe
+                if let Ok(pkgs) = std::fs::read_dir(winget.join("Packages")) {
+                    // winget's uninstall leaves the old copy behind in a "..._disabled" folder: not that one
+                    for pkg in pkgs.flatten().filter(|e| {
+                        let n = e.file_name().to_string_lossy().to_string();
+                        n.starts_with("Gyan.FFmpeg") && !n.ends_with("_disabled")
+                    }) {
+                        if let Ok(builds) = std::fs::read_dir(pkg.path()) {
+                            candidates.extend(builds.flatten().map(|b| b.path().join("bin").join(&exe)));
+                        }
+                    }
+                }
+            }
+            candidates.extend(roots.iter().map(|r| r.join("Streamlink").join("ffmpeg").join(&exe)));
+        }
+        _ => {}
+    }
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 // contiguous byte cache for a single stream session. stores every byte produced since the last
@@ -303,7 +378,9 @@ async fn spawn_pipeline(
     sl_cmd.creation_flags(CREATE_NO_WINDOW);
 
     augment_child_path(&mut sl_cmd);
-    let mut sl_child = sl_cmd.spawn()?;
+    let mut sl_child = sl_cmd
+        .spawn()
+        .map_err(|e| std::io::Error::new(e.kind(), launch_error("streamlink", &e)))?;
     let mut sl_stdout = sl_child
         .stdout
         .take()
@@ -394,12 +471,9 @@ async fn spawn_pipeline(
         ff_cmd.creation_flags(CREATE_NO_WINDOW);
 
         augment_child_path(&mut ff_cmd);
-        let mut ff_child = ff_cmd.spawn().map_err(|e| {
-            std::io::Error::new(
-                e.kind(),
-                format!("Failed to launch ffmpeg (is it installed and on PATH?): {e}"),
-            )
-        })?;
+        let mut ff_child = ff_cmd
+            .spawn()
+            .map_err(|e| std::io::Error::new(e.kind(), launch_error("ffmpeg", &e)))?;
         let mut ff_stdin = ff_child
             .stdin
             .take()
@@ -842,7 +916,8 @@ type ReadyPipeline = (Vec<u8>, Box<dyn AsyncRead + Unpin + Send + 'static>, Vec<
 async fn launch_pipeline(target_url: &str, quality: &str, extra_args: &[String]) -> Result<ReadyPipeline, String> {
     let pipeline = spawn_pipeline(target_url, quality, extra_args)
         .await
-        .map_err(|e| format!("Failed to launch stream pipeline: {e}"))?;
+        // a missing tool already says what to do (launch_error); anything else keeps the context
+        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { e.to_string() } else { format!("Failed to launch stream pipeline: {e}") })?;
     match pipeline {
         PipelineResult::Passthrough { first_chunk, rest, sl_child } => {
             let stream: Box<dyn AsyncRead + Unpin + Send + 'static> = Box::new(rest);
@@ -1784,7 +1859,7 @@ pub(crate) async fn resolve_vod_cdn_url(video_id: &str, quality: &str) -> Result
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     augment_child_path(&mut cmd);
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| launch_error("streamlink", &e))?;
 
     String::from_utf8(output.stdout)
         .map_err(|e| e.to_string())?
@@ -1822,7 +1897,7 @@ pub async fn resolve_clip_url(
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     augment_child_path(&mut cmd);
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| launch_error("streamlink", &e))?;
     let cdn_url = String::from_utf8(output.stdout)
         .map_err(|e| e.to_string())?
         .lines()
@@ -1877,7 +1952,7 @@ pub async fn get_live_m3u8_url(
     cmd.creation_flags(CREATE_NO_WINDOW);
 
     augment_child_path(&mut cmd);
-    let output = cmd.output().await.map_err(|e| e.to_string())?;
+    let output = cmd.output().await.map_err(|e| launch_error("streamlink", &e))?;
 
     let cdn_url = String::from_utf8(output.stdout)
         .map_err(|e| e.to_string())?
@@ -2313,7 +2388,7 @@ async fn list_available_qualities(target_url: &str) -> Result<Vec<String>, Strin
     let output = cmd
         .output()
         .await
-        .map_err(|e| format!("Failed to run streamlink: {e}"))?;
+        .map_err(|e| launch_error("streamlink", &e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2600,5 +2675,62 @@ mod warm_buffer_tests {
         let mut none = WarmBuffer::new();
         none.feed(&init);
         assert!(none.start_bytes().is_none());
+    }
+}
+
+#[cfg(test)]
+mod locate_tool_tests {
+    use super::locate_tool;
+    use std::fs;
+
+    fn touch(p: &std::path::Path) {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, b"").unwrap();
+    }
+
+    #[test]
+    fn finds_installs_that_are_not_on_path() {
+        let base = std::env::temp_dir().join(format!("mosaic-locate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let lad = base.join("Local");
+        let pf = base.join("Program Files");
+        let lad_s = lad.to_string_lossy().to_string();
+        let pfs = vec![pf.to_string_lossy().to_string()];
+
+        // nothing installed
+        assert_eq!(locate_tool("streamlink", None, Some(&lad_s), &pfs), None);
+        assert_eq!(locate_tool("ffmpeg", None, Some(&lad_s), &pfs), None);
+
+        // a system-wide streamlink (with its bundled ffmpeg), nothing on PATH
+        let sl_machine = pf.join("Streamlink").join("bin").join("streamlink.exe");
+        let ff_bundled = pf.join("Streamlink").join("ffmpeg").join("ffmpeg.exe");
+        touch(&sl_machine);
+        touch(&ff_bundled);
+        assert_eq!(locate_tool("streamlink", None, Some(&lad_s), &pfs), Some(sl_machine.clone()));
+        assert_eq!(locate_tool("ffmpeg", None, Some(&lad_s), &pfs), Some(ff_bundled.clone()));
+
+        // a copy winget's uninstall set aside is never used
+        touch(&lad.join("Microsoft").join("WinGet").join("Packages")
+            .join("Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe_disabled").join("ffmpeg-8.1.1-full_build").join("bin").join("ffmpeg.exe"));
+        assert_eq!(locate_tool("ffmpeg", None, Some(&lad_s), &pfs), Some(ff_bundled.clone()));
+
+        // a per-user copy wins over the system-wide one; winget's ffmpeg over streamlink's bundled one
+        let sl_user = lad.join("Programs").join("Streamlink").join("bin").join("streamlink.exe");
+        touch(&sl_user);
+        let ff_winget = lad.join("Microsoft").join("WinGet").join("Packages")
+            .join("Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe").join("ffmpeg-8.0-full_build").join("bin").join("ffmpeg.exe");
+        touch(&ff_winget);
+        assert_eq!(locate_tool("streamlink", None, Some(&lad_s), &pfs), Some(sl_user.clone()));
+        assert_eq!(locate_tool("ffmpeg", None, Some(&lad_s), &pfs), Some(ff_winget.clone()));
+
+        // whatever is on PATH comes first, as for a plain launch
+        let on_path = base.join("tools");
+        touch(&on_path.join("streamlink.exe"));
+        let path = std::env::join_paths([base.join("empty"), on_path.clone()]).unwrap();
+        assert_eq!(locate_tool("streamlink", Some(&path), Some(&lad_s), &pfs), Some(on_path.join("streamlink.exe")));
+
+        // other names aren't looked for anywhere but PATH
+        assert_eq!(locate_tool("python", None, Some(&lad_s), &pfs), None);
+        let _ = fs::remove_dir_all(&base);
     }
 }

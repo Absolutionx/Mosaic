@@ -108,6 +108,7 @@ function updateBadge(n) {
 let threadListeners = null; // AbortController for the open thread's page-wide listeners
 let popEscape = null;       // Escape closes the panel (it had no Escape at all), one press, nothing else
 function close() {
+  renderSeq++;
   if (overlay) { overlay.remove(); overlay = null; }
   threadListeners?.abort();
   threadListeners = null;
@@ -135,7 +136,12 @@ export function openWhispers() {
   render();
 }
 
+// bumped by every render: a thread still loading when you go back or close the panel stops there instead of
+// wiring up an input box that's no longer on screen
+let renderSeq = 0;
+
 function render() {
+  renderSeq++;
   const modal = overlay.querySelector(".whisper-modal");
   if (view === "thread") return renderThread(modal);
   if (view === "new") return renderNew(modal);
@@ -177,6 +183,8 @@ async function renderList(modal) {
 }
 
 async function renderThread(modal) {
+  const seq = renderSeq;
+  const contact = activeContact;
   const owner = ownerId();
   modal.innerHTML =
     '<div class="whisper-header"><button class="whisper-back">\u2039</button>' +
@@ -199,16 +207,18 @@ async function renderThread(modal) {
   const body = modal.querySelector("#whisper-body");
   body.dataset.lastDay = "";
   let msgs = [];
-  try { msgs = await invoke("whisper_get_thread", { ownerId: owner, contactId: activeContact.id }); } catch { /* ignore */ }
+  try { msgs = await invoke("whisper_get_thread", { ownerId: owner, contactId: contact.id }); } catch { /* ignore */ }
+  if (seq !== renderSeq || !overlay) return;
   body.innerHTML = "";
   if (Array.isArray(msgs)) for (const m of msgs) appendMessageEl(!!m.self, m.text || "", m.ts, body);
   body.scrollTop = body.scrollHeight;
 
   // opening a thread clears its unread
   try {
-    await invoke("whisper_mark_read", { ownerId: owner, contactId: activeContact.id });
+    await invoke("whisper_mark_read", { ownerId: owner, contactId: contact.id });
     updateBadge(await invoke("whisper_total_unread", { ownerId: owner }));
   } catch { /* ignore */ }
+  if (seq !== renderSeq || !overlay) return;
 
   const input = modal.querySelector(".whisper-input");
   const send = modal.querySelector(".whisper-send");
@@ -217,9 +227,9 @@ async function renderThread(modal) {
     if (!text) return;
     send.disabled = true;
     try {
-      await invoke("send_whisper", { toUserId: activeContact.id, message: text });
+      await invoke("send_whisper", { toUserId: contact.id, message: text });
       await invoke("whisper_record", {
-        ownerId: owner, contactId: activeContact.id, contactName: activeContact.name,
+        ownerId: owner, contactId: contact.id, contactName: contact.name,
         fromSelf: true, text,
       });
       appendMessageEl(true, text, Date.now());
@@ -467,6 +477,9 @@ function appendMessageEl(fromSelf, text, ts, bodyEl) {
     sep.textContent = dayLabel(ts || Date.now());
     body.appendChild(sep);
   }
+  // following along: only if you were at the bottom before this message (measured after, a long message read
+  // as "scrolled up" and the panel stopped following)
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
   const line = document.createElement("div");
   line.className = "whisper-msg" + (fromSelf ? " self" : "");
   const bubble = document.createElement("div");
@@ -479,8 +492,7 @@ function appendMessageEl(fromSelf, text, ts, bodyEl) {
   line.appendChild(bubble);
   line.appendChild(time);
   body.appendChild(line);
-  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
-  if (atBottom) body.scrollTop = body.scrollHeight;
+  if (atBottom || fromSelf) body.scrollTop = body.scrollHeight;
 }
 
 function appendSystem(text) {

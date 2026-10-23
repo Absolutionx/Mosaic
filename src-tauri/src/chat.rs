@@ -164,20 +164,36 @@ fn parse_tags(tag_str: &str) -> HashMap<String, String> {
 // send_chat_message to push messages in without direct WebSocket access, and messages arriving during a
 // reconnect gap wait in the channel until the next connection is up. runs inside a spawned Tokio task,
 // errors are emitted as chat-system events rather than propagated, since there's no caller left to receive a Result once this runs in the background
+// what the chat connection emits through: every event names the channel it's for (the chat panel drops one for
+// a channel it has already left), and a connection that has been replaced or stopped emits nothing more
+// (chat_commands.rs CHAT_TOKEN), so its last messages can't land in the next channel's chat
+pub struct ChatEmitter {
+    app: AppHandle,
+    token: u64,
+    channel: String,
+}
+
+impl ChatEmitter {
+    pub fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) -> tauri::Result<()> {
+        if !crate::chat_commands::is_current_chat(self.token) {
+            return Ok(());
+        }
+        let mut value = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("channel".into(), serde_json::Value::String(self.channel.clone()));
+        }
+        self.app.emit(event, value)
+    }
+}
+
 pub async fn run_chat_client(
     app: AppHandle,
+    token: u64,
     channel: String,
     auth: Option<AuthCredentials>,
     mut outgoing_rx: tokio::sync::mpsc::UnboundedReceiver<OutgoingMessage>,
     mut stop_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
-    let emit_status = |status: &str| {
-        let _ = app.emit("chat-status", ChatStatusEvent { status: status.into() });
-    };
-    let emit_system = |text: String| {
-        let _ = app.emit("chat-system", ChatSystemEvent { text, msg_id: None });
-    };
-
     // Twitch logins are only [a-z0-9_]. Filter to exactly that so nothing else (a CR/LF or space from the
     // watch box) can reach the raw JOIN / PRIVMSG lines and be parsed by Twitch as extra IRC commands
     let channel_lower: String = channel
@@ -185,6 +201,14 @@ pub async fn run_chat_client(
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
         .collect();
+    let app = ChatEmitter { app, token, channel: channel_lower.clone() };
+    let emit_status = |status: &str| {
+        let _ = app.emit("chat-status", ChatStatusEvent { status: status.into() });
+    };
+    let emit_system = |text: String| {
+        let _ = app.emit("chat-system", ChatSystemEvent { text, msg_id: None });
+    };
+
     let mut backoff_secs: u64 = 1;
     let mut first_attempt = true;
 
@@ -398,7 +422,7 @@ pub enum OutgoingMessage {
 
 async fn handle_irc_line<S>(
     line: &str,
-    app: &AppHandle,
+    app: &ChatEmitter,
     write: &mut futures_util::stream::SplitSink<S, Message>,
     channel: &str,
     room_id_sent: &mut bool,

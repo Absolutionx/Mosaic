@@ -8,7 +8,7 @@ export const chatEventsMixin = {
   // call once from connect
   async _initEventListeners(listen) {
     this.unlisteners.push(
-      await listen("chat-usernotice", (e) => this.renderUsernotice(e.payload)),
+      await listen("chat-usernotice", (e) => { if (this._isForThisChannel(e.payload)) this.renderUsernotice(e.payload); }),
     );
     this.unlisteners.push(
       await listen("eventsub-hypetrain", (e) => this.renderHypeTrain(e.payload)),
