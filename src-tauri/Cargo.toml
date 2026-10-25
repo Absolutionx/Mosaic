@@ -1,6 +1,6 @@
 [package]
 name = "mosaic"
-version = "1.8.3"
+version = "1.8.4"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
@@ -109,6 +109,8 @@ webview2-com = "0.38"
 windows-core = "0.61"
 # the Windows spell checker, for the chat box's right-click suggestions (app_extras::spell_suggest). the same
 # version webview2-com already pulls in
-windows = { version = "0.61", features = ["Win32_Globalization", "Win32_System_Com", "Win32_UI_Shell"] }
+# also DPAPI (Win32_Security_Cryptography + LocalFree in Win32_Foundation): secret_store.rs encrypts the
+# fallback token file with it
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security_Cryptography", "Win32_System_Com", "Win32_UI_Shell"] }
 # checking the streamlink installer's download against its published SHA-256 (deps_check.rs)
 sha2 = "0.10"

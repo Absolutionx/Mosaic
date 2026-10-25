@@ -21,7 +21,7 @@ const MINIMIZE_DELAY_MS = 8000;
 let ctx = null;   // { playbackControls, multiview, chat }
 let state = null; // set while lurking
 let timer = null;
-// WebView2 marks the page hidden when the window goes to the tray, but NOT when it's minimized, so minimizing is
+// the page is marked hidden when the window goes to the tray (main.rs), but NOT when it's minimized, so minimizing is
 // watched on the window itself. while lurking minimized, the page is told it's hidden (set_page_visible) so it
 // stops drawing; pageHidden remembers that it was us, so it doesn't read as "still away" once you're back
 let minimized = false;
@@ -110,7 +110,7 @@ function start() {
   }
   try { ctx.chat?.setLurking?.(true); } catch { /* ignore */ }
   try { recapStart(session.intendedChannel); } catch { /* ignore */ } // "while you lurked" (lurk-recap.js)
-  // minimized: stop drawing the page entirely (the tray already does this by itself)
+  // minimized: stop drawing the page entirely (the tray already does, main.rs)
   if (minimized && !document.hidden) {
     pageHidden = true;
     invoke("set_page_visible", { visible: false }).catch(() => { pageHidden = false; });

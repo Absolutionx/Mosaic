@@ -1,4 +1,5 @@
 import { showAppToast } from "./app-toast.js";
+import { parseChannelInput } from "./channel-input.js";
 import "./titlebar.js";
 import { invoke } from "@tauri-apps/api/core";
 import { initStreamlinkUpdate } from "./streamlink-update.js";
@@ -776,10 +777,19 @@ initLayout({
   miniPlayerOff: () => deactivateMiniPlayer(),
 });
 // ---- recently watched channels (command palette "Recent") ----
+// a Twitch login or Kick slug: what Recent keeps (an older version saved whatever was typed, links included)
+const RECENT_LOGIN_RE = /^[a-z0-9_-]{1,25}$/;
+function readRecentChannels() {
+  try {
+    const list = JSON.parse(localStorage.getItem("recentChannels") || "[]");
+    return Array.isArray(list) ? list.filter((r) => r && RECENT_LOGIN_RE.test(String(r.login))) : [];
+  } catch { return []; }
+}
 function rememberRecentChannel(login, stream) {
   try {
     const l = String(login).toLowerCase();
-    const list = JSON.parse(localStorage.getItem("recentChannels") || "[]").filter((r) => r.login !== l);
+    if (!RECENT_LOGIN_RE.test(l)) return;
+    const list = readRecentChannels().filter((r) => r.login !== l);
     list.unshift({ login: l, name: (stream && (stream.user_name || stream.display_name)) || login, at: Date.now() });
     localStorage.setItem("recentChannels", JSON.stringify(list.slice(0, 8)));
   } catch { /* ignore */ }
@@ -870,7 +880,7 @@ initCommandPalette({
     login: String(c.login || "").toLowerCase(), name: c.name || c.login, live: !!c.live, viewers: c.viewers,
     game: c.game || "", avatar: c.avatar || "", favorite: !!sidebar._isFavorite?.(c.login),
   })),
-  getRecent: () => { try { return JSON.parse(localStorage.getItem("recentChannels") || "[]"); } catch { return []; } },
+  getRecent: () => readRecentChannels(),
   watch: paletteWatch,
   searchCategories: async (q) => JSON.parse(await feedInvoke("search_categories", { query: q })),
   openCategory: (game) => { document.getElementById("browse-tab")?.click(); browsePage.openGame(game); },
@@ -1111,7 +1121,11 @@ applyZoom();
     if (!!enabled !== !!getSetting("autostart")) setSetting("autostart", !!enabled);
   } catch { /* plugin unavailable: leave the setting as is */ }
   try {
-    if (getSetting("startMinimized") && await invoke("launched_at_startup")) await getCurrentWindow().hide();
+    if (getSetting("startMinimized") && await invoke("launched_at_startup")) {
+      await getCurrentWindow().hide();
+      // in the tray the page stops drawing, as when closing to it (main.rs); restoring turns it back on
+      invoke("set_page_visible", { visible: false }).catch(() => {});
+    }
   } catch (err) { console.warn("[settings] start minimized:", err); }
 })();
 // the bell in the header: Twitch's own notifications (notifications-panel.js)
@@ -2426,7 +2440,7 @@ let memorySaverOn = false;
 function syncMemorySaver() {
   const playing = [...document.querySelectorAll("video")].some((v) => !v.paused && !v.ended);
   // lurking (lurk-mode.js) plays audio only, which needs little of what the saver takes back
-  // isAway(): minimized or in the tray (WebView2 itself only reports the tray as hidden)
+  // isAway(): minimized or in the tray (only the tray reports the page hidden, main.rs)
   const on = isAway() && (!playing || lurkActive());
   if (on === memorySaverOn) return;
   memorySaverOn = on;
@@ -2455,12 +2469,31 @@ function syncWatchBtn() {
 // Enter in the channel input = Watch. NOT routed through watchBtn.click(): while playing that button reads Stop, so Enter would have stopped playback. calling the watch functions directly also makes Enter the way to SWITCH channels mid-playback. the input blurs after so player shortcuts take over
 channelInput.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
-  const channel = channelInput.value.trim();
-  if (!channel) return;
-  channelInput.blur();
-  if (isKick()) watchKickChannel(channel);
-  else watchChannel(channel);
+  if (!channelInput.value.trim()) return;
+  if (watchFromInput()) channelInput.blur();
 });
+
+// the Watch box takes a name or a pasted link (channel-input.js): a twitch.tv / kick.com link opens that
+// channel on its own platform, a twitch.tv/videos link opens the VOD. anything else used to go out as a
+// channel name ("https://www.twitch.tv/x is offline", chat "invalid channel", a Follow button for it)
+function watchFromInput() {
+  const parsed = parseChannelInput(channelInput.value, isKick() ? "kick" : "twitch");
+  if (!parsed) {
+    showAppToast("That isn't a channel name or a Twitch / Kick link", { error: true });
+    return false;
+  }
+  if (parsed.vod) {
+    channelInput.value = "";
+    setPlatform("twitch");
+    watchVod(parsed.vod);
+    return true;
+  }
+  setPlatform(parsed.platform);
+  channelInput.value = parsed.channel;
+  if (parsed.platform === "kick") watchKickChannel(parsed.channel);
+  else watchChannel(parsed.channel);
+  return true;
+}
 
 // Full stop of playback + relay teardown, shared by the Stop button and by hiding to tray (so a
 // tray-minimized app is quiet and lightweight rather than streaming in the background).
@@ -2513,10 +2546,8 @@ function stopPlayback({ returnToPage = true, goHome = false } = {}) {
 watchBtn.addEventListener("click", async () => {
   if (session.playing) {
     stopPlayback();
-  } else {
-    const channel = channelInput.value.trim();
-    if (isKick()) watchKickChannel(channel);
-    else watchChannel(channel);
+  } else if (channelInput.value.trim()) {
+    watchFromInput();
   }
 });
 

@@ -205,86 +205,61 @@ fn open_browser(app: &AppHandle, url: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to open browser: {e}"))
 }
 
-// bridge HTML served when the browser reaches http://localhost:17543. its JS reads location.hash
+// bridge page served when the browser reaches http://localhost:17543. its JS reads location.hash
 // (fragments aren't sent to the server, which is why the implicit grant needs this extra hop), pulls
-// out the access_token and the state, and GETs /token?t=<token>&s=<state> so the server can pick it up. styled to match the app's dark theme
-const BRIDGE_HTML: &str = r#"<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Mosaic - Logging in</title>
-  <style>
-    body {
-      margin: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-      background: #0e0e10;
-      font-family: Inter, system-ui, sans-serif;
-      color: #efeff1;
-    }
-    .card {
-      text-align: center;
-      padding: 40px;
-      border-radius: 10px;
-      background: #1f1f23;
-      border: 1px solid #3a3a3d;
-      max-width: 360px;
-    }
-    h1 { font-size: 20px; margin: 0 0 8px; }
-    p  { font-size: 14px; color: #adadb8; margin: 0; }
-    .ok  { color: #00b341; }
-    .err { color: #e91916; }
-  </style>
-</head>
-<body>
-<div class="card" id="card">
-  <h1>Completing login…</h1>
-  <p>One moment please.</p>
-</div>
-<script>
-(function () {
-  var hash = location.hash.substring(1);
-  var params = new URLSearchParams(hash);
+// out the access_token and the state, and GETs /token?t=<token>&s=<state> so the server can pick it up.
+// the look is login_page.html, shared with Kick's login
+fn bridge_html() -> String {
+    use crate::login_page::{render, State, CLOSE_HINT, ICON_ERR, ICON_OK};
+    let js = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into());
+    let script = format!(
+        r#"<script>
+(function () {{
+  var ICONS = {{ ok: {ok}, err: {err} }};
+  var HINT = {hint};
+  var params = new URLSearchParams(location.hash.substring(1));
   var token = params.get('access_token');
   var state = params.get('state') || '';
-  var card = document.getElementById('card');
 
   // the address of this page contains the login token: take it out of the address bar and the
   // browser history now that it has been read
-  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  try {{ history.replaceState(null, '', location.pathname); }} catch (e) {{}}
 
-  function show(title, body, cls) {
-    card.innerHTML =
-      '<h1 class="' + cls + '">' + title + '</h1>' +
-      '<p>' + body + '</p>';
-  }
+  function show(cls, title, body) {{
+    document.getElementById('card').className = 'card ' + cls;
+    document.getElementById('status').innerHTML = ICONS[cls];
+    document.getElementById('title').textContent = title;
+    document.getElementById('body').textContent = body;
+    document.getElementById('foot').innerHTML = HINT;
+    document.title = (cls === 'ok' ? 'Signed in' : "Sign-in didn't finish") + ' - Mosaic';
+  }}
 
-  if (!token) {
-    show('Login canceled', 'No token received. You can close this tab.', 'err');
+  if (!token) {{
+    show('err', 'Sign-in was canceled', "Twitch didn't send a sign-in. Go back to Mosaic and press Log in again.");
     return;
-  }
+  }}
 
   fetch('/token?t=' + encodeURIComponent(token) + '&s=' + encodeURIComponent(state))
-    .then(function (r) {
-      if (r.ok) {
-        show('Login successful!',
-             'You can close this tab and return to Mosaic.', 'ok');
-      } else if (r.status === 403) {
-        show('This login wasn\'t started by Mosaic',
-             'Close this tab and press Log in again in the app.', 'err');
-      } else {
-        show('Something went wrong', 'Please try logging in again.', 'err');
-      }
-    })
-    .catch(function () {
-      show('Something went wrong', 'Please try logging in again.', 'err');
-    });
-})();
-</script>
-</body>
-</html>"#;
+    .then(function (r) {{
+      if (r.ok) {{
+        show('ok', "You're signed in", 'Mosaic is now connected to your Twitch account.');
+      }} else if (r.status === 403) {{
+        show('err', "This sign-in wasn't started by Mosaic", 'Close this tab and press Log in again in Mosaic.');
+      }} else {{
+        show('err', 'Something went wrong', 'Go back to Mosaic and try logging in again.');
+      }}
+    }})
+    .catch(function () {{
+      show('err', 'Something went wrong', 'Go back to Mosaic and try logging in again.');
+    }});
+}})();
+</script>"#,
+        ok = js(ICON_OK),
+        err = js(ICON_ERR),
+        hint = js(CLOSE_HINT),
+    );
+    render(State::Wait, "Finishing sign-in", "One moment, connecting Mosaic to your Twitch account.", &script)
+}
 
 // serves the bridge page and waits for it to hand over the token. `expected_state` is what this login
 // attempt sent to Twitch: a /token request without it is refused and the server keeps waiting for the
@@ -343,7 +318,8 @@ async fn run_redirect_server<F: Fn(String)>(
         } else if first_line.starts_with("GET /") {
             // probably the initial Twitch redirect, serve the bridge page (ignore favicon.ico, etc.)
             if !first_line.contains("favicon") {
-                let body = BRIDGE_HTML.as_bytes();
+                let page = bridge_html();
+                let body = page.as_bytes();
                 let header = format!(
                     "HTTP/1.1 200 OK\r\n\
                      Content-Type: text/html; charset=utf-8\r\n\
@@ -553,7 +529,7 @@ mod redirect_server_tests {
         assert!(forged.starts_with("HTTP/1.1 403"), "{forged}");
         assert!(t0.elapsed() < std::time::Duration::from_secs(7), "silent connection held the server {:?}", t0.elapsed());
         assert!(get(addr, "/token?t=evil").await.starts_with("HTTP/1.1 403"));
-        assert!(get(addr, "/").await.contains("Completing login"));
+        assert!(get(addr, "/").await.contains("Finishing sign-in"));
         assert!(get(addr, "/token?t=real%2Btoken&s=STATE123").await.starts_with("HTTP/1.1 200"));
         tokio::time::timeout(std::time::Duration::from_secs(2), server).await.expect("server should stop after the real token").unwrap();
         assert_eq!(*got.lock().unwrap(), vec!["real+token".to_string()]);

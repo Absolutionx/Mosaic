@@ -14,6 +14,9 @@ let viewEl = null, popEscape = null, opts = {};
 let scanObserver = null; // the paged Available list's "load more" watcher
 // the last load, kept so the search box can re-filter without asking Twitch again
 let data = null, query = "";
+// the last In progress list Twitch gave this run: a Refresh that fails keeps showing it rather than emptying
+let lastInventory = null;
+let loading = false; // a load is running: Refresh waits (Twitch answered overlapping ones with "service error")
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 export function fmtLeft(minutes) {
@@ -67,7 +70,7 @@ export function openDropsHub(o = {}) {
   const body = el("div", "hub-body");
   panel.append(head, body);
   input.addEventListener("input", () => { query = input.value; if (data) render(body); });
-  refresh.addEventListener("click", () => load(body));
+  refresh.addEventListener("click", () => { if (!loading) load(body); });
   backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) closeDropsHub(); });
   document.body.appendChild(backdrop);
   viewEl = backdrop;
@@ -85,6 +88,24 @@ export function closeDropsHub() {
 }
 
 async function load(body) {
+  loading = true;
+  const btn = viewEl?.querySelector(".hub-refresh");
+  if (btn) btn.disabled = true;
+  try { await loadNow(body); } finally {
+    loading = false;
+    if (btn) btn.disabled = false;
+  }
+}
+
+// your inventory, asked once more after a moment if Twitch errors (it does now and then: "service error")
+async function inventoryWithRetry() {
+  try { return await invoke("get_drops_inventory"); } catch {
+    await new Promise((r) => setTimeout(r, 1500));
+    return invoke("get_drops_inventory");
+  }
+}
+
+async function loadNow(body) {
   body.replaceChildren(el("div", "hub-empty", "Loading drops…"));
   const connected = await invoke("twitch_device_connected").catch(() => false);
   if (!connected) {
@@ -92,11 +113,17 @@ async function load(body) {
     return;
   }
   const allP = invoke("get_drop_campaigns");
-  const [inv, watching] = await Promise.allSettled([invoke("get_drops_inventory"), invoke("heartbeat_watching")]);
+  // answered later (allSettled below); without this its "unavailable" (the paged list) lands first and the
+  // webview logs it as an uncaught rejection, as it would if the hub closes before then
+  allP.catch(() => {});
+  const [inv, watching] = await Promise.allSettled([inventoryWithRetry(), invoke("heartbeat_watching")]);
   if (!viewEl || !body.isConnected) return;
+  const invOk = inv.status === "fulfilled" && Array.isArray(inv.value);
+  if (invOk) lastInventory = inv.value;
   const d = data = {
-    inProgress: inv.status === "fulfilled" && Array.isArray(inv.value) ? inv.value : [],
+    inProgress: invOk ? inv.value : (lastInventory || []),
     invError: inv.status === "rejected" ? inv.reason : null,
+    invStale: !invOk && !!lastInventory,
     campaigns: null, allError: null, allPending: true,
     // paged: Twitch didn't share its list, so it's built a batch at a time as you scroll (drop_campaigns_more)
     paged: false, scanDone: false, scanLoading: false, scanError: null,
@@ -158,10 +185,10 @@ const matches = (texts, ws) => {
 const ended = (c, now) => { const t = Date.parse(c.end || ""); return Number.isFinite(t) && t <= now; };
 
 function render(body) {
-  const { inProgress, invError, watching } = data;
+  const { inProgress, invError, invStale, watching } = data;
   const ws = words(), now = Date.now();
   body.replaceChildren();
-  renderInProgress(body, inProgress, invError, watching, ws, now);
+  renderInProgress(body, inProgress, invStale ? null : invError, watching, ws, now, invStale);
   const avail = el("div", "drops-available");
   body.appendChild(avail);
   fillAvailable(avail, ws);
@@ -208,9 +235,15 @@ function isEarning(c, watching, now) {
   return !!sameGame && (c.drops || []).some((d) => !d.claimed && !d.claimable);
 }
 
-function renderInProgress(body, all, error, watching, ws, now) {
+function renderInProgress(body, all, error, watching, ws, now, stale = false) {
   body.appendChild(el("div", "hub-section", "In progress"));
-  if (error) { body.appendChild(el("div", "hub-note error", `Couldn't load your drops (${String(error)}).`)); return; }
+  // Twitch's own error text ("Inventory GQL errors: [...]") is for the log, not the page
+  if (error) {
+    console.warn("[drops] inventory failed:", error);
+    body.appendChild(el("div", "hub-note error", "Couldn't load your drops from Twitch right now. Try Refresh in a minute."));
+    return;
+  }
+  if (stale) body.appendChild(el("div", "hub-note", "Twitch didn't answer just now, so this is your progress from the last refresh."));
   // an ended campaign stays only while one of its rewards is still waiting to be claimed
   const live = all.filter((c) => !ended(c, now) || (c.drops || []).some((d) => d.claimable && !d.claimed));
   if (!live.length) { body.appendChild(el("div", "hub-note", "You aren't earning any drops right now. Watch a stream with drops enabled to start.")); return; }

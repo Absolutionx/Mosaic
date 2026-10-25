@@ -28,14 +28,72 @@ pub fn delete(app: &AppHandle, name: &str) {
     delete_in(data_dir(app).as_deref(), SERVICE_NAME, name)
 }
 
+// On Windows the fallback file is encrypted with DPAPI (CryptProtectData), the same per-user protection
+// Credential Manager and browsers use, so a copied file is useless outside your Windows account. It starts
+// with DPAPI_MAGIC; a file without it is a plain one from an earlier version and is read as before
+#[cfg(windows)]
+const DPAPI_MAGIC: &[u8] = b"MOSAIC-DPAPI1\n";
+
+#[cfg(windows)]
+mod dpapi {
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    // copies the output blob out and frees it (DPAPI allocates it with LocalAlloc)
+    unsafe fn take(out: CRYPT_INTEGER_BLOB) -> Vec<u8> {
+        unsafe {
+            let v = std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec();
+            let _ = LocalFree(Some(HLOCAL(out.pbData as *mut core::ffi::c_void)));
+            v
+        }
+    }
+
+    pub fn protect(data: &[u8]) -> Option<Vec<u8>> {
+        let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        unsafe {
+            CryptProtectData(&input, windows::core::w!("Mosaic"), None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out).ok()?;
+            Some(take(out))
+        }
+    }
+
+    pub fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
+        let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        unsafe {
+            CryptUnprotectData(&input, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out).ok()?;
+            Some(take(out))
+        }
+    }
+}
+
 fn write_file(dir: Option<&Path>, name: &str, data: &str) -> Result<(), String> {
     let dir = dir.ok_or_else(|| "no data dir".to_string())?;
     let _ = std::fs::create_dir_all(dir);
+    #[cfg(windows)]
+    {
+        if let Some(enc) = dpapi::protect(data.as_bytes()) {
+            let mut bytes = DPAPI_MAGIC.to_vec();
+            bytes.extend_from_slice(&enc);
+            return std::fs::write(dir.join(name), bytes).map_err(|e| e.to_string());
+        }
+        eprintln!("[secret_store] couldn't encrypt {name}; saving it unencrypted");
+    }
     std::fs::write(dir.join(name), data).map_err(|e| e.to_string())
 }
 
 fn read_file(dir: Option<&Path>, name: &str) -> Option<String> {
-    std::fs::read_to_string(dir?.join(name)).ok()
+    let bytes = std::fs::read(dir?.join(name)).ok()?;
+    #[cfg(windows)]
+    {
+        if let Some(enc) = bytes.strip_prefix(DPAPI_MAGIC) {
+            // another Windows account's file, or a damaged one: no token (you sign in again)
+            return dpapi::unprotect(enc).and_then(|v| String::from_utf8(v).ok());
+        }
+    }
+    String::from_utf8(bytes).ok()
 }
 
 fn remove_file(dir: Option<&Path>, name: &str) {
@@ -86,6 +144,9 @@ fn load_in(dir: Option<&Path>, service: &str, name: &str) -> Option<String> {
             let from_file = read_file(dir, name)?;
             if e.set_password(&from_file).is_ok() {
                 remove_file(dir, name);
+            } else if std::fs::read(dir?.join(name)).map(|b| !b.starts_with(DPAPI_MAGIC)).unwrap_or(false) {
+                // still refused: at least encrypt a plain file left by an earlier version
+                let _ = write_file(dir, name, &from_file);
             }
             return Some(from_file);
         }
@@ -143,5 +204,19 @@ mod tests {
         assert!(!d.join("old.json").exists(), "file should be gone once moved into the store");
         delete_in(Some(&d), &s, "old.json");
         assert_eq!(load_in(Some(&d), &s, "old.json"), None);
+    }
+
+    // the fallback file (Credential Manager refused) is encrypted, and reads back
+    #[cfg(windows)]
+    #[test]
+    fn fallback_file_is_encrypted() {
+        let d = tmp();
+        super::write_file(Some(&d), "f.json", "{\"access_token\":\"secret123\"}").unwrap();
+        let raw = std::fs::read(d.join("f.json")).unwrap();
+        assert!(raw.starts_with(super::DPAPI_MAGIC));
+        assert!(!String::from_utf8_lossy(&raw).contains("secret123"));
+        assert_eq!(super::read_file(Some(&d), "f.json").as_deref(), Some("{\"access_token\":\"secret123\"}"));
+        std::fs::write(d.join("p.json"), "plain").unwrap();
+        assert_eq!(super::read_file(Some(&d), "p.json").as_deref(), Some("plain"));
     }
 }

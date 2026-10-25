@@ -4,6 +4,17 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.4",
+    items: [
+      { kind: "improved", top: true, title: "Lighter in the tray", desc: "In the tray (closed to it, or started minimized), Mosaic stops drawing its window entirely. It used to keep rendering it as if it were on screen, so lurking in the tray now uses next to no CPU or graphics, and with nothing playing, Mosaic gives back memory it doesn't need." },
+      { kind: "improved", title: "A nicer sign-in page", desc: "The page your browser shows after you log in to Twitch or Kick matches Mosaic's look, and says clearly whether it worked." },
+      { kind: "fixed", title: "Pasting a link to watch", desc: "Pasting a twitch.tv or kick.com link into the Watch box or MultiView's Add a channel opened a broken \"offline\" stream. Links now open that channel (or the VOD), and anything that can't be a channel says so instead. A link saved in Recent this way is cleared out." },
+      { kind: "fixed", title: "Drops Refresh", desc: "Clicking Refresh more than once could empty your drops in progress and show an error from Twitch. Refresh now waits for the last one, and if Twitch doesn't answer it keeps showing your progress." },
+      { kind: "improved", title: "Safer login storage", desc: "If Windows' Credential Manager can't take a login, the file Mosaic keeps it in instead is now encrypted for your Windows account." },
+      { kind: "improved", title: "Security updates", desc: "Updated the certificate checks Mosaic uses for secure connections, following a fix for distrusted certificate authorities." },
+    ],
+  },
+  {
     version: "1.8.3",
     items: [
       { kind: "fixed", top: true, title: "Chat from the last channel", desc: "Right after switching channels, a few messages from the channel you left could show up in the new channel's chat. They no longer do, in the main chat or MultiView's, on Twitch or Kick." },

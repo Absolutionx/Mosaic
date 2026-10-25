@@ -388,10 +388,11 @@ pub fn set_memory_saver(app: tauri::AppHandle, on: bool) {
     }
 }
 
-// Lurk mode (lurk-mode.js): tell WebView2 the page isn't on screen while Mosaic is minimized and lurking, the
-// way a browser treats a background tab: it stops drawing and painting entirely, while audio keeps playing.
-// WebView2 only does this by itself when the window is hidden (tray), not when it's minimized. Back on screen,
-// lurk mode sets it visible again (and main.js does on any focus, as a safety net). a no-op elsewhere
+// Tell WebView2 the page isn't on screen, the way a browser treats a background tab: it stops drawing and
+// painting entirely (document.hidden turns true), while audio keeps playing. WebView2 doesn't do this by itself
+// for a hidden or minimized window, so it's set here: hidden to the tray (main.rs CloseRequested, and Start
+// minimized in main.js), minimized while lurking (lurk-mode.js). Visible again in tray::restore_window, by lurk
+// mode, and on any focus (main.rs, a safety net: a focused window is on screen). a no-op elsewhere
 #[tauri::command]
 pub fn set_page_visible(app: tauri::AppHandle, visible: bool) {
     #[cfg(windows)]

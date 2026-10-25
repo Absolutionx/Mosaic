@@ -278,19 +278,15 @@ fn open_browser(app: &AppHandle, url: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to open browser: {e}"))
 }
 
-const DONE_HTML_OK: &str =
-    "<!DOCTYPE html><meta charset=utf-8><title>Kick login</title>\
-     <body style='background:#0e0e10;color:#efeff1;font-family:system-ui;\
-     display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>\
-     <div style='text-align:center'><h1 style='color:#53fc18'>Kick login successful</h1>\
-     <p style='color:#adadb8'>You can close this tab and return to the app.</p></div>";
-
-const DONE_HTML_ERR: &str =
-    "<!DOCTYPE html><meta charset=utf-8><title>Kick login</title>\
-     <body style='background:#0e0e10;color:#efeff1;font-family:system-ui;\
-     display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>\
-     <div style='text-align:center'><h1 style='color:#e91916'>Kick login failed</h1>\
-     <p style='color:#adadb8'>Please close this tab and try again.</p></div>";
+// the page the browser ends on (login_page.html, the same design as Twitch's)
+fn done_html(ok: bool) -> String {
+    use crate::login_page::{render, State};
+    if ok {
+        render(State::Ok, "Kick account connected", "Mosaic is now connected to your Kick account.", "")
+    } else {
+        render(State::Err, "Kick sign-in didn't finish", "Go back to Mosaic and try connecting Kick again.", "")
+    }
+}
 
 // true while our redirect server holds REDIRECT_PORT (see start: a busy port held by anything else is refused)
 static KICK_SERVER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -345,10 +341,8 @@ async fn run_redirect_server(listener: TcpListener, app: AppHandle) {
             continue;
         }
         let outcome = finish_login(&app, code, state).await;
-        let (status, body) = match &outcome {
-            Ok(_) => ("200 OK", DONE_HTML_OK),
-            Err(_) => ("200 OK", DONE_HTML_ERR),
-        };
+        let status = "200 OK";
+        let body = done_html(outcome.is_ok());
         let resp = format!(
             "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\n\
              Content-Length: {}\r\nConnection: close\r\n\r\n{body}",

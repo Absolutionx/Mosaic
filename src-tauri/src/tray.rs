@@ -149,6 +149,8 @@ pub fn restore_window(app: &AppHandle) {
                 maximize = p.maximized;
             }
         }
+        // the page was told it's hidden when it went to the tray (main.rs): drawing again before it shows
+        crate::app_extras::set_page_visible(app.clone(), true);
         let _ = w.show();
         if maximize {
             let _ = w.maximize();

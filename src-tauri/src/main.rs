@@ -23,6 +23,7 @@ mod helix;
 mod kick;
 mod kick_chat;
 mod kick_oauth;
+mod login_page;
 mod link_preview;
 mod notify_prefs;
 mod oauth;
@@ -425,6 +426,9 @@ fn main() {
                         tray::remember_placement(window);
                         let _ = window.hide();
                         let _ = window.emit("hidden-to-tray", ());
+                        // and the page stops drawing: WebView2 kept rendering it in the tray (the glow, chat,
+                        // a lurking stream's frames) as if on screen. restore_window turns it back on
+                        app_extras::set_page_visible(window.app_handle().clone(), false);
                         return;
                     }
 
@@ -444,6 +448,8 @@ fn main() {
                         }
                     }
                 }
+                // a focused window is on screen: its page must be drawing, whichever way it came back
+                tauri::WindowEvent::Focused(true) => app_extras::set_page_visible(window.app_handle().clone(), true),
                 // keep track of the window's normal (not maximized) size + position, see tray::restore_window
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => tray::track_normal_bounds(window),
                 _ => {}

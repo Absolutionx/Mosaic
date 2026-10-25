@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<!-- this page briefly holds the login token: it may load nothing from anywhere, and only talk back to Mosaic -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src data:">
+<title>{{TAB_TITLE}}</title>
+<style>
+  :root {
+    --bg: #08080a;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --faint: #71717a;
+    --line: rgba(255, 255, 255, 0.08);
+    --err: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(900px 520px at 50% 38%, rgba(255, 255, 255, 0.055), transparent 62%),
+      radial-gradient(1400px 900px at 50% 120%, rgba(255, 255, 255, 0.03), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  /* faint grain: breaks up the banding a smooth dark gradient shows on most screens */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .card {
+    position: relative;
+    z-index: 1;
+    width: min(420px, calc(100vw - 32px));
+    padding: 34px 36px 26px;
+    border-radius: 20px;
+    text-align: center;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018));
+    border: 1px solid var(--line);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.06) inset,
+      0 40px 90px -20px rgba(0, 0, 0, 0.75),
+      0 0 0 1px rgba(0, 0, 0, 0.4);
+    animation: rise 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+  /* a hairline of light along the top edge */
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: -1px 24% auto;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .brand svg { width: 26px; height: 26px; display: block; }
+  .status {
+    width: 68px;
+    height: 68px;
+    margin: 26px auto 18px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 70%);
+    box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.025), 0 0 44px rgba(255, 255, 255, 0.1);
+  }
+  .status svg { width: 30px; height: 30px; overflow: visible; }
+  .status path { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .ok .status { color: #fff; animation: pop 0.55s 0.15s cubic-bezier(0.2, 0.9, 0.3, 1.25) both; }
+  .ok .status path { stroke-dasharray: 30; stroke-dashoffset: 30; animation: draw 0.45s 0.45s ease-out forwards; }
+  .err .status {
+    color: var(--err);
+    border-color: rgba(248, 113, 113, 0.28);
+    background: radial-gradient(circle at 50% 35%, rgba(248, 113, 113, 0.14), rgba(248, 113, 113, 0.03) 70%);
+    box-shadow: 0 0 0 6px rgba(248, 113, 113, 0.04), 0 0 44px rgba(248, 113, 113, 0.12);
+    animation: pop 0.45s 0.1s ease-out both;
+  }
+  .wait .status { border-color: rgba(255, 255, 255, 0.08); box-shadow: none; background: none; }
+  .spinner {
+    width: 30px; height: 30px; border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-top-color: #fff;
+    animation: spin 0.8s linear infinite;
+  }
+  h1 { margin: 0 0 6px; font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
+  p { margin: 0; color: var(--muted); }
+  .foot {
+    margin-top: 26px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-size: 12.5px;
+  }
+  kbd {
+    display: inline-block;
+    min-width: 20px;
+    padding: 1px 6px;
+    margin: 0 1px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-bottom-width: 2px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(0.985); } }
+  @keyframes pop { from { opacity: 0; transform: scale(0.6); } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; }
+    .ok .status path { stroke-dashoffset: 0; }
+  }
+</style>
+</head>
+<body>
+<main class="card {{STATE}}" id="card" role="status" aria-live="polite">
+  <div class="brand">
+    <svg viewBox="112 112 288 288" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" gradientUnits="userSpaceOnUse" x1="112" y1="112" x2="400" y2="400"><stop offset="0" stop-color="#b47bff"/><stop offset=".4" stop-color="#7c5cff"/><stop offset=".72" stop-color="#22c9b8"/><stop offset="1" stop-color="#5afc2a"/></linearGradient>
+        <mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512"><rect width="512" height="512" fill="#fff"/><path d="M 172 214 L 172 298 L 236 256 Z" fill="#000" stroke="#000" stroke-width="10" stroke-linejoin="round"/></mask>
+      </defs>
+      <g fill="url(#g)" mask="url(#m)"><rect x="112" y="112" width="156" height="288" rx="30"/><rect x="290" y="112" width="110" height="133" rx="28"/><rect x="290" y="267" width="110" height="133" rx="28"/></g>
+    </svg>
+    Mosaic
+  </div>
+  <div class="status" id="status">{{ICON}}</div>
+  <h1 id="title">{{TITLE}}</h1>
+  <p id="body">{{BODY}}</p>
+  <div class="foot" id="foot">{{FOOT}}</div>
+</main>
+{{SCRIPT}}
+</body>
+</html>

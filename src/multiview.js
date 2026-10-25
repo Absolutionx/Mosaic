@@ -1,3 +1,5 @@
+import { parseChannelInput } from "./channel-input.js";
+import { showAppToast } from "./app-toast.js";
 import { smallAvatar } from "./format.js";
 import { getSetting } from "./settings.js";
 // MultiView: full-screen grid of several streams at once. built outside the single-stream
@@ -177,9 +179,17 @@ export class MultiView {
     });
 
     const input = root.querySelector(".multiview-add-input");
+    // a name or a twitch.tv link (channel-input.js). MultiView plays Twitch channels, so a Kick or VOD link, or
+    // text that can't be a channel, stays in the box with a note instead of becoming a dead tile
     const add = () => {
-      const v = input.value.trim().toLowerCase().replace(/^#/, "");
-      if (v) { this.addChannel(v); input.value = ""; }
+      if (!input.value.trim()) return;
+      const parsed = parseChannelInput(input.value, "twitch");
+      if (!parsed || !parsed.channel || parsed.platform !== "twitch") {
+        showAppToast(parsed ? "MultiView plays live Twitch channels" : "That isn't a Twitch channel name or link", { error: true });
+        return;
+      }
+      this.addChannel(parsed.channel);
+      input.value = "";
     };
     root.querySelector(".multiview-add-btn").addEventListener("click", add);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
