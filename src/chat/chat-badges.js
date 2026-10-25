@@ -1,5 +1,6 @@
 // badge and cheermote loading/rendering (global + per-channel). mixed onto TwitchChat (see ../chat.js)
 
+import { sharedGlobal } from "./global-cache.js";
 import { invoke } from "@tauri-apps/api/core";
 import { kickBadgeElement } from "./kick-badges.js";
 
@@ -159,7 +160,7 @@ export const chatBadgesMixin = {
     // badges.twitch.tv fails with ERR_NAME_NOT_RESOLVED inside WebView2 (the tracking-prevention
     // issue that drove IRC to Rust), so the Rust command hits Helix instead, see ingestBadgeSets
     try {
-      const json = await invoke("fetch_global_badges");
+      const json = await sharedGlobal("twitch-global-badges", () => invoke("fetch_global_badges"));
       this.ingestBadgeSets(JSON.parse(json));
       // USERSTATE and PRIVMSG badges arrive independently of this fetch, so messages landing first
       // (common on a fresh connect) rendered against an empty map with no retry, which showed as

@@ -165,7 +165,10 @@ pub async fn get_users_info(
     state: State<'_, ChatState>,
     user_ids: Vec<String>,
 ) -> Result<String, String> {
-    let (token, _) = require_auth(&state)?;
+    // logged out: Twitch's public GQL (anon_feed.rs), same rows
+    let Ok((token, _)) = require_auth(&state) else {
+        return serde_json::to_string(&crate::anon_feed::users(&user_ids).await?).map_err(|e| e.to_string());
+    };
 
     let fetches = user_ids
         .chunks(100)
@@ -612,6 +615,9 @@ pub async fn get_category_viewer_counts(state: State<'_, ChatState>) -> Result<S
         .map_err(|e| e.to_string())?
         .as_ref()
         .map(|a| a.access_token.clone());
+    if token.is_none() {
+        return serde_json::to_string(&crate::anon_feed::category_counts().await?).map_err(|e| e.to_string());
+    }
 
     let mut by_game: std::collections::HashMap<String, (i64, i64)> = std::collections::HashMap::new();
     let mut cursor: Option<String> = None;
@@ -669,6 +675,10 @@ pub async fn get_top_live_streams(state: State<'_, ChatState>) -> Result<String,
         .map_err(|e| e.to_string())?
         .as_ref()
         .map(|a| a.access_token.clone());
+    if token.is_none() {
+        let (rows, _) = crate::anon_feed::top_streams(None, 100).await?;
+        return serde_json::to_string(&rows).map_err(|e| e.to_string());
+    }
     let body = helix_get("https://api.twitch.tv/helix/streams?first=100", token).await?;
     let parsed: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("Bad JSON from Helix: {e}"))?;
@@ -694,6 +704,10 @@ pub async fn get_live_streams_page(
         .map_err(|e| e.to_string())?
         .as_ref()
         .map(|a| a.access_token.clone());
+    if token.is_none() {
+        let (rows, next) = crate::anon_feed::top_streams(cursor, 100).await?;
+        return serde_json::to_string(&serde_json::json!({ "streams": rows, "cursor": next })).map_err(|e| e.to_string());
+    }
 
     let url = match &cursor {
         Some(c) => format!("https://api.twitch.tv/helix/streams?first=100&after={c}"),
@@ -737,6 +751,9 @@ pub async fn get_streams_for_game_names(
 
     if game_names.is_empty() {
         return Ok("[]".to_string());
+    }
+    if token.is_none() {
+        return serde_json::to_string(&crate::anon_feed::streams_for_game_names(&game_names, 30).await?).map_err(|e| e.to_string());
     }
 
     let name_params = game_names
@@ -803,6 +820,9 @@ pub async fn search_categories(
     if query.trim().is_empty() {
         return Ok("[]".to_string());
     }
+    if token.is_none() {
+        return serde_json::to_string(&crate::anon_feed::search_categories(query.trim()).await?).map_err(|e| e.to_string());
+    }
 
     let url = format!(
         "https://api.twitch.tv/helix/search/categories?query={}&first=40",
@@ -836,6 +856,10 @@ pub async fn get_top_games(
         .map_err(|e| e.to_string())?
         .as_ref()
         .map(|a| a.access_token.clone());
+    if token.is_none() {
+        let (games, next) = crate::anon_feed::top_games(cursor).await?;
+        return serde_json::to_string(&serde_json::json!({ "games": games, "cursor": next })).map_err(|e| e.to_string());
+    }
 
     let url = match &cursor {
         Some(c) => format!("https://api.twitch.tv/helix/games/top?first={GAMES_PAGE_SIZE}&after={c}"),
@@ -875,6 +899,12 @@ pub async fn get_streams_for_game_id(
         .map_err(|e| e.to_string())?
         .as_ref()
         .map(|a| a.access_token.clone());
+    if token.is_none() {
+        if game_id.is_empty() || !game_id.chars().all(|c| c.is_ascii_digit()) {
+            return Err("invalid category".into());
+        }
+        return serde_json::to_string(&crate::anon_feed::streams_for_game(&game_id, 100).await?).map_err(|e| e.to_string());
+    }
     let url = format!("https://api.twitch.tv/helix/streams?game_id={game_id}&first=100");
     let body = helix_get(&url, token).await?;
     let parsed: serde_json::Value =

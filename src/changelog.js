@@ -4,6 +4,19 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.6",
+    items: [
+      { kind: "new", top: true, title: "Reorder your favorites", desc: "Drag a favorite in the sidebar to put them in your own order, or press Alt+Up / Alt+Down on one. MultiView and preloading follow your order too. Settings › Sidebar › Favorites order switches back to live channels first." },
+      { kind: "improved", title: "Something to watch without logging in", desc: "Home, Browse and the sidebar's Live Channels now fill in when you're not logged in to Twitch, the way twitch.tv does, instead of an empty window. Logging out no longer leaves the last account's streams in the sidebar." },
+      { kind: "improved", title: "Lighter glows", desc: "Ambient glow and hype train glows now use about a quarter of the CPU and far less graphics work while you watch: hype trains glow steadily, and the ambient glow is drawn more efficiently. Settings › Player › Animated glows brings back the pulsing, extra-soft version." },
+      { kind: "improved", title: "Quicker startup", desc: "Emotes and badges load once instead of up to three times, and Home and the sidebar wait the moment it takes to sign you back in, so they load once, with your account, and the sidebar no longer flashes \"Log in\" first." },
+      { kind: "improved", title: "Lighter when minimized", desc: "Minimized, Mosaic stops drawing its window, as it already does in the tray. Sound keeps playing." },
+      { kind: "improved", title: "Less memory after Browse", desc: "A minute and a half after you leave Browse, its pictures are let go, and come back when you return." },
+      { kind: "improved", title: "Hidden animations pause", desc: "Animations in the sidebar stop while theater mode hides it, and in the chat panel while chat overlay hides it." },
+      { kind: "improved", title: "Safer from other programs", desc: "Mosaic now ignores Windows settings that another program could use to turn on remote debugging and take control of it, including your Twitch login." },
+    ],
+  },
+  {
     version: "1.8.5",
     items: [
       { kind: "fixed", top: true, title: "Saving watch streaks", desc: "Watching the clip or VOD a broken watch streak offers, in Mosaic, now saves the streak (tested with a clip). Mosaic reports clips and VODs the way twitch.tv's player does, including how far you've watched a VOD, so twitch.tv also remembers where you left off." },

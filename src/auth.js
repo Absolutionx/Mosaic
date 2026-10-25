@@ -30,7 +30,9 @@ export class TwitchAuth {
     document.addEventListener("click", () => this._closeUserMenu());
 
     this.setupListener();
-    this.tryRestoreSession();
+    // settles once the saved login has been checked, either way (main.js holds Home's and the sidebar's first
+    // load until then, so they don't fetch logged out first and again once you're in)
+    this.restored = this.tryRestoreSession();
   }
 
   _positionUserMenu() {

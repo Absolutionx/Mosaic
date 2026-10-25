@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 
+mod anon_feed;
 mod app_extras;
 mod secret_store;
 #[cfg(test)]
@@ -138,6 +139,23 @@ fn take_is_fresh_launch(state: State<LaunchState>) -> bool {
 }
 
 fn main() {
+    // WebView2 reads these from the environment when the webview starts: extra browser switches (one turns on
+    // remote debugging, which hands full control of the page, and so of your Twitch login, to anything on this
+    // computer that connects), a script-debugger pipe, and another browser engine or profile folder to run.
+    // Any program running as you can set them for you, unnoticed. A release build clears them before any
+    // webview exists; a dev build (debug_assertions) keeps them, for testing (dist/mosaic-dev-debug.bat)
+    #[cfg(not(debug_assertions))]
+    for var in [
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "WEBVIEW2_PIPE_FOR_SCRIPT_DEBUGGER",
+        "WEBVIEW2_BROWSER_EXECUTABLE_FOLDER",
+        "WEBVIEW2_USER_DATA_FOLDER",
+        "WEBVIEW2_RELEASE_CHANNEL_PREFERENCE",
+        "WEBVIEW2_CHANNEL_SEARCH_KIND",
+    ] {
+        std::env::remove_var(var);
+    }
+
     // kill the WebView2 white flash on startup (Windows): its surface renders white underneath web
     // content until the first paint, visible for a frame or two when the maximized window appears. the
     // native window backgroundColor doesn't cover this surface, and the WebView2 API path can still

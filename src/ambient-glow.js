@@ -26,6 +26,17 @@ let H = 108;
 let pic = { x: 0, y: 0, w: W, h: H }; // the picture's rectangle in glow-canvas pixels
 let seeded = false;                   // after a resize, the first paint is full strength (no fade-in from black)
 const CANVAS_BLUR = "blur(9px)", PAD = 18, EVERY_MS = 150, BLEND = 0.35;
+// Settings > Player > Animated glows off (the default): the CSS filter on the column-sized glow is skipped
+// (styles.css), so the canvas does the softening and the color itself, and it updates 4 times a second
+// instead of ~7 (blending a little more each time, so colors still drift at the same pace). Each mode's
+// saturation / brightness, as in styles.css
+const LITE_EVERY_MS = 250, LITE_BLEND = 0.5;
+const LITE_LOOK = { subtle: "saturate(1) brightness(.8)", normal: "saturate(1.1) brightness(.9)", strong: "saturate(1.25) brightness(1)" };
+const rich = () => !!getSetting("richGlow");
+function canvasFilter() {
+  if (rich()) return CANVAS_BLUR;
+  return `blur(14px) ${LITE_LOOK[getSetting("ambientGlow")] || LITE_LOOK.normal}`;
+}
 let video = null, host = null, wrap = null, canvas = null, ctx = null, timer = null, isPlaying = () => true;
 let mid = null, midCtx = null, sample = null, sampleCtx = null;
 
@@ -58,7 +69,7 @@ export function initAmbientGlow(opts) {
   if (ctx) { ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high"; }
   [mid, midCtx] = smallCanvas(MID_W, MID_H);
   [sample, sampleCtx] = smallCanvas(SAMPLE_W, SAMPLE_H);
-  onSettingChange((id) => { if (id === "ambientGlow") apply(); });
+  onSettingChange((id) => { if (id === "ambientGlow" || id === "richGlow") apply(); });
   for (const ev of ["loadedmetadata", "resize", "playing"]) video.addEventListener(ev, place);
   video.addEventListener("emptied", () => { ctx?.clearRect(0, 0, W, H); });
   new ResizeObserver(() => place()).observe(host);
@@ -78,7 +89,7 @@ function apply() {
   timer = null;
   if (!on) { ctx?.clearRect(0, 0, W, H); seeded = false; return; }
   requestAnimationFrame(place);
-  if (!isAway()) timer = setInterval(draw, EVERY_MS);
+  if (!isAway()) timer = setInterval(draw, rich() ? EVERY_MS : LITE_EVERY_MS);
 }
 
 // the canvas covers the column; record where the picture sits in it (in canvas pixels, for drawing) and as
@@ -123,9 +134,9 @@ export function draw() {
     // 2. paint it soft into the glow, blending toward it so colors drift smoothly: the picture area (it feeds
     // the blur at the picture's edges), then the edge rows / columns stretched out to the borders
     const { x, y, w, h } = pic, P = PAD;
-    ctx.globalAlpha = seeded ? BLEND : 1;
+    ctx.globalAlpha = seeded ? (rich() ? BLEND : LITE_BLEND) : 1;
     seeded = true;
-    if ("filter" in ctx) ctx.filter = CANVAS_BLUR;
+    if ("filter" in ctx) ctx.filter = canvasFilter();
     ctx.drawImage(sample, x - P, y - P, w + P * 2, h + P * 2);
     ctx.drawImage(sample, 0, 0, SAMPLE_W, 1, x - P, -P, w + P * 2, y + P + 1);                                  // top edge -> up
     ctx.drawImage(sample, 0, SAMPLE_H - 1, SAMPLE_W, 1, x - P, y + h - 1, w + P * 2, H - (y + h) + P + 1);      // bottom edge -> down

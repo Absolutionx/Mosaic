@@ -95,9 +95,11 @@ export const DEFAULTS = {
   liveChannelsCount: 10,     // 0 = all
   showOfflineFollowed: true,
   followedSort: "viewers",   // "viewers" | "name"
+  favoritesOrder: "live",    // "live" (live first, most viewers first) | "custom" (the order you dragged them into)
   hoverPreviews: true,
   hoverPreviewDelay: 350,    // ms
   hypeGlow: true,
+  richGlow: false,           // Animated glows: pulsing hype glows + the softest ambient glow (more CPU / GPU)
   // home
   homeLauncher: true,        // MultiView launcher for live favorites (else the top-streams carousel)
   homeContinueRow: true,     // "Continue where you left off"
@@ -279,6 +281,7 @@ export function applyAppearance() {
   body.classList.toggle("chat-no-highlight-glow", !getSetting("highlightedGlow"));
   body.classList.toggle("no-stream-info-overlay", !getSetting("streamInfoOverlay"));
   body.classList.toggle("no-hype-glow", !getSetting("hypeGlow"));
+  body.classList.toggle("rich-glow", !!getSetting("richGlow"));
   body.classList.toggle("chat-paints-animate", !!getSetting("sevenTvPaintsAnimate"));
   body.classList.toggle("reduce-motion", !!getSetting("reduceMotion"));
   // spell check in the chat box (WebView2 uses the Windows spell checker and its language)

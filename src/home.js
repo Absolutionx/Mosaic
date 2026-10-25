@@ -111,7 +111,16 @@ export class HomeFeed {
     }
   }
 
+  // main.js: the first load waits until the saved login has been checked (see loginSettled there)
+  setLoginGate(promise) { this._loginGate = promise; }
+  waitingForLogin() { return !!this._loginGate; }
+
   async refresh() {
+    if (this._loginGate) {
+      const gate = this._loginGate;
+      await gate;
+      if (this._loginGate === gate) this._loginGate = null;
+    }
     // only the newest refresh draws: one still running when you switch Twitch / Kick could otherwise land
     // after the new platform's and put the old platform's streams back
     const seq = (this._refreshSeq = (this._refreshSeq || 0) + 1);

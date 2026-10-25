@@ -7,6 +7,7 @@
 //   - "Muted" also mutes it
 //   - chat stops drawing messages (TwitchChat.setLurking) and says how long you were away when you're back
 //   - WebView2's memory saver goes on even though something plays (main.js syncMemorySaver asks lurkActive())
+// (the page stops drawing whenever Mosaic is minimized, lurking or not: syncPageHidden below)
 // Back on screen, the quality and sound you had come back. Minimizing waits a few seconds first, so a quick
 // minimize-and-restore doesn't restart the stream; closing to the tray lurks right away.
 
@@ -21,11 +22,39 @@ const MINIMIZE_DELAY_MS = 8000;
 let ctx = null;   // { playbackControls, multiview, chat }
 let state = null; // set while lurking
 let timer = null;
-// the page is marked hidden when the window goes to the tray (main.rs), but NOT when it's minimized, so minimizing is
-// watched on the window itself. while lurking minimized, the page is told it's hidden (set_page_visible) so it
-// stops drawing; pageHidden remembers that it was us, so it doesn't read as "still away" once you're back
+// the page is marked hidden when the window goes to the tray (main.rs), but NOT when it's minimized, so minimizing
+// is watched on the window itself, and a moment after, the page is told it's hidden (set_page_visible) so it stops
+// drawing: before, a minimized Mosaic kept rendering the stream, the glow and chat as if on screen (the same GPU
+// load as watching). Sound keeps playing. Not while a picture-in-picture window shows the video: it's drawn from
+// this page. pageHidden remembers that it was us, so it doesn't read as "still away" once you're back
+const HIDE_DELAY_MS = 1500; // a quick minimize-and-restore doesn't flip it
 let minimized = false;
 let pageHidden = false;
+let hideTimer = null;
+
+// a picture-in-picture window showing video from this page (the browser's own, or the document one)
+function pipOpen() {
+  const pc = ctx?.playbackControls;
+  return !!document.pictureInPictureElement || !!pc?.docPipWindow || !!pc?._nativePipRestore;
+}
+
+function syncPageHidden() {
+  if (minimized && !pipOpen()) {
+    if (pageHidden || hideTimer || document.hidden) return;
+    hideTimer = setTimeout(() => {
+      hideTimer = null;
+      if (!minimized || pageHidden || document.hidden || pipOpen()) return;
+      pageHidden = true;
+      invoke("set_page_visible", { visible: false }).catch(() => { pageHidden = false; });
+    }, HIDE_DELAY_MS);
+  } else {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+    if (pageHidden) {
+      pageHidden = false;
+      invoke("set_page_visible", { visible: true }).catch(() => {});
+    }
+  }
+}
 
 export function lurkActive() { return !!state; }
 
@@ -51,6 +80,7 @@ export function initLurkMode(c) {
       const m = await w.isMinimized().catch(() => false);
       if (m === minimized) return;
       minimized = m;
+      syncPageHidden();
       document.dispatchEvent(new CustomEvent("mosaic:away", { detail: { away: isAway() } }));
       sync();
     };
@@ -63,7 +93,7 @@ export function initLurkMode(c) {
       if (!focused) { check(); return; }
       await check();
       sync();
-      if (pageHidden && !minimized && !state) { pageHidden = false; invoke("set_page_visible", { visible: true }).catch(() => {}); }
+      syncPageHidden();
     });
   } catch { /* not in Tauri (tests) */ }
   // turning it off while lurking puts everything back
@@ -110,11 +140,6 @@ function start() {
   }
   try { ctx.chat?.setLurking?.(true); } catch { /* ignore */ }
   try { recapStart(session.intendedChannel); } catch { /* ignore */ } // "while you lurked" (lurk-recap.js)
-  // minimized: stop drawing the page entirely (the tray already does, main.rs)
-  if (minimized && !document.hidden) {
-    pageHidden = true;
-    invoke("set_page_visible", { visible: false }).catch(() => { pageHidden = false; });
-  }
   console.info(`[lurk] on (${state.switched ? "audio only" : "quality unchanged"}${state.muted ? ", muted" : ""})`);
   document.dispatchEvent(new CustomEvent("mosaic:lurk", { detail: { on: true } }));
 }
@@ -122,10 +147,6 @@ function start() {
 function stop() {
   const s = state;
   state = null;
-  if (pageHidden) {
-    pageHidden = false;
-    invoke("set_page_visible", { visible: true }).catch(() => {});
-  }
   const pc = ctx.playbackControls;
   if (s.muted && pc.isMuted) pc.toggleMute();
   // put the picture back, unless you picked another quality yourself in the meantime (a raid that carried you

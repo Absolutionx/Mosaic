@@ -1,4 +1,5 @@
 // emote loading, parsing, rendering, and the autocomplete popup. mixed onto TwitchChat (see ../chat.js)
+import { sharedGlobal, sharedJson } from "./global-cache.js";
 import { invoke } from "@tauri-apps/api/core";
 import { SEVENTV_API_BASE, BTTV_API_BASE } from "./shared.js";
 import { getSetting } from "../settings.js";
@@ -103,12 +104,11 @@ export const chatEmotesMixin = {
   async loadSevenTvGlobalEmotes() {
     if (!getSetting("emotes7tv")) return; // Settings > Chat > emote providers
     try {
-      const res = await fetch(`${SEVENTV_API_BASE}/emote-sets/global`);
-      if (!res.ok) {
-        console.warn("[7tv] Global emote-set fetch failed:", res.status);
+      let data;
+      try { data = await sharedJson("7tv-global", `${SEVENTV_API_BASE}/emote-sets/global`); } catch (err) {
+        console.warn("[7tv] Global emote-set fetch failed:", err.status || err);
         return;
       }
-      const data = await res.json();
       const countBefore = this.sevenTvEmotes.size;
       this.ingestEmoteSet(data, "seventv-global");
       console.log(`Loaded ${this.sevenTvEmotes.size - countBefore} 7TV global emotes.`);
@@ -208,9 +208,8 @@ export const chatEmotesMixin = {
   async loadBttvGlobalEmotes() {
     if (!getSetting("emotesBttv")) return; // Settings > Chat > emote providers
     try {
-      const res = await fetch(`${BTTV_API_BASE}/cached/emotes/global`);
-      if (!res.ok) return;
-      const emotes = await res.json();
+      let emotes;
+      try { emotes = await sharedJson("bttv-global", `${BTTV_API_BASE}/cached/emotes/global`); } catch { return; }
       let count = 0;
       for (const emote of emotes) {
         // BTTV CDN: https://cdn.betterttv.net/emote/<id>/2x.<ext>
@@ -280,12 +279,12 @@ export const chatEmotesMixin = {
   async loadFfzGlobalEmotes() {
     if (!getSetting("emotesFfz")) return; // Settings > Chat > emote providers
     try {
-      const res = await fetch(`${BTTV_API_BASE}/cached/frankerfacez/emotes/global`);
-      if (!res.ok) {
-        console.warn("[ffz] Global emote fetch failed:", res.status);
+      let json;
+      try { json = await sharedJson("ffz-global", `${BTTV_API_BASE}/cached/frankerfacez/emotes/global`); } catch (err) {
+        console.warn("[ffz] Global emote fetch failed:", err.status || err);
         return;
       }
-      const count = this._ingestFfzEmotes(await res.json(), "ffz-global");
+      const count = this._ingestFfzEmotes(json, "ffz-global");
       console.log(`Loaded ${count} FFZ global emotes.`);
     } catch (err) {
       console.warn("Failed to load FFZ global emotes:", err);
@@ -317,7 +316,7 @@ export const chatEmotesMixin = {
   // autocomplete searches
   async loadTwitchGlobalEmotes() {
     try {
-      const json = await invoke("fetch_global_emotes");
+      const json = await sharedGlobal("twitch-global-emotes", () => invoke("fetch_global_emotes"));
       const data = JSON.parse(json);
       let count = 0;
       for (const emote of data.data ?? []) {

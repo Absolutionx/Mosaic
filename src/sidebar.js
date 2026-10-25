@@ -1,5 +1,5 @@
 import { smallAvatar, sizedImage } from "./format.js";
-import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
+import { getSetting, setSetting, notificationAllowed, notificationOptions } from "./settings.js";
 // channels sidebar: followed channels (live + offline) and a Live Channels list. data via
 // Rust-proxied Helix (followed, streams-for-users, users-info, top-live), since api.twitch.tv
 // isn't reachable from WebView2
@@ -88,10 +88,16 @@ export class ChannelsSidebar {
     this.followed = [];
     this.renderFollowed();
     this.loginPromptEl.style.display = "";
+    // Live Channels comes from Twitch's public listing logged out (anon_feed.rs): reload it now, so what the
+    // signed-in session last fetched doesn't stay up
+    this.refreshTopLive();
   }
 
-  // call unconditionally at startup. also restores the notification opt-in set (a local file, independent of login)
-  async init() {
+  // call unconditionally at startup. also restores the notification opt-in set (a local file, independent of login).
+  // loginSettled (main.js): settles once the saved login has been checked; the first Live Channels load and the
+  // "Log in" prompt wait for it, so a signed-in launch doesn't flash the logged-out sidebar or fetch twice
+  async init(loginSettled = Promise.resolve()) {
+    this.loginPromptEl.style.display = "none";
     try {
       const channels = await invoke("get_notify_channels");
       this.notifyChannels = new Set(channels);
@@ -109,7 +115,16 @@ export class ChannelsSidebar {
     } catch (err) {
       console.error("Failed to load notification preferences:", err);
     }
-    await this.refreshTopLive();
+    await loginSettled;
+    if (!this.loggedIn) {
+      this.loginPromptEl.style.display = ""; // as before (Kick mode styles it away itself, if at all)
+      await this.refreshTopLive(); // signed in: onLogin's refresh() already loaded it
+    }
+    // Live Channels refreshes every minute logged out too (it used to start only on login, so a logged-out
+    // sidebar never changed); the followed-channel parts of refresh() skip themselves without a login
+    if (!this.refreshTimer) {
+      this.refreshTimer = setInterval(() => this.refresh(), REFRESH_INTERVAL_MS);
+    }
   }
 
   async refresh() {
@@ -436,7 +451,7 @@ export class ChannelsSidebar {
     // They get their own section above Followed Channels (Twitch only — Kick rows have no bell menu)
     // and are removed from the regular list so a channel never appears twice. Order is preserved
     // (followed list is already live-first).
-    const favorites = kick ? [] : followedVisible.filter((ch) => this._isFavorite(ch.login));
+    const favorites = kick ? [] : this._orderFavorites(followedVisible.filter((ch) => this._isFavorite(ch.login)));
     const regular = kick ? followedVisible : followedVisible.filter((ch) => !this._isFavorite(ch.login));
     this._renderFavorites(favorites);
 
@@ -485,9 +500,82 @@ export class ChannelsSidebar {
     list.innerHTML = "";
     if (!favorites.length) { section.style.display = "none"; return; }
     for (const ch of favorites) {
-      list.appendChild(this.buildChannelRow(ch, { showNotifyToggle: true }));
+      const row = this.buildChannelRow(ch, { showNotifyToggle: true });
+      this._makeReorderable(row, ch.login, list);
+      list.appendChild(row);
     }
     section.style.display = "";
+  }
+
+  // Settings > Sidebar > Favorites order: "custom" keeps the order you dragged them into (the order of the
+  // saved favorites list); "live" (the default) keeps the followed list's own order: live first, most viewers first
+  _orderFavorites(list) {
+    if (getSetting("favoritesOrder") !== "custom") return list;
+    const rank = new Map([...this.favorites].map((login, i) => [login, i]));
+    return [...list].sort((a, b) => (rank.get(a.login) ?? 1e9) - (rank.get(b.login) ?? 1e9));
+  }
+
+  // move a favorite to just before / after another one in your order, switch to "My order", and redraw
+  _moveFavorite(login, targetLogin, after) {
+    if (login === targetLogin) return;
+    const order = [...this.favorites].filter((l) => l !== login);
+    const at = order.indexOf(targetLogin);
+    if (at < 0) return;
+    order.splice(after ? at + 1 : at, 0, login);
+    this.favorites = new Set(order);
+    this._saveFavorites();
+    if (getSetting("favoritesOrder") !== "custom") setSetting("favoritesOrder", "custom"); // its listener redraws
+    else this.renderFollowed();
+  }
+
+  // drag a favorite row onto another to reorder (a line shows where it lands); Alt+Up / Alt+Down does the
+  // same from the keyboard
+  _makeReorderable(row, login, list) {
+    row.draggable = true;
+    row.dataset.favLogin = login;
+    row.addEventListener("dragstart", (e) => {
+      this._hidePreview();
+      this._dragFav = login;
+      row.classList.add("fav-dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", login); } catch { /* some hosts refuse */ }
+    });
+    row.addEventListener("dragend", () => {
+      this._dragFav = null;
+      row.classList.remove("fav-dragging");
+      for (const r of list.querySelectorAll(".fav-drop-before, .fav-drop-after")) r.classList.remove("fav-drop-before", "fav-drop-after");
+    });
+    const after = (e) => { const r = row.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+    row.addEventListener("dragover", (e) => {
+      if (!this._dragFav || this._dragFav === login) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const a = after(e);
+      row.classList.toggle("fav-drop-after", a);
+      row.classList.toggle("fav-drop-before", !a);
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("fav-drop-before", "fav-drop-after"));
+    row.addEventListener("drop", (e) => {
+      if (!this._dragFav) return;
+      e.preventDefault();
+      const moved = this._dragFav;
+      this._dragFav = null;
+      this._moveFavorite(moved, login, after(e));
+    });
+    row.addEventListener("keydown", (e) => {
+      if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      e.preventDefault();
+      const rows = [...list.querySelectorAll("[data-fav-login]")];
+      const i = rows.indexOf(row);
+      const target = rows[e.key === "ArrowUp" ? i - 1 : i + 1];
+      if (!target) return;
+      this._moveFavorite(login, target.dataset.favLogin, e.key === "ArrowDown");
+      // keep the moved row's button focused after the redraw (the row may be a wrapper around it)
+      requestAnimationFrame(() => {
+        const moved = list.querySelector(`[data-fav-login="${CSS.escape(login)}"]`);
+        (moved?.matches("button") ? moved : moved?.querySelector("button.sidebar-channel, button"))?.focus();
+      });
+    });
   }
 
   async renderTopLive(rows) {
@@ -926,14 +1014,20 @@ export class ChannelsSidebar {
         title: ch.title || "", thumbnail: ch.thumbnail || "", startedAt: ch.startedAt || "", avatar: ch.avatar || "",
         favorite: this._isFavorite(ch.login),
       }))
-      .sort((a, b) => (b.favorite - a.favorite) || (b.viewers - a.viewers));
+      .sort((a, b) => (b.favorite - a.favorite) || this._favRankDiff(a, b) || (b.viewers - a.viewers));
+  }
+
+  // in "My order", favorites keep your order when something picks among them (MultiView, preloading)
+  _favRankDiff(a, b) {
+    if (getSetting("favoritesOrder") !== "custom" || !a.favorite || !b.favorite) return 0;
+    const order = [...this.favorites];
+    return order.indexOf(a.login) - order.indexOf(b.login);
   }
 
   // every favorite (live or not) in sidebar order, for the preload picker (preload.js)
   getFavorites() {
     if (isKick()) return [];
-    return this.followed
-      .filter((ch) => this._isFavorite(ch.login))
+    return this._orderFavorites(this.followed.filter((ch) => this._isFavorite(ch.login)))
       .map((ch) => ({ login: ch.login, name: ch.name || ch.login, avatar: ch.avatar || "", live: !!ch.live }));
   }
 

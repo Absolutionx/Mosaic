@@ -546,6 +546,14 @@ document.getElementById("clip-btn")?.addEventListener("click", (e) => {
 // logging in WHILE a stream plays enables the input, but the IRC connection is still the anonymous
 // one (Twitch IRC can't re-auth an existing connection, PASS only works at handshake), so sending
 // fails with a clear error. stopping and restarting picks up the new credentials
+// settles when the saved Twitch login has been checked at startup (auth.restored, below), or after 4 s if
+// Twitch is slow or unreachable: Home's and the sidebar's first load wait for it, so they fetch once, with the
+// right login, instead of logged out first (the logged-out sidebar, then everything again a moment later)
+let settleLogin;
+const loginSettled = Promise.race([
+  new Promise((r) => { settleLogin = r; }),
+  new Promise((r) => setTimeout(r, 4000)),
+]);
 const sidebar = new ChannelsSidebar({
   followedListEl: document.getElementById("followed-channels-list"),
   showMoreBtn: document.getElementById("followed-show-more-btn"),
@@ -561,7 +569,7 @@ const sidebar = new ChannelsSidebar({
     }
   },
 });
-sidebar.init();
+sidebar.init(loginSettled);
 // the channel info bar can start a stream, change page, and write the status line, app-shell concerns it can't import without a cycle, so they're handed to it here
 checkStreamDeps();
 initStreamlinkUpdate(); // a newer streamlink (what blocks Twitch ads): checked daily, one-click update
@@ -1092,6 +1100,7 @@ onSettingChange((id, v) => {
       break;
     case "showOfflineFollowed":
     case "followedSort":
+    case "favoritesOrder":
       sidebar.renderFollowed?.();
       break;
     case "autostart":
@@ -1182,6 +1191,7 @@ vodsPage.hide();
 // reopen whatever was playing, but ONLY across an F5/reload, never a genuine launch.
 // take_is_fresh_launch is true once per process, so a reload resumes while a cold start lands on
 // Home. show Home first so boot never blocks on the backend; a reload swaps the stream in after
+homeFeed.setLoginGate(loginSettled);
 homeFeed.show();
 (async () => {
   try {
@@ -1249,13 +1259,15 @@ const auth = new TwitchAuth({
     resetChannelYou(); // subscription / follow answers belong to the account that asked
     if (multiview?.isOpen) multiview.setLoggedIn(login, userId, displayName);
     sidebar.onLogin();
-    // homeFeed.show() at startup races ahead of login, so on a fresh launch the first fetch 401s and falls back to empty, and never retried. refresh() re-runs it now a valid token exists
-    homeFeed.refresh();
+    // a login after Home's first load (logging in later, or a restore slower than the startup wait) reloads it
+    // with the account; the restore at startup lands while that first load is still waiting, and it covers it
+    if (!homeFeed.waitingForLogin()) homeFeed.refresh();
     // Start the persistent account-level EventSub connection so whispers arrive app-wide, not only
     // while watching a stream. Fires on both fresh login and session restore (both hit this callback).
     invoke("start_account_eventsub").catch((err) => console.warn("[main] account eventsub start failed:", err));
   },
 });
+auth.restored?.finally(() => settleLogin());
 
 function setStatus(text) {
   // two non-statuses get no pill: "Idle" (not worth narrating) and "Playing: x" (redundant next to

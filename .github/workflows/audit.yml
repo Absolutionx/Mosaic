@@ -1,0 +1,63 @@
+# Checks Mosaic's dependencies against the public advisory databases: RustSec for the Rust crates
+# (Cargo.lock) and npm's for the app's own JavaScript packages (package-lock.json). A failed run means a
+# dependency has a known vulnerability; the log names it and the version that fixes it.
+#
+# Runs every Monday, whenever a lockfile changes on main, and by hand from the Actions tab. Read-only: it
+# never builds, signs or publishes anything, and needs no secrets.
+
+name: Dependency audit
+
+on:
+  schedule:
+    - cron: "17 14 * * 1" # Mondays 14:17 UTC
+  push:
+    branches: [main]
+    paths:
+      - "src-tauri/Cargo.lock"
+      - "package-lock.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 10-25-26
+        with:
+          toolchain: stable  # pinned to a commit, so the toolchain is named here
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Ignored, with reasons (remove a line once the fix ships in the dependency that pulls it in):
+      #   RUSTSEC-2026-0367 / 0368 / 0369: zip 4.6, used only by tauri-plugin-updater. The bugs are symlink and
+      #   Unix-permission handling when extracting; Windows updates are an NSIS installer whose signature is
+      #   checked before anything runs, and no tauri-plugin-updater release uses a fixed zip yet (10-25-26).
+      - name: Audit Cargo.lock
+        working-directory: src-tauri
+        run: >
+          cargo audit
+          --ignore RUSTSEC-2026-0367
+          --ignore RUSTSEC-2026-0368
+          --ignore RUSTSEC-2026-0369
+
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: "20"
+
+      # what ships in the app only (--omit=dev): the dev server's own advisories (Vite) don't reach users
+      - name: Audit package-lock.json
+        run: npm audit --omit=dev --audit-level=moderate

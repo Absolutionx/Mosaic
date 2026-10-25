@@ -53,6 +53,9 @@ const PILL_DEFS_KICK = [
   { key: "creative", label: "Creative" },
 ];
 
+// how long Browse stays drawn after you leave it (hide): long enough for a quick look elsewhere and back
+const RELEASE_AFTER_MS = 90_000;
+
 export class BrowsePage {
   constructor({ containerEl, onChannelSelect }) {
     this.containerEl = containerEl;
@@ -96,6 +99,19 @@ export class BrowsePage {
   show() {
     this.containerEl.style.display = "block";
     if (this.videoFrameEl) this.videoFrameEl.style.display = "none";
+    clearTimeout(this._releaseTimer);
+    // emptied while away (hide): draw it again from the data kept. a category that was open is reloaded
+    // (its streams have moved on anyway); the scroll position starts at the top
+    if (this._released) {
+      this._released = false;
+      if (this.activeGame) {
+        const g = this.activeGame;
+        if (g.isPill) this.openPillCategory(this.activePill); else this.openGame(g);
+      } else {
+        this.render();
+      }
+      return;
+    }
     if (!this.loaded) {
       this.loaded = true;
       this.loadTopGames();
@@ -107,10 +123,19 @@ export class BrowsePage {
   hide() {
     this.containerEl.style.display = "none";
     if (this.videoFrameEl) this.videoFrameEl.style.display = "";
+    // a while after you leave, empty the page: its cards (often over a thousand category images once you've
+    // scrolled) stayed in memory, decoded, the whole session. The lists themselves are kept (show redraws)
+    clearTimeout(this._releaseTimer);
+    this._releaseTimer = setTimeout(() => {
+      if (this.containerEl.style.display !== "none" || !this.loaded || this._initialLoadInProgress) return;
+      this.containerEl.replaceChildren();
+      this._released = true;
+    }, RELEASE_AFTER_MS);
   }
 
   // reload now if showing, else mark stale for the next show()
   reloadForPlatformChange() {
+    this._released = false; // the next show() loads afresh anyway
     this.games = [];
     this.topLiveStreams = [];
     this.categoryCounts = new Map();
