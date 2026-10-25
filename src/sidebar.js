@@ -529,38 +529,53 @@ export class ChannelsSidebar {
   }
 
   // drag a favorite row onto another to reorder (a line shows where it lands); Alt+Up / Alt+Down does the
-  // same from the keyboard
+  // same from the keyboard. Pointer events, not HTML5 drag and drop: in the Windows app the webview hands
+  // HTML5 drags to Tauri's file drop handling, so dragover/drop never reach the page (MultiView's tiles move the
+  // same way). Past a few pixels of movement it's a drag, and the click it ends with doesn't open the channel.
   _makeReorderable(row, login, list) {
-    row.draggable = true;
     row.dataset.favLogin = login;
-    row.addEventListener("dragstart", (e) => {
-      this._hidePreview();
-      this._dragFav = login;
-      row.classList.add("fav-dragging");
-      e.dataTransfer.effectAllowed = "move";
-      try { e.dataTransfer.setData("text/plain", login); } catch { /* some hosts refuse */ }
-    });
-    row.addEventListener("dragend", () => {
-      this._dragFav = null;
-      row.classList.remove("fav-dragging");
-      for (const r of list.querySelectorAll(".fav-drop-before, .fav-drop-after")) r.classList.remove("fav-drop-before", "fav-drop-after");
-    });
-    const after = (e) => { const r = row.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
-    row.addEventListener("dragover", (e) => {
-      if (!this._dragFav || this._dragFav === login) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      const a = after(e);
-      row.classList.toggle("fav-drop-after", a);
-      row.classList.toggle("fav-drop-before", !a);
-    });
-    row.addEventListener("dragleave", () => row.classList.remove("fav-drop-before", "fav-drop-after"));
-    row.addEventListener("drop", (e) => {
-      if (!this._dragFav) return;
-      e.preventDefault();
-      const moved = this._dragFav;
-      this._dragFav = null;
-      this._moveFavorite(moved, login, after(e));
+    row.addEventListener("dragstart", (e) => e.preventDefault()); // no native image/link drag
+    row.addEventListener("pointerdown", (down) => {
+      if (down.button !== 0 || down.target.closest(".sidebar-notify-toggle")) return;
+      const THRESHOLD = 6;
+      let dragging = false, over = null, overAfter = false;
+      const clear = () => { for (const r of list.querySelectorAll(".fav-drop-before, .fav-drop-after")) r.classList.remove("fav-drop-before", "fav-drop-after"); };
+      const onMove = (e) => {
+        if (!dragging) {
+          if (Math.abs(e.clientX - down.clientX) <= THRESHOLD && Math.abs(e.clientY - down.clientY) <= THRESHOLD) return;
+          dragging = true;
+          this._hidePreview();
+          row.classList.add("fav-dragging");
+          document.body.classList.add("fav-reordering");
+        }
+        e.preventDefault();
+        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-fav-login]");
+        clear();
+        over = target && target !== row && list.contains(target) ? target : null;
+        if (!over) return;
+        const r = over.getBoundingClientRect();
+        overAfter = e.clientY > r.top + r.height / 2;
+        over.classList.add(overAfter ? "fav-drop-after" : "fav-drop-before");
+      };
+      const finish = (drop) => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        if (!dragging) return;
+        row.classList.remove("fav-dragging");
+        document.body.classList.remove("fav-reordering");
+        clear();
+        // the release still fires a click on the row: swallow it so the drag doesn't also open the channel
+        const eat = (c) => { c.stopPropagation(); c.preventDefault(); };
+        window.addEventListener("click", eat, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener("click", eat, { capture: true }), 0);
+        if (drop && over) this._moveFavorite(login, over.dataset.favLogin, overAfter);
+      };
+      const onUp = () => finish(true);
+      const onCancel = () => finish(false);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
     });
     row.addEventListener("keydown", (e) => {
       if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;

@@ -10395,6 +10395,7 @@ body.theme-light .lr-m-watch { background: #2a78d6; } body.theme-light .lr-m-che
 
 /* ==== Reordering favorites (sidebar.js _makeReorderable) ==== */
 /* the row being dragged dims; a thin line on the row under it shows where it lands (above or below) */
-#favorites-list .sidebar-channel.fav-dragging { opacity: .45; }
-#favorites-list .sidebar-channel.fav-drop-before { box-shadow: inset 0 2px 0 var(--m-text, #e7ebf2); }
-#favorites-list .sidebar-channel.fav-drop-after { box-shadow: inset 0 -2px 0 var(--m-text, #e7ebf2); }
+#favorites-list .fav-dragging { opacity: .45; }
+#favorites-list .fav-drop-before { box-shadow: inset 0 2px 0 var(--m-text, #e7ebf2); }
+#favorites-list .fav-drop-after { box-shadow: inset 0 -2px 0 var(--m-text, #e7ebf2); }
+body.fav-reordering, body.fav-reordering * { cursor: grabbing !important; user-select: none !important; }
