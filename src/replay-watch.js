@@ -4,6 +4,9 @@
 // heartbeat_replay (watch_heartbeat.rs) sends them with the Twitch connection:
 //   - when it starts playing: "start" (a clip also counts a view)
 //   - a clip's first minute ~9 s in, a VOD's ~15 s in, then one every 60 s of playing
+//   - "nsec" (Twitch's n_second_play) after 5, 15 and 45 s of playing (checked 10-24-26)
+//   - a VOD only: "viewed" every 20 s of playing, the account's "watched up to here" (updateUserViewedVideo),
+//     which twitch.tv's player sends and Mosaic's didn't
 // Only while it's actually playing (not paused, buffering or ended), and one at a time: a clip opened over a
 // VOD reports alone until it closes, then the VOD carries on.
 
@@ -11,6 +14,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 const FIRST_MINUTE_AT = { clip: 9, vod: 15 };
 const MINUTE = 60;
+const N_SECOND_AT = [5, 15, 45];
+const VIEWED_EVERY = { vod: 20 }; // clips have no viewed position
 const TICK_MS = 1000;
 // a background page's timers can be slowed to once a minute; seconds are counted from the clock, capped so a
 // sleeping computer doesn't count as watching
@@ -25,7 +30,7 @@ export function watchReplay(kind, id, video, stillCurrent = () => true) {
   if (!FIRST_MINUTE_AT[kind] || !id || !video) return () => {};
   const key = `${kind}:${id}`;
   for (let i = watchers.length - 1; i >= 0; i--) if (watchers[i].key === key || watchers[i].video === video) watchers.splice(i, 1);
-  const w = { key, kind, id: String(id), video, stillCurrent, played: 0, minutes: 0, started: false, last: 0 };
+  const w = { key, kind, id: String(id), video, stillCurrent, played: 0, minutes: 0, started: false, nsec: 0, viewed: 0, last: 0 };
   watchers.push(w);
   if (!timer) timer = setInterval(tick, TICK_MS);
   return () => remove(w);
@@ -39,13 +44,17 @@ function remove(w) {
 
 export const isPlaying = (v) => !!v && v.isConnected && !v.paused && !v.ended && v.readyState >= 3;
 
-// what's due after `played` seconds of playing, given what was already sent (for tests too)
-export function dueReports(kind, played, minutesSent, started) {
+// what's due after `played` seconds of playing, given what was already sent (for tests too).
+// sent: { started, minutes, nsec (milestones sent), viewed (viewed reports sent) }
+export function dueReports(kind, played, sent) {
   const out = [];
-  if (!started && played > 0) out.push("start");
+  if (!sent.started && played > 0) out.push("start");
+  for (let n = sent.nsec || 0; n < N_SECOND_AT.length && played >= N_SECOND_AT[n]; n++) out.push("nsec");
   const first = FIRST_MINUTE_AT[kind];
-  let m = minutesSent;
+  let m = sent.minutes || 0;
   while (played >= first + m * MINUTE) { out.push("minute"); m++; }
+  const every = VIEWED_EVERY[kind];
+  if (every) for (let v = sent.viewed || 0; played >= (v + 1) * every; v++) out.push("viewed");
   return out;
 }
 
@@ -63,13 +72,16 @@ function tick() {
   const step = w.last ? Math.min((now - w.last) / 1000, MAX_STEP_S) : 0.5;
   w.last = now;
   w.played += step;
-  for (const ev of dueReports(w.kind, w.played, w.minutes, w.started)) {
-    if (ev === "start") w.started = true; else w.minutes++;
-    send(w, ev);
+  for (const ev of dueReports(w.kind, w.played, w)) {
+    if (ev === "start") w.started = true;
+    else if (ev === "nsec") w.nsec++;
+    else if (ev === "viewed") w.viewed++;
+    else w.minutes++;
+    send(w, ev, ev === "nsec" ? N_SECOND_AT[w.nsec - 1] : 0);
   }
 }
 
-function send(w, event) {
+function send(w, event, seconds) {
   invoke("heartbeat_replay", {
     kind: w.kind,
     id: w.id,
@@ -77,6 +89,7 @@ function send(w, event) {
     minutes: w.minutes,
     position: Number(w.video.currentTime) || 0,
     muted: !!w.video.muted,
+    seconds,
   }).catch((e) => console.warn(`[replay-watch] ${w.kind} ${w.id} ${event}:`, e));
 }
 

@@ -401,7 +401,7 @@ function openItem(n) {
   if (target.app === "channel") deps.watchChannel(target.login);
   else if (target.app === "vod") deps.openVod(target.id, target.length, target.login);
   else if (target.app === "clip") openClip(target);
-  else if (target.app === "rescue") openRescue(target.login);
+  else if (target.app === "rescue") openRescue(target.login, streakLength(n));
   else if (target.url) openUrl(target.url).catch(() => {});
 }
 
@@ -412,16 +412,47 @@ async function openClip(target) {
   openClipPlayer(info && info.slug ? info : { slug: target.slug, url: target.url || `https://clips.twitch.tv/${target.slug}`, title: "Clip" });
 }
 
+// "Your 2-stream streak on X broke!": the 2
+function streakLength(n) {
+  const m = /(\d+)-stream streak/i.exec(`${n && n.title || ""} ${n && n.body || ""} ${n && n.text || ""}`);
+  return m ? Number(m[1]) : 0;
+}
+
 // what twitch.tv's save-streak page would play: a clip, else a past broadcast, else the channel
-async function openRescue(login) {
+async function openRescue(login, length = 0) {
   let r = null;
   try { r = await invoke("get_streak_rescue", { channelLogin: login }); } catch (e) { console.warn("[notifications] streak rescue:", e); }
+  // still to save: say so once Twitch counts it (it sends no notice of its own, 10-24-26)
+  if (r && r.state === "suspended") watchForSave(login, length);
   if (r && r.clip && r.clip.slug) { openClipPlayer(r.clip); return; }
   if (r && r.vod && r.vod.id) { deps.openVod(String(r.vod.id), r.vod.length || 0, login); return; }
   deps.watchChannel(login);
   if (r && r.state === "recovered") showAppToast("This watch streak is already saved.");
   else if (r && r.state === "expired") showAppToast("This watch streak can't be saved anymore.");
   else if (r && r.state === "suspended") showAppToast("There's no clip or past broadcast to watch yet. Watching the next stream saves the streak.");
+}
+
+// after opening something to save a streak: ask Twitch every 20 s (for up to 15 minutes) whether the streak
+// is saved yet, and say so when it is. Twitch marks it saved a few seconds after a clip's or VOD's reports
+// arrive, but tells nobody: no notification on twitch.tv or here, only its save-streak page if you go back
+let saveWatch = null;
+function watchForSave(login, length) {
+  if (saveWatch) clearTimeout(saveWatch.timer);
+  const w = saveWatch = { login, until: Date.now() + 15 * 60_000, timer: null };
+  const tick = async () => {
+    if (saveWatch !== w) return;
+    let r = null;
+    try { r = await invoke("get_streak_rescue", { channelLogin: login }); } catch { /* try again next round */ }
+    if (saveWatch !== w) return;
+    if (r && r.state === "recovered") {
+      saveWatch = null;
+      showAppToast(length ? `Your ${length}-stream watch streak on ${login} is saved` : `Your watch streak on ${login} is saved`, { ms: 8000 });
+      return;
+    }
+    if ((r && r.state === "expired") || Date.now() > w.until) { saveWatch = null; return; }
+    w.timer = setTimeout(tick, 20_000);
+  };
+  w.timer = setTimeout(tick, 20_000);
 }
 
 async function removeItem(n) {

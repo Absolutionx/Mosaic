@@ -4,6 +4,13 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.5",
+    items: [
+      { kind: "fixed", top: true, title: "Saving watch streaks", desc: "Watching the clip or VOD a broken watch streak offers, in Mosaic, now saves the streak (tested with a clip). Mosaic reports clips and VODs the way twitch.tv's player does, including how far you've watched a VOD, so twitch.tv also remembers where you left off." },
+      { kind: "new", title: "Streak saved", desc: "After you open a broken streak's notice, Mosaic tells you when Twitch counts the streak as saved. Twitch itself doesn't say." },
+    ],
+  },
+  {
     version: "1.8.4",
     items: [
       { kind: "improved", top: true, title: "Lighter in the tray", desc: "In the tray (closed to it, or started minimized), Mosaic stops drawing its window entirely. It used to keep rendering it as if it were on screen, so lurking in the tray now uses next to no CPU or graphics, and with nothing playing, Mosaic gives back memory it doesn't need." },

@@ -34,6 +34,11 @@
 // also fetched the way the player does it, with the account: a VOD's playlist from usher, or the first bytes
 // of a clip's video. And the reports now carry the session ids the web player sends with each one.
 //
+// Still no save from a VOD? twitch.tv's player (checked 10-24-26) also tells Twitch, every 20 s of a VOD, how far
+// the account has watched it (the updateUserViewedVideo mutation): the account-level record of watching a VOD,
+// which Mosaic never sent. It does now ("viewed"), along with n_second_play at 5, 15 and 45 s of playing, and
+// the user id as a number with the login, as the player sends them.
+//
 // Requires the Twitch device-login token (same one pins/predictions use). No device login -> no token
 // -> nothing is reported, exactly like not being logged in on the web.
 
@@ -83,7 +88,8 @@ pub struct WatchHeartbeatService {
     app: AppHandle,
     target: RwLock<Option<WatchTarget>>,
     playing: AtomicBool,
-    cached_user_id: RwLock<Option<(String, String)>>,
+    // token -> (user id, login), from id.twitch.tv's validate
+    cached_user_id: RwLock<Option<(String, String, String)>>,
     loop_started: AtomicBool,
     // what the last minute did, for heartbeat_status (Settings / devtools: is watching being credited?)
     last_status: std::sync::Mutex<String>,
@@ -691,17 +697,52 @@ impl WatchHeartbeatService {
         Ok(info)
     }
 
-    // one clip/VOD report (see the header). kind: "clip" | "vod"; event: "start" | "minute"; minutes: how many
-    // minutes this one has reported so far, this one included; position: where in the clip/VOD it is (seconds)
-    pub async fn report_replay(&self, kind: &str, id: &str, event: &str, minutes: u32, position: f64, muted: bool) -> Result<String, String> {
+    // one clip/VOD report (see the header). kind: "clip" | "vod"; event: "start" | "minute" | "nsec" | "viewed";
+    // minutes: how many minutes this one has reported so far, this one included; position: where in the clip/VOD
+    // it is (seconds); seconds: for "nsec", how long it has played (Twitch's n_second_play: 5, 15, 45 s)
+    pub async fn report_replay(&self, kind: &str, id: &str, event: &str, minutes: u32, position: f64, muted: bool, seconds: u32) -> Result<String, String> {
         let Some(token) = crate::twitch_device_auth::get_device_token(&self.app).await else {
             return Ok("not connected".into());
         };
-        let user_id = self.user_id(&token).await?;
+        let (user_id, login) = self.viewer(&token).await?;
         let info = self.replay_info(kind, id, &token).await?;
         let clip = kind == "clip";
+        let position = if position.is_finite() { position.max(0.0) } else { 0.0 };
+        // a VOD: the account's "watched up to here" (updateUserViewedVideo), which twitch.tv's player sends every
+        // 20 s of playing (checked 10-24-26). It's how Twitch knows this account watched this VOD (and where it
+        // left off); the spade reports alone didn't save a streak. Not a spade event: its own GQL mutation
+        if event == "viewed" {
+            if clip {
+                return Err("clips have no viewed position".into());
+            }
+            let res = self
+                .gql_as_viewer(
+                    json!({
+                        "operationName": "updateUserViewedVideo",
+                        "variables": { "input": { "userID": user_id, "position": position.floor() as u64, "videoID": info.vod_id, "videoType": "VOD" } },
+                        "extensions": { "persistedQuery": { "version": 1, "sha256Hash": "bb58b1bd08a4ca0c61f2b8d323381a5f4cd39d763da8698f680ef1dfaea89ca1" } }
+                    }),
+                    &token,
+                )
+                .await;
+            let outcome = match &res {
+                Ok(j) => match j["errors"][0]["message"].as_str() {
+                    Some(m) => Err(m.to_string()),
+                    None => Ok(()),
+                },
+                Err(e) => Err(e.clone()),
+            };
+            let line = match &outcome {
+                Ok(()) => format!("{} vod {} ({}): viewed at {}s ok", chrono::Local::now().format("%H:%M:%S"), id, info.login, position.floor() as u64),
+                Err(e) => format!("{} vod {} ({}): viewed failed: {e}", chrono::Local::now().format("%H:%M:%S"), id, info.login),
+            };
+            self.log(&line);
+            eprintln!("[heartbeat] {line}");
+            return outcome.map(|_| "ok".to_string());
+        }
         let name = match (clip, event) {
             (_, "start") => "video-play",
+            (_, "nsec") => "n_second_play",
             (true, _) => "clips_minute_watched",
             (false, _) => "minute-watched",
         };
@@ -712,7 +753,7 @@ impl WatchHeartbeatService {
             "content_mode": if clip { "clip" } else { "vod" },
             "vod_type": if clip { "clip" } else { "archive" },
             "vod_id": info.vod_id,
-            "vod_timestamp": if position.is_finite() { position.max(0.0) } else { 0.0 },
+            "vod_timestamp": position,
             "game": info.game_name,
             "game_id": info.game_id,
             "category_id": info.game_id,
@@ -725,7 +766,9 @@ impl WatchHeartbeatService {
             "muted": muted,
             "player": "site",
             "stream_type": "vod",
-            "user_id": user_id,
+            // a number, with the login, as twitch.tv's player sends them (checked 10-24-26)
+            "user_id": user_id.parse::<u64>().map(|n| json!(n)).unwrap_or_else(|_| json!(user_id)),
+            "login": login,
             "platform": "web",
             "client_app": "twilight",
             "device_id": self.device_id,
@@ -740,6 +783,9 @@ impl WatchHeartbeatService {
             props["clip_slug"] = json!(id);
         } else {
             props["vod"] = json!(info.vod_id);
+        }
+        if event == "nsec" {
+            props["seconds_after_play"] = json!(seconds);
         }
         // the web player counts the clip as viewed when it starts
         if clip && event == "start" {
@@ -878,9 +924,14 @@ impl WatchHeartbeatService {
     }
 
     async fn user_id(&self, token: &str) -> Result<String, String> {
-        if let Some((cached_token, id)) = self.cached_user_id.read().await.as_ref() {
+        self.viewer(token).await.map(|(id, _)| id)
+    }
+
+    // the account behind the token: (user id, login)
+    async fn viewer(&self, token: &str) -> Result<(String, String), String> {
+        if let Some((cached_token, id, login)) = self.cached_user_id.read().await.as_ref() {
             if cached_token == token {
-                return Ok(id.clone());
+                return Ok((id.clone(), login.clone()));
             }
         }
         let response = self
@@ -896,8 +947,9 @@ impl WatchHeartbeatService {
             .as_str()
             .ok_or_else(|| "token validation returned no user id".to_string())?
             .to_string();
-        *self.cached_user_id.write().await = Some((token.to_string(), id.clone()));
-        Ok(id)
+        let login = body["login"].as_str().unwrap_or_default().to_string();
+        *self.cached_user_id.write().await = Some((token.to_string(), id.clone(), login.clone()));
+        Ok((id, login))
     }
 
     // one 60s heartbeat means any pooled keep-alive has usually been closed; retry once on a transport
@@ -1060,12 +1112,13 @@ pub async fn heartbeat_replay(
     minutes: u32,
     position: f64,
     muted: bool,
+    seconds: Option<u32>,
     state: State<'_, Arc<WatchHeartbeatService>>,
 ) -> Result<String, String> {
     if !replay_args_ok(&kind, &id, &event) {
         return Err("invalid clip or VOD".into());
     }
-    state.report_replay(&kind, &id, &event, minutes.min(100_000), position, muted).await
+    state.report_replay(&kind, &id, &event, minutes.min(100_000), position, muted, seconds.unwrap_or(0).min(100_000)).await
 }
 
 fn replay_args_ok(kind: &str, id: &str, event: &str) -> bool {
@@ -1074,7 +1127,7 @@ fn replay_args_ok(kind: &str, id: &str, event: &str) -> bool {
         "vod" => !id.is_empty() && id.len() <= 20 && id.chars().all(|c| c.is_ascii_digit()),
         _ => false,
     };
-    id_ok && (event == "start" || event == "minute")
+    id_ok && (matches!(event, "start" | "minute" | "nsec") || (kind == "vod" && event == "viewed"))
 }
 
 #[cfg(test)]
@@ -1089,6 +1142,9 @@ mod replay_tests {
         assert!(!replay_args_ok("clip", "", "start"));
         assert!(!replay_args_ok("live", "123", "minute"));
         assert!(!replay_args_ok("vod", "123", "claim"));
+        assert!(replay_args_ok("clip", "Slug-abc_1", "nsec"));
+        assert!(replay_args_ok("vod", "2904279037", "viewed"));
+        assert!(!replay_args_ok("clip", "Slug-abc_1", "viewed"));
     }
 }
 
