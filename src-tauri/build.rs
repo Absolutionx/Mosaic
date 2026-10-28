@@ -4,6 +4,7 @@
 // is refused in every window, so add new commands here too (main.rs's test checks the two lists match)
 const APP_COMMANDS: &[&str] = &[
     "take_is_fresh_launch",
+    "create_clip_range",
     "identify_song",
     "get_user_note",
     "set_user_note",

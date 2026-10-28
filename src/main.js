@@ -512,6 +512,26 @@ startSubExpiryReminders(); // Settings > Notifications > Subscription ending rem
   chat.onModStatusChange(syncModMenu);
 }
 
+// what "Choose a part" in the clip panel can clip (clips.js): the Twitch VOD being watched, or the recording
+// Twitch is making of the live stream (the one live rewind plays). pos is what's on screen and end how far the
+// recording goes, both in seconds of the recording. null: no recording (Kick, or a channel that doesn't save VODs)
+function clipRangeContext(live, twitch) {
+  const ic = String(session.intendedChannel || "");
+  const v = playbackControls.videoEl;
+  if (playbackControls.isVod && ic.startsWith("vod:") && /^\d+$/.test(ic.slice(4))) {
+    const total = v.duration && Number.isFinite(v.duration) ? v.duration : playbackControls.vodTotalSeconds || 0;
+    return { kind: "vod", videoId: ic.slice(4), pos: v.currentTime || 0, end: total };
+  }
+  const dvr = session.liveDvrInfo;
+  if (live && twitch && dvr && !dvr.kick && dvr.videoId) {
+    const sinceStart = (Date.now() - dvr.streamStartedAt) / 1000;
+    const behind = playbackControls.secondsBehindLive() || 0;
+    // the recording trails the live broadcast by up to a minute: the newest part isn't clippable yet
+    return { kind: "live", videoId: String(dvr.videoId), pos: Math.max(0, sinceStart - behind), end: Math.max(0, sinceStart - 60) };
+  }
+  return null;
+}
+
 // clipping: the clip button opens the clip panel (clips.js), Alt+X clips instantly
 initClips({
   getContext: () => {
@@ -528,8 +548,18 @@ initClips({
       streamTitle: document.getElementById("channel-info-title")?.textContent?.trim() || "",
       behindLive: playbackControls.secondsBehindLive(),
       rewound: !!playbackControls._liveDvr,
+      // a Twitch stream, known from the player rather than chat's room id (the clip command finds the channel itself)
+      range: clipRangeContext(live, !chat._isKickChat && !playbackControls._isKickSession),
     };
   },
+  // the clip panel's preview plays with sound: your stream is muted meanwhile. returns whether it muted it
+  // (only then is it unmuted after), so a stream you'd muted yourself stays muted
+  duckMain: (on) => {
+    if (on) { if (playbackControls.isMuted) return false; playbackControls.toggleMute(); return true; }
+    if (playbackControls.isMuted) playbackControls.toggleMute();
+    return false;
+  },
+  mainVolume: () => playbackControls.videoEl?.volume ?? 1,
   insertInChat: (text) => {
     const input = chat.inputEl;
     if (!input) return;

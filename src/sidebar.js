@@ -528,48 +528,100 @@ export class ChannelsSidebar {
     else this.renderFollowed();
   }
 
-  // drag a favorite row onto another to reorder (a line shows where it lands); Alt+Up / Alt+Down does the
-  // same from the keyboard. Pointer events, not HTML5 drag and drop: in the Windows app the webview hands
-  // HTML5 drags to Tauri's file drop handling, so dragover/drop never reach the page (MultiView's tiles move the
-  // same way). Past a few pixels of movement it's a drag, and the click it ends with doesn't open the channel.
+  // drag a favorite to reorder, like any reorderable list: the row lifts out and follows the pointer, the others
+  // slide aside to open a gap, and a dashed outline shows where it will land. Alt+Up / Alt+Down does the same
+  // from the keyboard. Pointer events, not HTML5 drag and drop: in the Windows app the webview hands HTML5 drags
+  // to Tauri's file drop handling, so dragover/drop never reach the page (MultiView's tiles move the same way).
+  // Past a few pixels of movement it's a drag, and the click it ends with doesn't open the channel.
   _makeReorderable(row, login, list) {
     row.dataset.favLogin = login;
     row.addEventListener("dragstart", (e) => e.preventDefault()); // no native image/link drag
     row.addEventListener("pointerdown", (down) => {
       if (down.button !== 0 || down.target.closest(".sidebar-notify-toggle")) return;
       const THRESHOLD = 6;
-      let dragging = false, over = null, overAfter = false;
-      const clear = () => { for (const r of list.querySelectorAll(".fav-drop-before, .fav-drop-after")) r.classList.remove("fav-drop-before", "fav-drop-after"); };
-      const onMove = (e) => {
-        if (!dragging) {
-          if (Math.abs(e.clientX - down.clientX) <= THRESHOLD && Math.abs(e.clientY - down.clientY) <= THRESHOLD) return;
-          dragging = true;
-          this._hidePreview();
-          row.classList.add("fav-dragging");
-          document.body.classList.add("fav-reordering");
-        }
-        e.preventDefault();
-        const target = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-fav-login]");
-        clear();
-        over = target && target !== row && list.contains(target) ? target : null;
-        if (!over) return;
-        const r = over.getBoundingClientRect();
-        overAfter = e.clientY > r.top + r.height / 2;
-        over.classList.add(overAfter ? "fav-drop-after" : "fav-drop-before");
+      let d = null; // the drag, once it starts
+      const start = () => {
+        this._hidePreview();
+        const rows = [...list.querySelectorAll("[data-fav-login]")];
+        const from = rows.indexOf(row);
+        if (from < 0 || rows.length < 2) return false;
+        const rects = rows.map((r) => r.getBoundingClientRect());
+        const r = rects[from];
+        // how far a row moves to make room: its height plus the space between rows
+        const gap = rects.length > 1 ? Math.max(0, rects[1].top - rects[0].bottom) : 0;
+        const ghost = row.cloneNode(true);
+        ghost.removeAttribute("data-fav-login");
+        ghost.classList.add("fav-ghost");
+        ghost.setAttribute("aria-hidden", "true");
+        Object.assign(ghost.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+        document.body.appendChild(ghost);
+        row.classList.add("fav-slot");
+        list.classList.add("fav-reordering");
+        document.body.classList.add("fav-reordering");
+        d = { rows, from, to: from, rects, ghost, grab: down.clientY - r.top, shift: r.height + gap, h: r.height };
+        return true;
       };
-      const finish = (drop) => {
+      const layout = (y) => {
+        const { rows, from, rects, ghost, grab, shift, h } = d;
+        // the lifted row follows the pointer, kept to the list (a little past its ends)
+        const top = Math.max(rects[0].top - h / 2, Math.min(rects[rects.length - 1].bottom - h / 2, y - grab));
+        ghost.style.top = `${top}px`;
+        // where it lands: once its leading edge passes the middle of a row, it takes that row's place (half a row of
+        // movement swaps neighbours, as in other lists)
+        let to = from;
+        rects.forEach((rc, i) => {
+          const m = rc.top + rc.height / 2;
+          if (i < from && top < m) to--;
+          else if (i > from && top + h > m) to++;
+        });
+        d.to = to;
+        rows.forEach((el, i) => {
+          let dy = 0;
+          if (i === from) dy = (to - from) * shift; // the outline moves to the landing spot
+          else if (from < to && i > from && i <= to) dy = -shift;
+          else if (to < from && i >= to && i < from) dy = shift;
+          el.style.transform = dy ? `translateY(${dy}px)` : "";
+        });
+      };
+      const cleanup = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onCancel);
-        if (!dragging) return;
-        row.classList.remove("fav-dragging");
+      };
+      const reset = () => {
+        list.classList.remove("fav-reordering");
         document.body.classList.remove("fav-reordering");
-        clear();
+        for (const el of d.rows) { el.style.transform = ""; el.classList.remove("fav-slot"); }
+        d.ghost.remove();
+      };
+      const onMove = (e) => {
+        if (!d) {
+          if (Math.abs(e.clientX - down.clientX) <= THRESHOLD && Math.abs(e.clientY - down.clientY) <= THRESHOLD) return;
+          if (!start()) { cleanup(); return; }
+        }
+        e.preventDefault();
+        layout(e.clientY);
+      };
+      const finish = (drop) => {
+        cleanup();
+        if (!d) return;
         // the release still fires a click on the row: swallow it so the drag doesn't also open the channel
         const eat = (c) => { c.stopPropagation(); c.preventDefault(); };
         window.addEventListener("click", eat, { capture: true, once: true });
         setTimeout(() => window.removeEventListener("click", eat, { capture: true }), 0);
-        if (drop && over) this._moveFavorite(login, over.dataset.favLogin, overAfter);
+        const { rows, from, to, rects, ghost } = d;
+        if (!drop || to === from) {
+          // back where it came from
+          ghost.classList.add("settling");
+          ghost.style.top = `${rects[from].top}px`;
+          setTimeout(reset, 140);
+          return;
+        }
+        // settle into the landing spot, then save the new order (which redraws the list)
+        ghost.classList.add("settling");
+        ghost.style.top = `${rects[from].top + (to - from) * d.shift}px`;
+        const target = rows[to].dataset.favLogin;
+        setTimeout(() => { reset(); this._moveFavorite(login, target, to > from); }, 140);
       };
       const onUp = () => finish(true);
       const onCancel = () => finish(false);

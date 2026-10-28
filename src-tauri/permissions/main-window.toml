@@ -177,4 +177,5 @@ permissions = [
   "allow-get-vod-muted-segments",
   "allow-get-live-vod-info",
   "allow-get-vod-chat",
+  "allow-create-clip-range",
 ]

@@ -10395,7 +10395,80 @@ body.theme-light .lr-m-watch { background: #2a78d6; } body.theme-light .lr-m-che
 
 /* ==== Reordering favorites (sidebar.js _makeReorderable) ==== */
 /* the row being dragged dims; a thin line on the row under it shows where it lands (above or below) */
-#favorites-list .fav-dragging { opacity: .45; }
-#favorites-list .fav-drop-before { box-shadow: inset 0 2px 0 var(--m-text, #e7ebf2); }
-#favorites-list .fav-drop-after { box-shadow: inset 0 -2px 0 var(--m-text, #e7ebf2); }
+/* favorites can be dragged, so pressing and moving shouldn't select their names' text */
+#favorites-list { user-select: none; }
+/* while dragging, the other rows slide aside to open a gap */
+#favorites-list.fav-reordering [data-fav-login] { transition: transform .16s cubic-bezier(.2, .7, .3, 1); position: relative; }
+/* the row being moved leaves a dashed outline that travels to where it will land */
+#favorites-list [data-fav-login].fav-slot { border-radius: 9px; background: color-mix(in srgb, var(--m-text) 4%, transparent);
+  outline: 1.5px dashed color-mix(in srgb, var(--m-text) 38%, transparent); outline-offset: -2px; }
+#favorites-list [data-fav-login].fav-slot > * { visibility: hidden; }
+/* the lifted copy that follows the pointer */
+.fav-ghost {
+  position: fixed; z-index: 3000; margin: 0; pointer-events: none; box-sizing: border-box; border-radius: 9px;
+  background: var(--m-raised, #232b36);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .45), 0 0 0 1px color-mix(in srgb, var(--m-text) 16%, transparent);
+  transform: scale(1.03); transform-origin: center;
+}
+.fav-ghost .sidebar-channel { background: transparent !important; }
+.fav-ghost.settling { transition: top .14s ease, transform .14s ease, box-shadow .14s ease; transform: none; box-shadow: 0 0 0 1px transparent; }
 body.fav-reordering, body.fav-reordering * { cursor: grabbing !important; user-select: none !important; }
+
+/* ==== Clip panel: "Choose a part" (clips.js buildRangePicker) ==== */
+.clip-panel.wide { width: 520px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: thin; }
+/* the preview player, like Twitch's clip editor */
+.clip-pv { position: relative; aspect-ratio: 16 / 9; border-radius: 9px; overflow: hidden; background: #000; margin-bottom: 10px; }
+.clip-pv-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; cursor: pointer; }
+.clip-pv-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; text-align: center; font-size: 12.5px; color: rgba(255,255,255,.75); }
+.clip-pv-state[hidden] { display: none; }
+.clip-pv-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 18px 8px 6px;
+  background: linear-gradient(to top, rgba(0,0,0,.65), transparent); color: #fff; opacity: 0; transition: opacity .15s ease;
+}
+.clip-pv:hover .clip-pv-bar, .clip-pv:focus-within .clip-pv-bar { opacity: 1; }
+.clip-pv-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 7px; border: 0; background: transparent; color: #fff; cursor: pointer; }
+.clip-pv-btn:hover { background: rgba(255,255,255,.16); }
+.clip-pv-time { flex: 1; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.clip-tl-play { position: absolute; top: 2px; bottom: 2px; width: 2px; margin-left: -1px; border-radius: 1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); z-index: 3; pointer-events: none; }
+.clip-tl-play[hidden] { display: none; }
+.clip-modes { display: flex; margin-bottom: 12px; }
+.clip-modes .clip-seg-btn { flex: 1; }
+.clip-modes .clip-seg-btn:disabled { opacity: .45; cursor: default; }
+.clip-range-nav { display: flex; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
+.clip-range-pan {
+  padding: 4px 9px; border-radius: 7px; border: 1px solid var(--m-border, #29313d); background: var(--m-surface-2, #1c222c);
+  color: var(--m-muted, #9aa5b4); font: inherit; font-size: 11.5px; font-weight: 700; cursor: pointer;
+}
+.clip-range-pan:hover:not(:disabled) { color: var(--m-text, #e7ebf2); border-color: var(--m-muted, #9aa5b4); }
+.clip-range-pan:disabled { opacity: .4; cursor: default; }
+/* the timeline: a track of the recording, the picked part as a bright block with a handle at each end */
+.clip-tl {
+  position: relative; height: 40px; border-radius: 8px; cursor: pointer; touch-action: none; user-select: none;
+  background: var(--m-bg, #0e1116); border: 1px solid var(--m-border, #29313d);
+}
+.clip-tl-ticks i { position: absolute; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--m-text) 10%, transparent); }
+.clip-tl-sel {
+  position: absolute; top: 3px; bottom: 3px; border-radius: 6px; cursor: grab;
+  background: color-mix(in srgb, var(--m-text) 22%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--m-text) 75%, transparent);
+}
+.clip-tl.dragging .clip-tl-sel { cursor: grabbing; }
+.clip-tl-h {
+  position: absolute; top: -3px; bottom: -3px; width: 12px; margin-left: -6px; border-radius: 5px; cursor: ew-resize;
+  background: var(--m-text, #e7ebf2); box-shadow: 0 1px 4px rgba(0,0,0,.4); z-index: 2;
+}
+.clip-tl-h::after { content: ""; position: absolute; left: 5px; top: 35%; bottom: 35%; width: 2px; border-radius: 1px; background: var(--m-bg, #0e1116); opacity: .55; }
+.clip-tl-h:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-text) 30%, transparent); }
+.clip-tl-now { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; background: var(--m-live-badge, #eb0400); border-radius: 1px; z-index: 1; pointer-events: none; }
+.clip-tl-now[hidden] { display: none; }
+.clip-tl-edges { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11px; color: var(--m-faint, #697386); font-variant-numeric: tabular-nums; }
+.clip-range-summary { display: flex; align-items: baseline; gap: 8px; margin: 8px 0 10px; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.clip-range-times { font-size: 13.5px; font-weight: 800; }
+.clip-range-len { font-size: 12px; font-weight: 700; color: var(--m-muted, #9aa5b4); }
+.clip-range-note { font-size: 11.5px; color: var(--m-muted, #9aa5b4); }
+.clip-range-hint { display: block; margin: 8px 0 0; font-size: 11px; line-height: 1.4; }
+.clip-preview {
+  padding: 8px 14px; border-radius: 9px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 700;
+  color: var(--m-muted, #9aa5b4); background: transparent; border: 1px solid var(--m-border, #29313d); margin-right: auto;
+}
+.clip-preview:hover, .clip-preview.on { color: var(--m-text, #e7ebf2); border-color: var(--m-muted, #9aa5b4); }

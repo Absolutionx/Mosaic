@@ -67,6 +67,7 @@ export const DEFAULTS = {
   seekThumbnails: true,      // preview thumbnails when hovering the VOD seek bar
   vodSpeed: 1,               // VOD playback speed (remembered across VODs)
   clipLength: 30,            // last length picked in the clip panel (Alt+X uses it)
+  clipMode: "last",          // the clip panel's way to pick on live streams: "last" seconds | "range" (choose a part)
   videoContextMenu: false,   // the browser's own right-click menu, app-wide (video, text boxes, ...)
   devTools: false,           // Inspect / Ctrl+Shift+I (release builds only; dev builds always have them)
   chatOverlay: false,        // chat over the video in theater mode / fullscreen

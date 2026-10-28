@@ -12,6 +12,7 @@ use tauri::{Emitter, Manager, State};
 mod anon_feed;
 mod app_extras;
 mod secret_store;
+mod clip_range;
 #[cfg(test)]
 mod fuzz_support;
 mod downloads;
@@ -252,6 +253,7 @@ fn main() {
         .manage(std::sync::Arc::new(stream_relay::StreamRelayState::default()))
         .invoke_handler(tauri::generate_handler![
             take_is_fresh_launch,
+            clip_range::create_clip_range,
             track_id::identify_song,
             user_notes::get_user_note,
             user_notes::set_user_note,
