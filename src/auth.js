@@ -1,6 +1,8 @@
 // Twitch OAuth, frontend half. the actual browser flow lives in Rust (oauth.rs); this
 // triggers it, waits for the token event, validates, and stores the login
 
+import { isAndroid } from "./mobile.js";
+import { openDeviceLogin } from "./device-login.js";
 import { showAppToast } from "./app-toast.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -57,6 +59,11 @@ export class TwitchAuth {
     // the token never reaches the page: Rust validates and keeps it, and only says who logged in
     await listen("oauth-login", async (event) => {
       await this.handleLogin(event.payload || {});
+    });
+    // a code login (Android) that Twitch stopped renewing: it's over, show Log in again
+    await listen("oauth-expired", async () => {
+      await this.logout();
+      showAppToast("Your Twitch login ran out. Log in again to chat.", { error: true });
     });
     await listen("oauth-login-failed", (event) => {
       console.error("Token validation failed:", event.payload);
@@ -133,6 +140,11 @@ export class TwitchAuth {
   }
 
   async startLogin() {
+    // on a phone the browser login can't come back to Mosaic; log in with a code instead (device-login.js)
+    if (isAndroid) {
+      openDeviceLogin((info) => this.handleLogin(info));
+      return;
+    }
     try {
       this._setLoginLabel("Logging in…");
       this.loginBtn.disabled = true;

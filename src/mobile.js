@@ -6,6 +6,7 @@
 //   Android's back button  closes the drawer or a dialog first, then leaves the player for Home, like other apps
 // Desktop never loads any of this: isAndroid is false there and init() returns at once.
 
+import { invoke } from "@tauri-apps/api/core";
 import { escapeCount, onEscapeChange, closeTopEscape } from "./escape-stack.js";
 
 export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
@@ -31,6 +32,15 @@ export function initMobile() {
   watchPlayer();
   wireDrawer();
   wireBack();
+  wireWake();
+}
+
+// a phone drops Mosaic's connections while it's in the background or switching networks. chat reconnects on
+// its own with a growing wait; coming back on screen or getting the network back makes it try right away
+function wireWake() {
+  const wake = () => invoke("chat_wake").catch(() => {});
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
+  window.addEventListener("online", wake);
 }
 
 // ---- the bottom tab bar ----

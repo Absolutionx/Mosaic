@@ -10527,6 +10527,9 @@ body.mobile .platform-label { display: none; }
 body.mobile #back-to-stream-label { display: none; }
 body.mobile .header-whispers-btn, body.mobile .win-btn { min-width: 40px; min-height: 40px; }
 
+/* watching turns on theater mode, which hides the header on desktop; a phone keeps it (the back arrow lives there) */
+body.mobile #app.header-collapsed > header { visibility: visible; overflow: visible; }
+body.mobile #theater-drag-strip { display: none !important; }
 body.mobile #video-column { grid-column: 1; grid-row: 2; }
 body.mobile #chat-pane { display: none; }
 

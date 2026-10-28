@@ -212,7 +212,12 @@ pub async fn run_chat_client(
     let mut backoff_secs: u64 = 1;
     let mut first_attempt = true;
 
-    // macro-free helper for "wait out the backoff unless stop fires first", used from two places below. returns true if stop fired (caller must return)
+    // failed connection attempts in a row. only the third gets a line in chat: a phone dropping off the network
+    // for a moment (switching networks, the screen turning off) used to fill chat with a line per retry
+    let mut failed_attempts: u32 = 0;
+
+    // macro-free helper for "wait out the backoff unless stop fires first", used from two places below. returns
+    // true if stop fired (caller must return). chat_wake cuts the wait short (the app coming back on screen)
     async fn backoff_or_stop(
         stop_rx: &mut tokio::sync::oneshot::Receiver<()>,
         secs: u64,
@@ -220,6 +225,7 @@ pub async fn run_chat_client(
         tokio::select! {
             _ = stop_rx => true,
             _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => false,
+            _ = wake().notified() => false,
         }
     }
 
@@ -235,9 +241,12 @@ pub async fn run_chat_client(
             Ok(pair) => pair,
             Err(e) => {
                 emit_status("reconnecting");
-                emit_system(format!(
-                    "Failed to connect to Twitch chat ({e}) - retrying in {backoff_secs}s..."
-                ));
+                failed_attempts += 1;
+                if first_attempt && failed_attempts == 1 {
+                    emit_system(format!("Couldn't connect to Twitch chat ({e}). Trying again..."));
+                } else if failed_attempts == 3 {
+                    emit_system("Still can't reach Twitch chat. Is the internet connection down? Mosaic keeps trying.".into());
+                }
                 if backoff_or_stop(&mut stop_rx, backoff_secs).await {
                     emit_status("disconnected");
                     return;
@@ -292,6 +301,7 @@ pub async fn run_chat_client(
         if !first_attempt {
             emit_system("Chat reconnected.".into());
         }
+        failed_attempts = 0;
 
         let connected_at = std::time::Instant::now();
         let mut last_inbound = std::time::Instant::now();
@@ -385,7 +395,9 @@ pub async fn run_chat_client(
             backoff_secs = 1;
         }
         emit_status("reconnecting");
-        emit_system(format!("Chat {disconnect_reason} - reconnecting in {backoff_secs}s..."));
+        let _ = &disconnect_reason; // logged below; chat shows one short line, not the technical reason
+        eprintln!("[chat] {disconnect_reason}");
+        emit_system("Chat disconnected. Reconnecting...".into());
         if backoff_or_stop(&mut stop_rx, backoff_secs).await {
             emit_status("disconnected");
             return;
@@ -393,6 +405,19 @@ pub async fn run_chat_client(
         backoff_secs = (backoff_secs * 2).min(30);
         first_attempt = false;
     }
+}
+
+// wakes every chat connection that is waiting to reconnect, so it tries now instead of after its backoff. the
+// page calls it when Mosaic comes back on screen or the network returns (a phone's connection drops while the
+// app is in the background)
+fn wake() -> &'static tokio::sync::Notify {
+    static WAKE: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+    WAKE.get_or_init(tokio::sync::Notify::new)
+}
+
+#[tauri::command]
+pub fn chat_wake() {
+    wake().notify_waiters();
 }
 
 // true if line is Twitch's IRC RECONNECT command (optionally preceded by IRCv3 tags and/or a :prefix). sent shortly before Twitch restarts the edge server this connection is attached to
