@@ -61,6 +61,7 @@ import { isKick, togglePlatform, onPlatformChange, setPlatform, feedInvoke } fro
 import { VodsPage } from "./vods.js";
 import { streamHasDropsEnabled } from "./drops.js";
 import { session } from "./session.js";
+import { initMobile, isAndroid } from "./mobile.js";
 import { rememberSession, forgetSession, restoreSession } from "./session-restore.js";
 import { formatViewerCount } from "./format.js";
 import { checkStreamDeps } from "./deps-banner.js";
@@ -600,9 +601,10 @@ const sidebar = new ChannelsSidebar({
   },
 });
 sidebar.init(loginSettled);
+initMobile(); // phone layout on Android (mobile.js); nothing on desktop
 // the channel info bar can start a stream, change page, and write the status line, app-shell concerns it can't import without a cycle, so they're handed to it here
-checkStreamDeps();
-initStreamlinkUpdate(); // a newer streamlink (what blocks Twitch ads): checked daily, one-click update
+// streamlink (what blocks Twitch ads) and a newer version of it, checked daily. Android plays without it (direct_hls.rs)
+if (!isAndroid) { checkStreamDeps(); initStreamlinkUpdate(); }
 // Windows-only in practice (the check no-ops on other platforms). fires once at startup; shows the update banner if a newer release exists
 checkForUpdate();
 
@@ -2500,7 +2502,8 @@ document.addEventListener("pause", () => { if (isAway()) syncMemorySaver(); }, t
 {
   const isMac = /Mac|iPhone|iPad/i.test(navigator.platform)
     || /Mac OS X/i.test(navigator.userAgent);
-  session.useNativeHlsForLive = isMac;
+  // Android has no streamlink byte-relay: its live playlists come straight from Twitch via the local proxy
+  session.useNativeHlsForLive = isMac || isAndroid;
 
 }
 

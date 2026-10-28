@@ -10472,3 +10472,173 @@ body.fav-reordering, body.fav-reordering * { cursor: grabbing !important; user-s
   color: var(--m-muted, #9aa5b4); background: transparent; border: 1px solid var(--m-border, #29313d); margin-right: auto;
 }
 .clip-preview:hover, .clip-preview.on { color: var(--m-text, #e7ebf2); border-color: var(--m-muted, #9aa5b4); }
+
+/* =================================================================
+   Phones (Android). mobile.js sets body.mobile on Android, so none of this touches desktop.
+   One column: a compact header, the page, and a bottom tab bar. While watching (body.m-watching) the
+   video sits under the header at 16:9 with chat filling the rest; turned sideways, the video takes the
+   whole screen. The desktop sidebar becomes the Following drawer (body.m-drawer).
+   ================================================================= */
+body.mobile {
+  --m-tabs-h: 56px;
+  --m-safe-top: env(safe-area-inset-top, 0px);
+  --m-safe-bottom: env(safe-area-inset-bottom, 0px);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+body.mobile .resize-grip,
+body.mobile .win-controls,
+body.mobile .nav-tabs,
+body.mobile #luna-btn,
+body.mobile #settings-open-btn,
+body.mobile #status-text,
+body.mobile #update-btn,
+body.mobile #sl-update-btn,
+body.mobile #theater-drag-strip,
+body.mobile .mosaic-brand-name { display: none !important; }
+
+body.mobile #app {
+  --header-height: calc(52px + var(--m-safe-top));
+  width: 100vw;
+  height: 100dvh;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: var(--header-height) minmax(0, 1fr) !important;
+  padding-bottom: calc(var(--m-tabs-h) + var(--m-safe-bottom));
+  box-sizing: border-box;
+  transition: none;
+}
+body.mobile #app > header {
+  padding: var(--m-safe-top) 10px 0 10px;
+  gap: 8px;
+  min-width: 0;
+}
+body.mobile #app > header { display: flex; align-items: center; overflow: visible; }
+body.mobile .mosaic-brand { width: auto; min-width: 0; flex: none; }
+body.mobile #watch-btn { display: none; } /* the keyboard's Go key watches (Enter) */
+body.mobile .channel-launcher input { padding-right: 10px !important; }
+body.mobile .header-actions { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; position: static; }
+body.mobile .titlebar-action-buttons { position: static; display: flex; align-items: center; gap: 0; flex: none; transform: none; }
+body.mobile .channel-launcher { position: relative; left: auto; right: auto; top: auto; transform: none; flex: 1; min-width: 0; width: auto; }
+body.mobile #back-to-stream-btn { flex: none; }
+body.mobile .channel-launcher input { min-width: 0; width: 100%; font-size: 16px; /* no zoom-on-focus */ }
+body.mobile .login-label { display: none; }
+body.mobile #login-btn { padding: 8px; }
+body.mobile .platform-label { display: none; }
+body.mobile #back-to-stream-label { display: none; }
+body.mobile .header-whispers-btn, body.mobile .win-btn { min-width: 40px; min-height: 40px; }
+
+body.mobile #video-column { grid-column: 1; grid-row: 2; }
+body.mobile #chat-pane { display: none; }
+
+/* ---- the Following drawer ---- */
+body.mobile #channels-sidebar {
+  position: fixed;
+  z-index: 60;
+  top: 0; bottom: 0; left: 0;
+  width: min(84vw, 320px);
+  padding-top: var(--m-safe-top);
+  padding-bottom: calc(var(--m-tabs-h) + var(--m-safe-bottom));
+  box-sizing: border-box;
+  background: var(--m-bg);
+  border-right: 1px solid rgba(255,255,255,.08);
+  transform: translateX(-102%);
+  transition: transform .22s ease;
+  visibility: hidden;
+}
+body.mobile.m-drawer #channels-sidebar { transform: none; visibility: visible; }
+body.mobile .m-shade {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s ease;
+}
+body.mobile.m-drawer .m-shade { opacity: 1; pointer-events: auto; }
+body:not(.mobile) .m-shade, body:not(.mobile) .m-tabs, body:not(.mobile) .m-back { display: none !important; }
+
+/* ---- the bottom tab bar ---- */
+.m-tabs {
+  position: fixed; z-index: 70;
+  left: 0; right: 0; bottom: 0;
+  height: calc(var(--m-tabs-h) + var(--m-safe-bottom));
+  padding-bottom: var(--m-safe-bottom);
+  box-sizing: border-box;
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  background: var(--m-bg);
+  border-top: 1px solid rgba(255,255,255,.08);
+}
+.m-tab {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  background: none; border: 0; color: var(--m-text-dim, #9aa0aa);
+  font: 500 11px/1 "Segoe UI", system-ui, sans-serif;
+}
+.m-tab.on { color: #fff; }
+.m-tab.on svg { filter: drop-shadow(0 0 6px rgba(255,255,255,.45)); }
+.m-back svg { width: 22px !important; height: 22px !important; }
+.m-back {
+  display: none; flex: none;
+  width: 40px; height: 40px; margin-left: -6px;
+  align-items: center; justify-content: center;
+  background: none; border: 0; color: var(--m-text, #fff);
+}
+
+/* ---- watching, upright: header / 16:9 video + info bar / chat ---- */
+body.mobile.m-watching .m-tabs { display: none; }
+body.mobile.m-watching .m-back { display: flex; }
+body.mobile.m-watching .mosaic-brand { display: none; }
+body.mobile.m-watching #app {
+  padding-bottom: 0;
+  grid-template-rows: var(--header-height) auto minmax(0, 1fr) !important;
+}
+body.mobile.m-watching #video-column { grid-row: 2; height: auto; overflow: visible; }
+body.mobile.m-watching #video-frame { width: 100%; max-height: none; }
+body.mobile.m-watching #video-region { width: 100%; height: auto; aspect-ratio: 16 / 9; }
+body.mobile.m-watching #chat-pane {
+  display: flex;
+  grid-column: 1; grid-row: 3;
+  min-height: 0;
+  border-left: 0;
+  border-top: 1px solid rgba(255,255,255,.06);
+  padding-bottom: var(--m-safe-bottom);
+}
+body.mobile.m-watching #channel-info-bar { padding: 8px 10px; }
+
+/* ---- watching, sideways: the video is the whole screen ---- */
+@media (orientation: landscape) {
+  body.mobile.m-watching #app {
+    grid-template-rows: 0 minmax(0, 1fr) 0 !important;
+  }
+  body.mobile.m-watching #app > header,
+  body.mobile.m-watching #chat-pane,
+  body.mobile.m-watching #channel-info-bar { display: none !important; }
+  body.mobile.m-watching #video-column { height: 100dvh; }
+  body.mobile.m-watching #video-frame { height: 100%; }
+  body.mobile.m-watching #video-region { height: 100%; aspect-ratio: auto; }
+}
+
+/* touch: bigger hit areas on the player's controls */
+body.mobile .controls-bar button { min-width: 40px; min-height: 40px; }
+
+/* Settings on a phone: full screen, sections as a row of chips above the settings, controls under their text */
+body.mobile .settings-backdrop { padding: 0; align-items: stretch; z-index: 11800; }
+body.mobile .settings-panel {
+  width: 100%; height: 100%;
+  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  border: 0; border-radius: 0;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+}
+body.mobile .settings-nav { gap: 8px; padding: 10px 12px 8px; border-right: 0; border-bottom: 1px solid var(--m-border-soft, #212832); }
+body.mobile .settings-nav-title { display: none; }
+body.mobile .settings-search { height: 40px; }
+body.mobile .settings-search input { font-size: 16px; }
+body.mobile .settings-nav-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 6px; scrollbar-width: none; }
+body.mobile .settings-nav-list::-webkit-scrollbar { display: none; }
+body.mobile .settings-nav-item { width: auto; flex: none; padding: 8px 12px; border-radius: 999px; background: var(--m-surface, #161b22); white-space: nowrap; }
+body.mobile .settings-nav-item.active { background: var(--m-surface-2, #1c222c); box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+body.mobile .settings-main-head { padding: 12px 8px 8px 16px; }
+body.mobile .settings-close { width: 40px; height: 40px; }
+body.mobile .settings-rows { padding: 4px 16px 24px; }
+body.mobile .settings-row { flex-wrap: wrap; gap: 10px 14px; }
+body.mobile .settings-row-text { flex: 1 1 200px; }
+body.mobile .settings-row-control { max-width: 100%; overflow-x: auto; }
+body.mobile .settings-chat-preview { display: none; }

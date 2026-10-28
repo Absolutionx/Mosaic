@@ -2,6 +2,11 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "pip",
   "description": "Picture-in-picture windows: only what pip.js needs (play video, move/resize/close itself). The one app command it calls is get_live_m3u8_url; no updater, restart, autostart, notifications, links or new windows",
+  "platforms": [
+    "windows",
+    "macOS",
+    "linux"
+  ],
   "windows": [
     "pip",
     "pip-*"

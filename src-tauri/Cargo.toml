@@ -4,6 +4,12 @@ version = "1.8.6"
 description = "Mosaic - native Twitch/Kick player PoC"
 edition = "2021"
 
+# the app is a library (src/lib.rs) so Android can load it (cdylib, through Tauri's mobile entry point);
+# src/main.rs runs the same library as the desktop program
+[lib]
+name = "mosaic_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -60,28 +66,29 @@ tauri-plugin-opener = "2"
 # isPermissionGranted()/requestPermission()/sendNotification() come from
 # the matching @tauri-apps/plugin-notification npm package.
 tauri-plugin-notification = "2"
-# Without this, every double-click of the .exe (Start Menu, desktop
-# shortcut, taskbar icon - anything that isn't clicking the existing tray
-# icon) launches a brand-new, fully independent process with its own
-# window and its own tray icon, since nothing here was ever telling
-# Windows "an instance is already running, just focus it." See the plugin
-# registration in main.rs's tauri::Builder chain (must be the very first
-# .plugin() call, per the plugin's own docs, so it runs before anything
-# else can spawn windows/tray icons for what turns out to be a second
-# instance).
-tauri-plugin-single-instance = "2"
-
-# Auto-updater. Windows-only by design: the updater is wired up behind a
-# #[cfg(windows)] in main.rs and the endpoint only serves a Windows target,
-# so macOS/Linux builds simply never check for updates (their distribution
-# is the GitHub Actions .dmg, handled separately). The plugin crate itself
-# is cross-platform; gating happens at the call site.
-tauri-plugin-updater = "2"
 # Needed by the updater flow: process = relaunch() after install; os =
 # platform() so the frontend only runs the update check on Windows. Both
 # are cross-platform crates; registered unconditionally (cheap, harmless).
 tauri-plugin-process = "2"
 tauri-plugin-os = "2"
+
+# Desktop only: Android runs one copy of an app by itself, updates through the APK, and has no "start with
+# the computer". lib.rs registers these behind #[cfg(desktop)]
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# Without this, every double-click of the .exe (Start Menu, desktop
+# shortcut, taskbar icon - anything that isn't clicking the existing tray
+# icon) launches a brand-new, fully independent process with its own
+# window and its own tray icon, since nothing here was ever telling
+# Windows "an instance is already running, just focus it." See the plugin
+# registration in lib.rs's tauri::Builder chain (must be the very first
+# .plugin() call, per the plugin's own docs, so it runs before anything
+# else can spawn windows/tray icons for what turns out to be a second
+# instance).
+tauri-plugin-single-instance = "2"
+# Auto-updater. Windows-only by design: wired up behind #[cfg(windows)] in lib.rs and the endpoint only
+# serves a Windows target, so macOS/Linux builds never check for updates (their distribution is the GitHub
+# Actions .dmg, handled separately). Android updates come as a new APK from GitHub Releases
+tauri-plugin-updater = "2"
 # Settings > App > Start Mosaic with your computer
 tauri-plugin-autostart = "2"
 

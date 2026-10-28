@@ -136,18 +136,30 @@ pub async fn set_app_fullscreen(window: tauri::WebviewWindow, on: bool, remaximi
     result
 }
 
-#[cfg(not(windows))]
+#[cfg(all(desktop, not(windows)))]
 fn enter_fullscreen(window: &tauri::WebviewWindow) -> Result<bool, String> {
     window.set_fullscreen(true).map_err(|e| e.to_string())?;
     Ok(false)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(desktop, not(windows)))]
 fn leave_fullscreen(window: &tauri::WebviewWindow, remaximize: bool) -> Result<bool, String> {
     window.set_fullscreen(false).map_err(|e| e.to_string())?;
     if remaximize {
         window.maximize().map_err(|e| e.to_string())?;
     }
+    Ok(false)
+}
+
+// Android: the app already fills the screen; going fullscreen there is the player's own job (the page hides the
+// rest of the layout), so the window is left as it is
+#[cfg(mobile)]
+fn enter_fullscreen(_window: &tauri::WebviewWindow) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(mobile)]
+fn leave_fullscreen(_window: &tauri::WebviewWindow, _remaximize: bool) -> Result<bool, String> {
     Ok(false)
 }
 

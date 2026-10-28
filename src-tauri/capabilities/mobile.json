@@ -1,0 +1,48 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile",
+  "description": "The main window on Android: what the app does there. No updater, autostart or tray, which phones don't have",
+  "platforms": [
+    "android",
+    "iOS"
+  ],
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:app:default",
+    "core:event:default",
+    "opener:default",
+    "notification:default",
+    "core:window:allow-set-fullscreen",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-title",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-show",
+    "core:window:allow-outer-size",
+    "core:window:allow-outer-position",
+    "core:window:allow-inner-size",
+    "core:window:allow-current-monitor",
+    "core:window:allow-available-monitors",
+    "core:window:allow-primary-monitor",
+    "core:window:allow-set-focus",
+    "process:default",
+    "process:allow-restart",
+    "os:default",
+    "core:window:allow-hide",
+    "core:webview:allow-set-webview-zoom",
+    "main-window",
+    "core:webview:deny-internal-toggle-devtools"
+  ]
+}

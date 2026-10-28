@@ -1,0 +1,133 @@
+# Builds the Android .apk (phones, 64-bit ARM) on a GitHub-hosted Linux runner, to sideload.
+#
+# The runner already has what Android builds need: Java 17, the Android SDK and the NDK. This adds Rust's
+# Android target, generates the Android project (`tauri android init`), builds a release APK and signs it.
+#
+# SIGNING: Android only installs signed APKs, and an update only installs over the old one when both carry the
+# SAME key. Set these repository secrets once (Settings > Secrets and variables > Actions) so every build is
+# signed with your key:
+#   ANDROID_KEYSTORE            base64 of your .jks keystore file
+#   ANDROID_KEYSTORE_PASSWORD   its password (the key's password must be the same)
+#   ANDROID_KEY_ALIAS           the key's alias inside it
+# Without them the APK is signed with a throwaway key made for that one run: fine to try it out, but the next
+# build won't install over it (uninstall first). The artifact name says which it is.
+
+name: Build Android
+
+on:
+  # Every push to the android branch while the port is being built, and by hand from the Actions tab
+  push:
+    branches: [android]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Also attach the APK to this release (e.g. v1.9.0). Leave empty to skip."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    name: Android (arm64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # only used by the optional "attach to release" step
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec  # stable branch, 10-25-26
+        with:
+          toolchain: stable  # pinned to a commit, so the toolchain is named here
+          targets: aarch64-linux-android
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+        with:
+          workspaces: src-tauri
+          key: aarch64-linux-android
+
+      - name: Set up Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # The runner's preinstalled Java 17 and NDK, under the names Tauri and Gradle look for
+      - name: Point the build at Java 17 and the NDK
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "Using NDK: $ANDROID_NDK_LATEST_HOME"
+
+      # Generates src-tauri/gen/android (the Gradle project) from tauri.conf.json + tauri.android.conf.json
+      - name: Generate the Android project
+        run: npx tauri android init --ci
+
+      # Mosaic plays video through its own small server on the phone (http://127.0.0.1, see stream_relay.rs).
+      # Android blocks plain-http connections in release builds unless the app allows them, and Tauri's
+      # template only allows them in debug builds, so the release build is switched to allow them too.
+      - name: Allow the app's local video server in release builds
+        run: |
+          f=src-tauri/gen/android/app/build.gradle.kts
+          grep -n 'usesCleartextTraffic' "$f"
+          sed -i 's/manifestPlaceholders\["usesCleartextTraffic"\] = "false"/manifestPlaceholders["usesCleartextTraffic"] = "true"/' "$f"
+          if grep -q 'usesCleartextTraffic"\] = "false"' "$f"; then echo "::error::couldn't switch usesCleartextTraffic on"; exit 1; fi
+
+      - name: Build the APK
+        run: npx tauri android build --apk --target aarch64
+        env:
+          KICK_CLIENT_SECRET: ${{ secrets.KICK_CLIENT_SECRET }}
+
+      - name: Sign the APK
+        id: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          unsigned=$(find src-tauri/gen/android/app/build/outputs/apk -name '*-unsigned.apk' | head -n1)
+          if [ -z "$unsigned" ]; then echo "::error::no unsigned APK found"; find src-tauri/gen/android/app/build/outputs -name '*.apk'; exit 1; fi
+          echo "Built: $unsigned"
+          tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n1)"
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            kind=signed
+          else
+            echo "::warning::No ANDROID_KEYSTORE secret: signing with a throwaway key. The next build won't install over this one."
+            KEYSTORE_PASSWORD=throwaway-$GITHUB_RUN_ID; KEY_ALIAS=mosaic
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release.jks" -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 3650 \
+              -storepass "$KEYSTORE_PASSWORD" -keypass "$KEYSTORE_PASSWORD" -dname "CN=Mosaic test build"
+            kind=test-signed
+          fi
+          version=$(node -p "require('./package.json').version")
+          out="Mosaic-$version-android-arm64.apk"
+          "$tools/zipalign" -f -p 4 "$unsigned" aligned.apk
+          "$tools/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out "$out" aligned.apk
+          "$tools/apksigner" verify --print-certs "$out"
+          rm -f "$RUNNER_TEMP/release.jks" aligned.apk
+          echo "apk=$out" >> "$GITHUB_OUTPUT"
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5.0.0
+        with:
+          name: Mosaic-android-arm64-${{ steps.sign.outputs.kind }}
+          path: ${{ steps.sign.outputs.apk }}
+          if-no-files-found: error
+
+      - name: Attach the APK to the release
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && steps.sign.outputs.kind == 'signed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: gh release upload "$TAG" "${{ steps.sign.outputs.apk }}" --clobber

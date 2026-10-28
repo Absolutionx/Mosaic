@@ -5,6 +5,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { getSetting, setSetting, onSettingChange, resetSettings, playChime } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
+import { isAndroid } from "./mobile.js";
 import { closeCommandPalette } from "./command-palette.js";
 import { THEME_PRESETS, THEME_PARTS, presetById, isHex, CUSTOM_PARTS } from "./themes.js";
 import { configureCustomize, startPicking, openEditor, changedParts, resetPart, customParts } from "./customize.js";
@@ -226,6 +227,18 @@ const SECTIONS = [
   ]},
 ];
 
+// On Android, rows for things a phone doesn't have (a tray, starting with the computer, the desktop updater,
+// developer tools, pop-out windows, MultiView) are left out
+if (isAndroid) {
+  const desktopOnly = new Set(["autostart", "startMinimized", "closeToTray", "autoUpdateCheck", "devTools", "videoContextMenu",
+    "autoPipOnBlur", "lurkMode", "autoTheater", "homeLauncher", "multiviewLayout", "multiviewSound"]);
+  const desktopTitles = new Set(["Check for updates", "MultiView"]);
+  for (const sec of SECTIONS) {
+    sec.rows = sec.rows.filter((r) => !desktopOnly.has(r.id) && !desktopTitles.has(r.title));
+    if (sec.id === "home") sec.label = "Home";
+  }
+}
+
 // Restore: pick a .json with the webview's own file picker, restore it, then reload so everything applies
 function pickBackupFile() {
   const input = document.createElement("input");
@@ -311,7 +324,7 @@ export function openSettingsPanel(section, focusTitle) {
   unsubscribe = onSettingChange((id) => refreshValues(id));
   render();
   if (focusTitle) focusRow(focusTitle);
-  else setTimeout(() => search.focus(), 30);
+  else if (!isAndroid) setTimeout(() => search.focus(), 30); // on a phone, focusing would pop the keyboard up over Settings
 }
 
 function focusRow(title) {

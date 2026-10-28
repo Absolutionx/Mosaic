@@ -1833,6 +1833,14 @@ pub async fn get_vod_m3u8_url(
     quality: String,
     state: tauri::State<'_, Arc<StreamRelayState>>,
 ) -> Result<String, String> {
+    // Android has no streamlink: the VOD's playlist straight from Twitch (direct_hls.rs)
+    if cfg!(target_os = "android") {
+        if video_id.is_empty() || video_id.len() > 20 || !video_id.chars().all(|c| c.is_ascii_digit()) {
+            return Err("invalid video id".into());
+        }
+        check_quality(&quality)?;
+        return direct_playlist(&state, &vod_usher_url(&video_id).await?, &quality, false).await;
+    }
     let cdn_url = resolve_vod_cdn_url(&video_id, &quality).await?;
     // wrap in the local proxy so HLS.js fetches through localhost, sidestepping the Twitch CDN's missing CORS headers
     proxied_hls_url(&state, &cdn_url).await
@@ -1938,6 +1946,10 @@ pub async fn get_live_m3u8_url(
 ) -> Result<String, String> {
     check_login(&channel)?;
     check_quality(&quality)?;
+    // Android has no streamlink: the live playlist straight from Twitch, ads filtered by /hls-preview
+    if cfg!(target_os = "android") {
+        return direct_playlist(&state, &live_usher_url(&channel).await?, &quality, true).await;
+    }
     let target = format!("https://www.twitch.tv/{channel}");
     let mut cmd = Command::new(resolve_streamlink_path());
     cmd.arg(&target)
@@ -2012,6 +2024,12 @@ pub async fn get_vod_preview_url(
     if id.is_empty() || id.len() > 20 || !id.chars().all(|c| c.is_ascii_digit()) {
         return Err("invalid video id".into());
     }
+    let usher = vod_usher_url(&id).await?;
+    proxied_hls_url(&state, &usher).await
+}
+
+// a VOD's master playlist on usher, with an anonymous web playback token (no streamlink)
+async fn vod_usher_url(id: &str) -> Result<String, String> {
     let (value, sig) = preview_token(
         VOD_PREVIEW_TOKEN_QUERY,
         serde_json::json!({ "id": id, "playerType": "site" }),
@@ -2019,14 +2037,13 @@ pub async fn get_vod_preview_url(
     )
     .await
     .map_err(|e| format!("{e} for VOD {id}"))?;
-    let usher = format!(
+    Ok(format!(
         "https://usher.ttvnw.net/vod/{id}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
 &p={}&player_backend=mediaplayer&playlist_include_framerate=true&supported_codecs=avc1",
         pct_encode(&sig),
         pct_encode(&value),
         rand::random::<u32>() % 10_000_000,
-    );
-    proxied_hls_url(&state, &usher).await
+    ))
 }
 
 // a live channel's playlist for the hover preview (live-preview.js), FAST: one GQL request for the
@@ -2041,6 +2058,14 @@ pub async fn get_live_preview_url(
 ) -> Result<String, String> {
     let login = channel.trim().to_ascii_lowercase();
     check_login(&login)?;
+    let usher = live_usher_url(&login).await?;
+    ensure_listener_running(&state).await?;
+    let port = state.port.load(Ordering::Relaxed);
+    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), "hls-preview", &usher))
+}
+
+// a live channel's master playlist on usher, with an anonymous web playback token (no streamlink)
+async fn live_usher_url(login: &str) -> Result<String, String> {
     let (value, sig) = preview_token(
         PREVIEW_TOKEN_QUERY,
         serde_json::json!({ "login": login, "playerType": "site" }),
@@ -2048,16 +2073,25 @@ pub async fn get_live_preview_url(
     )
     .await
     .map_err(|e| format!("{e} for {login}"))?;
-    let usher = format!(
+    Ok(format!(
         "https://usher.ttvnw.net/api/channel/hls/{login}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
 &fast_bread=true&p={}&player_backend=mediaplayer&playlist_include_framerate=true&supported_codecs=avc1",
         pct_encode(&sig),
         pct_encode(&value),
         rand::random::<u32>() % 10_000_000,
-    );
-    ensure_listener_running(&state).await?;
+    ))
+}
+
+// ---- Android: playback without streamlink (direct_hls.rs) ----
+// the usher playlist from a web playback token, one quality picked from it the way streamlink picks
+// ("720p60,720p,best"). live goes through /hls-preview, which drops Twitch's stitched ads (streamlink's job on
+// desktop); VODs carry no stitched ads and go through /hls-proxy
+async fn direct_playlist(state: &Arc<StreamRelayState>, master: &str, quality: &str, live: bool) -> Result<String, String> {
+    let variants = crate::direct_hls::fetch_variants(master).await?;
+    let v = crate::direct_hls::pick(&variants, quality).ok_or("That quality isn't available for this stream.")?;
+    ensure_listener_running(state).await?;
     let port = state.port.load(Ordering::Relaxed);
-    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), "hls-preview", &usher))
+    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), if live { "hls-preview" } else { "hls-proxy" }, &v.url))
 }
 
 // builds a localhost hls-proxy URL for an arbitrary upstream HLS URL, starting the proxy listener first if it isn't running. that ensure step matters: on a fresh launch where playback starts through here without start_relay ever running, state.port is still 0 and any URL built from it is unusable (black screen). shared by get_vod_m3u8_url above and the Kick failover (kick.rs), the proxy itself is host-agnostic (it fetches whatever ?url= says with browser headers and rewrites playlist URIs recursively through itself), so non-Twitch HLS rides through it the same way
@@ -2428,6 +2462,10 @@ async fn list_available_qualities(target_url: &str) -> Result<Vec<String>, Strin
 #[tauri::command]
 pub async fn get_available_qualities(channel: String) -> Result<Vec<String>, String> {
     check_login(&channel)?;
+    if cfg!(target_os = "android") {
+        let variants = crate::direct_hls::fetch_variants(&live_usher_url(&channel).await?).await?;
+        return Ok(crate::direct_hls::names_ascending(&variants));
+    }
     list_available_qualities(&format!("https://www.twitch.tv/{channel}")).await
 }
 
@@ -2436,6 +2474,10 @@ pub async fn get_available_qualities(channel: String) -> Result<Vec<String>, Str
 pub async fn get_available_vod_qualities(video_id: String) -> Result<Vec<String>, String> {
     if video_id.is_empty() || video_id.len() > 20 || !video_id.chars().all(|c| c.is_ascii_digit()) {
         return Err("invalid video id".into());
+    }
+    if cfg!(target_os = "android") {
+        let variants = crate::direct_hls::fetch_variants(&vod_usher_url(&video_id).await?).await?;
+        return Ok(crate::direct_hls::names_ascending(&variants));
     }
     list_available_qualities(&format!("https://www.twitch.tv/videos/{video_id}")).await
 }
