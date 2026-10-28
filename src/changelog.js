@@ -4,6 +4,13 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.7",
+    items: [
+      { kind: "new", top: true, title: "Clip a chosen part", desc: "The clip panel has a new Choose a part mode: pick 5 to 60 seconds anywhere in a VOD, or anywhere in a live stream you can rewind, preview it right in the panel, give it a title and clip it. Alt+X opens it on a VOD too. It uses the Twitch connection (Settings › Twitch account)." },
+      { kind: "improved", title: "Dragging favorites", desc: "A favorite you drag now lifts off the list, the others slide out of its way, and an outline shows where it will land." },
+    ],
+  },
+  {
     version: "1.8.6",
     items: [
       { kind: "new", top: true, title: "Reorder your favorites", desc: "Drag a favorite in the sidebar to put them in your own order, or press Alt+Up / Alt+Down on one. MultiView and preloading follow your order too. Settings › Sidebar › Favorites order switches back to live channels first." },
