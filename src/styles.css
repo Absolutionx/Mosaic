@@ -10855,3 +10855,51 @@ body.mobile #chat-input-badge { display: none !important; }
 body.mobile .chat-input-wrapper { align-items: center; }
 body.mobile #chat-emote-btn { align-self: center; }
 body.mobile .m-thumb img { top: 0; left: 0; width: 100%; height: 100%; }
+
+/* Top (Browse) on a phone, matched to Following and Frosty: the full width, Sort by on the left, and stream rows
+   with the channel first, then title and category; a small viewer count on the thumbnail, no LIVE/Drops
+   badges or tags covering things */
+body.mobile #browse-page { padding: 0 !important; }
+body.mobile .browse-tabs-row { margin: 0 0 8px; padding: 0 16px; }
+body.mobile .browse-controls-row { justify-content: flex-start !important; padding: 0 16px; gap: 8px; flex-wrap: wrap; }
+body.mobile .browse-controls-row > div:empty { display: none; }
+body.mobile .browse-sort-row { padding: 0 !important; margin: 0; justify-content: flex-start; }
+body.mobile .browse-search-wrap { width: 100%; max-width: none; }
+body.mobile #browse-page .home-section-title { padding-left: 16px; padding-right: 16px; }
+body.mobile #browse-page .home-grid-card {
+  display: grid !important; grid-template-columns: 42% minmax(0, 1fr); column-gap: 12px; align-items: start;
+  width: 100%; box-sizing: border-box; padding: 8px 16px; margin: 0;
+}
+body.mobile #browse-page .home-grid-thumb-wrap { width: 100%; flex: none; aspect-ratio: auto; height: 0; padding-top: 56.25%; position: relative; }
+body.mobile #browse-page .home-grid-thumb { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+body.mobile #browse-page .home-live-badge,
+body.mobile #browse-page .home-drops-badge,
+body.mobile #browse-page .home-card-tags,
+body.mobile #browse-page .home-grid-avatar { display: none !important; }
+body.mobile #browse-page .home-grid-viewers {
+  left: 3px !important; bottom: 3px !important; top: auto !important; padding: 1px 5px !important;
+  border-radius: 6px; font-size: 12px !important; font-weight: 500; background: rgba(0,0,0,.55);
+}
+body.mobile #browse-page .home-grid-meta { display: block; min-width: 0; }
+body.mobile #browse-page .home-grid-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+body.mobile #browse-page .home-grid-name { order: -1; font-size: 16px; font-weight: 600; color: var(--m-text, #e7ebf2); }
+body.mobile #browse-page .home-grid-title,
+body.mobile #browse-page .home-grid-game { font-size: 13.5px; font-weight: 400; color: var(--m-text, #e7ebf2); opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; -webkit-line-clamp: unset; }
+/* categories: three across the full width */
+body.mobile .browse-games-grid { padding: 4px 16px 16px !important; gap: 14px 10px !important; }
+body.mobile .browse-game-name { font-size: 13.5px; }
+body.mobile .browse-game-viewers { font-size: 12.5px; }
+
+/* sideways chat is Frosty's width: a fifth of the screen */
+@media (orientation: landscape) {
+  body.mobile.m-watching #app { grid-template-columns: minmax(0, 1fr) max(20vw, 170px) !important; }
+  body.mobile.m-watching.m-full #app { grid-template-columns: minmax(0, 1fr) !important; }
+  body.mobile.m-watching.m-full.m-chatover #chat-pane { width: max(20vw, 170px); }
+  body.mobile.m-watching.m-full.m-chatover .m-ov { right: max(20vw, 170px); }
+  body.mobile.m-watching #chat-input { font-size: 14px; }
+}
+@media (orientation: landscape) {
+  body.mobile.m-watching .chat-input-row { gap: 0; padding: 4px 2px 4px 6px; }
+  body.mobile.m-watching .m-send, body.mobile.m-watching #chat-settings-btn { width: 34px; height: 34px; }
+  body.mobile.m-watching #chat-input { min-height: 34px; white-space: nowrap; }
+}

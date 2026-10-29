@@ -497,6 +497,7 @@ function watchPlayer() {
     if (!watching) document.body.classList.remove("m-full", "m-chatover");
     // a stream that ends any way (not just the back arrow) hands the screen's turning back to the phone
     if (!watching && was) setOrientation("auto");
+    syncSystemBars();
     if (titleEl) titleEl.textContent = inVods && !watching ? "Videos" : TITLES[document.body.dataset.mtab] || "";
     if (watching !== was || inVods !== wasVods) {
       if (!watching && was && document.body.dataset.mtab === "following") renderFollowing();
@@ -522,6 +523,17 @@ function setOrientation(mode) {
   invoke("set_orientation", { mode }).catch(() => {});
 }
 const isLandscape = () => window.matchMedia("(orientation: landscape)").matches;
+
+// the phone's status and navigation bars hide while watching sideways, as in Frosty (app_extras.rs
+// set_system_bars); a swipe from the edge shows them for a moment
+let barsHidden = false;
+function syncSystemBars() {
+  const hide = document.body.classList.contains("m-watching") && isLandscape();
+  if (hide === barsHidden) return;
+  barsHidden = hide;
+  invoke("set_system_bars", { visible: !hide }).catch(() => {});
+}
+window.matchMedia("(orientation: landscape)").addEventListener("change", () => syncSystemBars());
 
 function rotate() {
   if (isLandscape()) {
@@ -636,7 +648,13 @@ function buildChatRow() {
   const input = document.getElementById("chat-input");
   const gear = document.getElementById("chat-settings-btn");
   if (!row || !wrapper || !input || row.querySelector(".m-send")) return;
-  input.placeholder = "Chat";
+  // Frosty's box just says "Chat" (the app rewrites its placeholder as chat connects; keep it short here, it
+  // has to fit in the narrow sideways chat). "Log in to chat" and other states stay as the app writes them
+  const shortPlaceholder = () => {
+    if (/^Send a (message|reply)/i.test(input.placeholder)) input.placeholder = "Chat";
+  };
+  new MutationObserver(shortPlaceholder).observe(input, { attributes: true, attributeFilter: ["placeholder"] });
+  shortPlaceholder();
   input.setAttribute("enterkeyhint", "send");
   // Frosty's send arrow, outside the box; it presses the app's own Send (hidden on a phone)
   const send = iconBtn("m-send", "send", "Send", () => {

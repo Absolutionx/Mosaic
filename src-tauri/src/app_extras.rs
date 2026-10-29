@@ -728,3 +728,57 @@ fn android_set_orientation(env: &mut jni::JNIEnv, activity: &jni::objects::JObje
         let _ = env.exception_clear();
     }
 }
+
+// ---- the phone's status and navigation bars (mobile.js) ----
+// Watching sideways, Frosty gives the video the whole screen: the bars at the top and bottom hide, and a swipe
+// from the edge shows them for a moment. Upright, and everywhere else, they're back. Other platforms: nothing
+#[tauri::command]
+pub fn set_system_bars(webview: tauri::Webview, visible: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, _webview| {
+                    if android_system_bars(env, activity, visible).is_err() {
+                        let _ = env.exception_clear();
+                    }
+                });
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (webview, visible);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn android_system_bars(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, visible: bool) -> jni::errors::Result<()> {
+    use jni::objects::JValue;
+    let window = env.call_method(activity, "getWindow", "()Landroid/view/Window;", &[])?.l()?;
+    let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+    if sdk >= 30 {
+        // Android 11+: WindowInsetsController
+        let ctrl = env
+            .call_method(&window, "getInsetsController", "()Landroid/view/WindowInsetsController;", &[])?
+            .l()?;
+        if ctrl.is_null() {
+            return Ok(());
+        }
+        let bars = env.call_static_method("android/view/WindowInsets$Type", "systemBars", "()I", &[])?.i()?;
+        if visible {
+            env.call_method(&ctrl, "show", "(I)V", &[JValue::Int(bars)])?;
+        } else {
+            // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE = 2: a swipe shows them briefly over the video
+            env.call_method(&ctrl, "setSystemBarsBehavior", "(I)V", &[JValue::Int(2)])?;
+            env.call_method(&ctrl, "hide", "(I)V", &[JValue::Int(bars)])?;
+        }
+    } else {
+        // Android 8-10: the older View flags (IMMERSIVE_STICKY, FULLSCREEN, HIDE_NAVIGATION and the layout flags)
+        let decor = env.call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?.l()?;
+        let flags = if visible { 0 } else { 4096 | 4 | 2 | 256 | 512 | 1024 };
+        env.call_method(&decor, "setSystemUiVisibility", "(I)V", &[JValue::Int(flags)])?;
+    }
+    Ok(())
+}
