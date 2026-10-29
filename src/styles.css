@@ -10645,3 +10645,10 @@ body.mobile .settings-row { flex-wrap: wrap; gap: 10px 14px; }
 body.mobile .settings-row-text { flex: 1 1 200px; }
 body.mobile .settings-row-control { max-width: 100%; overflow-x: auto; }
 body.mobile .settings-chat-preview { display: none; }
+
+/* the corner mini player on a phone: a bit wider, and lifted above the tab bar (the bottom offset itself is
+   where it was dragged to, so the lift is a transform) */
+body.mobile #app.mini-player-active #video-frame {
+  width: 56vw !important; max-width: 56vw !important;
+  transform: translateY(calc(-1 * (var(--m-tabs-h) + var(--m-safe-bottom))));
+}

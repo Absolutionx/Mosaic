@@ -153,12 +153,18 @@ pub async fn twitch_device_poll(
             ("device_code", device_code.as_str()),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
         ];
-        let resp = client
+        // no answer (the phone dropped its connection while you were in the browser approving): ask again
+        // next time round instead of giving up on a login that's about to be approved
+        let resp = match client
             .post(TOKEN_URL)
             .form(&params)
+            .timeout(std::time::Duration::from_secs(10))
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+        {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
 
         if resp.status().is_success() {
             let t: TokenResponse = resp.json().await.map_err(|e| e.to_string())?;

@@ -85,13 +85,17 @@ function watchPlayer() {
   const frame = document.getElementById("video-frame");
   if (!frame) return;
   const sync = () => {
-    const watching = getComputedStyle(frame).display !== "none";
+    // the corner mini player (Home or Browse with a stream still going) is not watching: the page is in front
+    const app = document.getElementById("app");
+    const watching = getComputedStyle(frame).display !== "none" && !app?.classList.contains("mini-player-active");
     const was = document.body.classList.contains("m-watching");
     document.body.classList.toggle("m-watching", watching);
     if (watching && !was) closeDrawer();
     if (watching !== was) syncHistory();
   };
   new MutationObserver(sync).observe(frame, { attributes: true, attributeFilter: ["style", "class"] });
+  const appEl = document.getElementById("app");
+  if (appEl) new MutationObserver(sync).observe(appEl, { attributes: true, attributeFilter: ["class"] });
   sync();
   // a back arrow in the header while watching, the way phone apps leave a player
   const header = document.querySelector("#app > header");
