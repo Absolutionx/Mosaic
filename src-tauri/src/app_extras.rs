@@ -688,3 +688,43 @@ pub fn open_devtools(webview: tauri::Webview) {
         webview.open_devtools();
     }
 }
+
+// ---- turning the screen on a phone (the player's rotate button, mobile.js) ----
+// Android lets an app ask for an orientation: "landscape" or "portrait" holds the screen that way (either way
+// up, by the phone's sensor) whatever the phone's tilt; "auto" hands it back to the phone (leaving a stream).
+// The call goes to the app's Android activity on its own thread. Other platforms: nothing to do
+#[tauri::command]
+pub fn set_orientation(webview: tauri::Webview, mode: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        // ActivityInfo.SCREEN_ORIENTATION_*: SENSOR_LANDSCAPE 6, SENSOR_PORTRAIT 7, UNSPECIFIED -1
+        let value: i32 = match mode.as_str() {
+            "landscape" => 6,
+            "portrait" => 7,
+            _ => -1,
+        };
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, _webview| {
+                    android_set_orientation(env, activity, value);
+                });
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (webview, mode);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn android_set_orientation(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, value: i32) {
+    if env
+        .call_method(activity, "setRequestedOrientation", "(I)V", &[jni::objects::JValue::Int(value)])
+        .is_err()
+    {
+        // a Java exception is left pending on failure; clear it so it can't surface somewhere unrelated
+        let _ = env.exception_clear();
+    }
+}

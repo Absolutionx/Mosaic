@@ -64,6 +64,8 @@ let channelInfoRefreshTimer = null;
 let lastChannelInfo = null;
 
 export function updateStreamInfoOverlay(channel, stream, avatarUrl, broadcasterType) {
+  // the phone's player overlay (mobile.js) draws its own copy of this
+  window.dispatchEvent(new CustomEvent("mosaic:stream-info", { detail: { channel, stream: stream || null, avatarUrl: avatarUrl || "" } }));
   if (!stream || !channel) {
     streamInfoOverlay.classList.add("empty");
     return;

@@ -64,6 +64,7 @@ permissions = [
   "allow-poll-device-login",
   "allow-cancel-device-login",
   "allow-chat-wake",
+  "allow-set-orientation",
   "allow-get-notify-channels",
   "allow-set-notify-channels",
   "allow-get-notify-category-targets",

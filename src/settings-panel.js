@@ -237,6 +237,13 @@ if (isAndroid) {
   for (let i = SECTIONS.length - 1; i >= 0; i--) if (SECTIONS[i].id === "sidebar" || SECTIONS[i].id === "home") SECTIONS.splice(i, 1);
   for (const sec of SECTIONS) {
     sec.rows = sec.rows.filter((r) => !desktopOnly.has(r.id) && !desktopTitles.has(r.title));
+    // Frosty's names for them: Appearance is General, Player is Video, App is Other
+    if (sec.id === "appearance") { sec.label = "General"; sec.group = "Customize"; }
+    if (sec.id === "player") { sec.label = "Video"; sec.group = "Customize"; }
+    if (sec.id === "chat") sec.group = "Customize";
+    if (sec.id === "notifications") sec.group = "Customize";
+    if (sec.id === "app") { sec.label = "Other"; sec.group = "Other"; }
+    if (sec.id === "twitch") sec.label = "Account";
     // the header's Drops button and account menu live here on a phone
     if (sec.id === "twitch") {
       sec.rows.unshift(
@@ -249,6 +256,9 @@ if (isAndroid) {
       );
     }
   }
+  // Frosty's order: the account card (drawn by render), then Customize, then Other
+  const order = ["twitch", "appearance", "player", "chat", "notifications", "app"];
+  SECTIONS.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 }
 
 // Restore: pick a .json with the webview's own file picker, restore it, then reload so everything applies
@@ -317,6 +327,7 @@ export function openSettingsPanel(section, focusTitle) {
   if (section) current = section;
   query = "";
   panelEl = el("div", "settings-backdrop");
+  // on a phone (Frosty's layout) Settings opens on its list of sections; a section is its own page
   panelEl.innerHTML =
     '<div class="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">' +
       '<aside class="settings-nav"><div class="settings-nav-title">Settings</div>' +
@@ -327,11 +338,28 @@ export function openSettingsPanel(section, focusTitle) {
       '<div class="settings-rows"></div></main>' +
     "</div>";
   document.body.appendChild(panelEl);
+  if (isAndroid) {
+    panelEl.querySelector(".settings-panel").classList.toggle("m-sec", !!section);
+    const back = (onClick) => {
+      const b = el("button", "settings-back");
+      b.type = "button";
+      b.setAttribute("aria-label", "Back");
+      b.innerHTML = ICON('<path d="M15 18 9 12l6-6"/>');
+      b.addEventListener("click", onClick);
+      return b;
+    };
+    panelEl.querySelector(".settings-nav-title").prepend(back(() => closeSettingsPanel()));
+    panelEl.querySelector(".settings-main-head").prepend(back(() => showSectionList()));
+  }
   panelEl.addEventListener("mousedown", (e) => { if (e.target === panelEl) closeSettingsPanel(); });
   panelEl.querySelector(".settings-close").addEventListener("click", closeSettingsPanel);
   const search = panelEl.querySelector(".settings-search input");
   search.addEventListener("input", () => { query = search.value.trim().toLowerCase(); render(); });
-  popEscape = pushEscape(() => closeSettingsPanel());
+  // Escape (and Android's back button) leaves a section for the list first on a phone, then closes Settings
+  popEscape = pushEscape(() => {
+    if (isAndroid && panelEl?.querySelector(".settings-panel.m-sec")) { showSectionList(); return; }
+    closeSettingsPanel();
+  });
   // keep controls in sync with changes made elsewhere (e.g. the player's quality-menu toggles)
   unsubscribe = onSettingChange((id) => refreshValues(id));
   render();
@@ -359,6 +387,31 @@ export function closeSettingsPanel() {
   closeSelectMenu();
 }
 
+function showSectionList() {
+  panelEl?.querySelector(".settings-panel")?.classList.remove("m-sec");
+}
+
+// the account card at the top of a phone's settings list, as in Frosty: your picture and name, opening Account
+function accountCard() {
+  const loginBtn = document.getElementById("login-btn");
+  const loggedIn = !!loginBtn?.classList.contains("logged-in");
+  const card = el("button", "settings-account-card");
+  card.type = "button";
+  const pic = el("div", "settings-account-pic");
+  const src = loginBtn?.querySelector(".account-avatar")?.getAttribute("src");
+  if (loggedIn && src) { const img = el("img"); img.alt = ""; img.src = src; pic.appendChild(img); }
+  const text = el("div", "settings-account-text");
+  text.append(el("div", "settings-account-name", loggedIn ? (loginBtn.title || "Twitch") : "Log in"),
+    el("div", "settings-account-sub", loggedIn ? "Account, drops and sign out" : "Log in with Twitch to chat and see who you follow"));
+  card.append(pic, text);
+  card.addEventListener("click", () => {
+    if (!loggedIn) { closeSettingsPanel(); loginBtn?.click(); return; }
+    current = "twitch"; render();
+    panelEl.querySelector(".settings-panel").classList.add("m-sec");
+  });
+  return card;
+}
+
 function matches(row) {
   if (!query) return true;
   return `${row.title || ""} ${row.desc || ""}`.toLowerCase().includes(query);
@@ -369,7 +422,12 @@ function render() {
   // nav
   const nav = panelEl.querySelector(".settings-nav-list");
   nav.replaceChildren();
+  let group = null;
+  if (isAndroid) nav.appendChild(accountCard());
   for (const sec of SECTIONS) {
+    // a phone's list: Account is the card above; the rest under Frosty's group names
+    if (isAndroid && sec.id === "twitch") continue;
+    if (isAndroid && sec.group && sec.group !== group) { group = sec.group; nav.appendChild(el("div", "settings-nav-group", group)); }
     const hits = sec.rows.filter((r) => r.title && matches(r)).length;
     const b = el("button", "settings-nav-item" + (!query && sec.id === current ? " active" : "") + (query && !hits ? " dim" : ""));
     b.type = "button";
@@ -380,6 +438,7 @@ function render() {
       current = sec.id; query = "";
       panelEl.querySelector(".settings-search input").value = "";
       render();
+      if (isAndroid) { panelEl.querySelector(".settings-panel").classList.add("m-sec"); panelEl.querySelector(".settings-rows").scrollTop = 0; }
     });
     nav.appendChild(b);
   }

@@ -604,11 +604,27 @@ sidebar.init(loginSettled);
 // phone layout on Android (mobile.js); nothing on desktop
 initMobile({
   getFollowed: () => sidebar.followed || [],
+  isPinned: (login) => sidebar._isFavorite(login),
+  togglePin: (login) => {
+    if (sidebar.favorites.has(login)) sidebar.favorites.delete(login); else sidebar.favorites.add(login);
+    sidebar._saveFavorites();
+    sidebar.renderFollowed();
+  },
   watch: (login) => paletteWatch(login),
   stop: () => stopPlayback({ returnToPage: true }),
+  currentChannel: () => (session.playing ? String(playbackControls.currentChannel || "") : ""),
   searchChannels: (q) => invoke("search_twitch_channels", { query: q }),
   searchCategories: async (q) => JSON.parse(await feedInvoke("search_categories", { query: q })),
-  openCategory: (game) => browsePage.openGame(game),
+  // a stream row knows its category only by name: find its id first
+  openCategory: async (game) => {
+    if (!game?.id && game?.name) {
+      try {
+        const found = JSON.parse(await feedInvoke("search_categories", { query: game.name })) || [];
+        game = found.find((g) => String(g.name).toLowerCase() === game.name.toLowerCase()) || found[0] || game;
+      } catch { /* open what we have */ }
+    }
+    if (game?.id) browsePage.openGame(game);
+  },
   openSettings: () => openSettingsPanel(),
 });
 // the channel info bar can start a stream, change page, and write the status line, app-shell concerns it can't import without a cycle, so they're handed to it here

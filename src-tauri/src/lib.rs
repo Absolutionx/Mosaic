@@ -325,6 +325,7 @@ pub fn run() {
             oauth::poll_device_login,
             oauth::cancel_device_login,
             chat::chat_wake,
+            app_extras::set_orientation,
             notify_prefs::get_notify_channels,
             notify_prefs::set_notify_channels,
             notify_prefs::get_notify_category_targets,

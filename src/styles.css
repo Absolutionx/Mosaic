@@ -10473,11 +10473,13 @@ body.fav-reordering, body.fav-reordering * { cursor: grabbing !important; user-s
 }
 .clip-preview:hover, .clip-preview.on { color: var(--m-text, #e7ebf2); border-color: var(--m-muted, #9aa5b4); }
 
+
 /* =================================================================
    Phones (Android). mobile.js sets body.mobile on Android, so none of this touches desktop.
-   Laid out after Frosty (a Twitch app for phones): tabs at the bottom (Following, Browse, Search), the page's
-   name large at the top, and while watching the video at the top with chat filling the rest, or side by side
-   when the phone is turned. Neutral, with white for what's selected.
+   Laid out after Frosty, a Twitch app for phones (its design, not its code): tabs at the bottom (Following,
+   Top, Search), the page's name large at the top, stream rows with the thumbnail on the left, and while
+   watching an overlay-only player at the top with chat filling the rest, or side by side when turned.
+   Neutral colors, with white for what's selected.
    ================================================================= */
 body.mobile {
   --m-tabs-h: 58px;
@@ -10487,7 +10489,7 @@ body.mobile {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
-/* desktop-only parts of the window */
+/* parts of the desktop window a phone doesn't use */
 body.mobile .resize-grip,
 body.mobile .win-controls,
 body.mobile .nav-tabs,
@@ -10505,7 +10507,16 @@ body.mobile #theater-drag-strip,
 body.mobile #channels-sidebar,
 body.mobile #home-feed,
 body.mobile #ambient-glow-wrap,
-body.mobile .login-label { display: none !important; }
+body.mobile .login-label,
+body.mobile .browse-page-title,
+/* the player: Frosty's overlay (.m-ov) replaces the desktop's controls, info and the bar under the video */
+body.mobile .controls-bar,
+body.mobile #stream-info-overlay,
+body.mobile #center-play-btn,
+body.mobile #channel-info-bar,
+/* chat: no header, and the mode/mod row folds into ⋯ as in Frosty */
+body.mobile .chat-header,
+body.mobile .chat-mode-row { display: none !important; }
 
 body.mobile #app {
   --header-height: calc(var(--m-head-h) + var(--m-safe-top));
@@ -10544,7 +10555,7 @@ body.mobile #login-btn .account-avatar { width: 32px; height: 32px; border-radiu
 body.mobile #video-column { grid-column: 1; grid-row: 2; min-height: 0; }
 body.mobile #chat-pane { display: none; }
 body.mobile #browse-page, body.mobile #vods-page { overflow-y: auto; -webkit-overflow-scrolling: touch; }
-/* Browse shows only on its tab; ours show on theirs */
+/* Top shows only on its tab; ours show on theirs */
 body.mobile:not([data-mtab="browse"]):not(.m-vods) #browse-page { display: none !important; }
 
 /* ---- our pages: Following and Search ---- */
@@ -10552,47 +10563,54 @@ body.mobile:not([data-mtab="browse"]):not(.m-vods) #browse-page { display: none 
 body.mobile[data-mtab="following"]:not(.m-watching):not(.m-vods) #m-following,
 body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
   display: block; height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch;
-  padding: 4px 0 16px; box-sizing: border-box;
+  padding: 0 0 16px; box-sizing: border-box;
 }
 .m-list { display: flex; flex-direction: column; }
 .m-row {
   display: flex; align-items: flex-start; gap: 12px; width: 100%;
   padding: 8px 16px; border: 0; background: none; text-align: left;
   font-family: inherit; color: var(--m-text, #e7ebf2);
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
 .m-row:active { background: var(--m-surface, #161b22); }
 .m-thumb {
   position: relative; flex: 0 0 42%; aspect-ratio: 16 / 9; overflow: hidden;
-  border-radius: 8px; background: var(--m-surface-2, #1c222c);
+  border-radius: 10px; background: var(--m-surface-2, #1c222c);
 }
 .m-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.m-viewers {
-  position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px;
-  background: rgba(0,0,0,.72); color: #fff; font-size: 11.5px; font-weight: 700;
+.m-uptime {
+  position: absolute; left: 3px; top: 3px; padding: 1px 5px; border-radius: 6px;
+  background: rgba(0,0,0,.55); border: .5px solid rgba(255,255,255,.08);
+  color: #fff; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
 }
-.m-viewers::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #eb0400; vertical-align: 1px; }
-.m-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-top: 1px; }
-.m-row-who { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.m-avatar { width: 22px; height: 22px; border-radius: 50%; flex: none; object-fit: cover; background: var(--m-surface-2, #1c222c); }
-.m-row-name { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.m-row-title {
-  font-size: 13.5px; line-height: 1.3; color: var(--m-text, #e7ebf2);
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+.m-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 1px; }
+.m-row-who { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.m-avatar { width: 20px; height: 20px; border-radius: 50%; flex: none; object-fit: cover; background: var(--m-surface-2, #1c222c); }
+.m-row-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-row-title, .m-row-game, .m-row-viewers {
+  font-size: 13.5px; line-height: 1.3; color: var(--m-text, #e7ebf2); opacity: .8;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.m-row-game { font-size: 13px; color: var(--m-muted, #9aa5b4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-row-viewers { font-variant-numeric: tabular-nums; }
 .m-row-offline { align-items: center; padding-top: 7px; padding-bottom: 7px; }
 .m-row-offline .m-avatar { width: 38px; height: 38px; }
 .m-row-offline .m-row-name { font-weight: 600; }
 .m-list-offline .m-row-name { color: var(--m-muted, #9aa5b4); }
 .m-live-dot { flex: none; padding: 0 5px; border-radius: 4px; background: #eb0400; color: #fff; font-size: 10.5px; font-weight: 800; line-height: 17px; }
 .m-section {
-  padding: 18px 16px 6px; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
-  color: var(--m-muted, #9aa5b4);
+  display: block; width: 100%; padding: 16px 16px 6px; border: 0; background: none; text-align: left;
+  font: 700 15px/1.2 inherit; font-family: inherit; color: var(--m-text, #e7ebf2);
 }
+.m-section-toggle, .m-section-row { display: flex; align-items: center; justify-content: space-between; }
+.m-section-toggle svg { transition: transform .15s ease; color: var(--m-muted, #9aa5b4); }
+.m-section-toggle.open svg { transform: rotate(180deg); }
+.m-text-btn { border: 0; background: none; padding: 4px 6px; font: 600 14px/1 inherit; font-family: inherit; color: var(--m-muted, #9aa5b4); }
+.m-row-history { align-items: center; color: var(--m-muted, #9aa5b4); }
+.m-row-history .m-row-name { font-weight: 500; color: var(--m-text, #e7ebf2); }
 .m-empty { padding: 48px 28px; text-align: center; }
 .m-empty-title { font-size: 19px; font-weight: 800; margin-bottom: 6px; color: var(--m-text, #e7ebf2); }
 .m-empty-text { font-size: 14px; line-height: 1.45; color: var(--m-muted, #9aa5b4); }
-.m-pad { padding: 16px; }
+.m-pad { padding: 8px 16px; }
 .m-loading { padding: 40px 16px; text-align: center; }
 .m-empty-btn {
   margin-top: 18px; padding: 11px 26px; border-radius: 999px; border: 0;
@@ -10620,8 +10638,25 @@ body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
 .m-cat img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: var(--m-surface-2, #1c222c); }
 .m-cat-name { font-size: 12.5px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
+/* ---- Top: the app's Browse page as Frosty's Streams / Categories ---- */
+body.mobile .browse-tabs-row { display: flex; gap: 0; padding: 0 16px; border-bottom: 1px solid rgba(255,255,255,.08); margin-bottom: 6px; }
+body.mobile .browse-tab {
+  flex: 1; padding: 12px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
+  font: 600 15px/1 inherit; font-family: inherit; color: var(--m-muted, #9aa5b4);
+}
+body.mobile .browse-tab:last-child { order: -1; } /* Streams first */
+body.mobile .browse-tab.is-active { color: #fff; border-bottom-color: #fff; }
+body.mobile .browse-controls-row, body.mobile .browse-pills-row, body.mobile .browse-sort-row { padding-left: 16px; padding-right: 16px; }
+/* stream cards become Frosty's rows: thumbnail left, words right */
+body.mobile #browse-page .home-grid { display: flex !important; flex-direction: column; gap: 0; padding: 0; }
+body.mobile #browse-page .home-grid-card { display: flex; align-items: flex-start; gap: 12px; padding: 8px 16px; border-radius: 0; background: none; box-shadow: none; }
+body.mobile #browse-page .home-grid-thumb-wrap { flex: 0 0 42%; border-radius: 10px; overflow: hidden; }
+body.mobile #browse-page .home-grid-meta { flex: 1; min-width: 0; padding: 0; }
+body.mobile #browse-page .home-grid-title { font-size: 13.5px; -webkit-line-clamp: 1; }
+body.mobile .browse-games-grid { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 12px 10px; padding: 4px 16px; }
+
 /* ---- the bottom tabs ---- */
-.m-tabs, .m-vback { display: none; }
+.m-tabs, .m-ov { display: none; }
 body.mobile .m-tabs {
   position: fixed; z-index: 70; left: 0; right: 0; bottom: 0;
   height: calc(var(--m-tabs-h) + var(--m-safe-bottom)); padding-bottom: var(--m-safe-bottom);
@@ -10632,16 +10667,41 @@ body.mobile .m-tabs {
 }
 .m-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  background: none; border: 0; color: var(--m-muted, #9aa5b4); opacity: .7;
+  background: none; border: 0; color: var(--m-muted, #9aa5b4); opacity: .6;
   font: 600 11.5px/1 "Segoe UI", system-ui, sans-serif;
 }
 .m-tab.on { color: #fff; opacity: 1; }
 .m-tab.on svg { filter: drop-shadow(0 0 6px rgba(255,255,255,.45)); }
 .m-tab.on[data-tab="following"] svg { fill: currentColor; }
 
-/* ---- a channel's Videos page (from the info bar under the video): the tabs stay, the title says Videos ---- */
+/* ---- bottom sheets: long-press choices, and the app's menus (quality, chat options, emotes) on a phone ---- */
+.m-sheet-shade { position: fixed; inset: 0; z-index: 13000; background: rgba(0,0,0,.5); display: flex; align-items: flex-end; }
+.m-sheet {
+  width: 100%; padding: 6px 0 calc(10px + env(safe-area-inset-bottom, 0px));
+  border-radius: 18px 18px 0 0; background: var(--m-surface, #161b22); color: var(--m-text, #e7ebf2);
+  animation: m-sheet-up .18s ease-out;
+}
+@keyframes m-sheet-up { from { transform: translateY(40px); opacity: 0; } }
+.m-sheet-grip { width: 36px; height: 4px; margin: 4px auto 10px; border-radius: 2px; background: rgba(255,255,255,.25); }
+.m-sheet-title { padding: 2px 20px 10px; font-size: 16px; font-weight: 700; }
+.m-sheet-item {
+  display: flex; align-items: center; gap: 16px; width: 100%; padding: 14px 20px; border: 0; background: none;
+  font: 500 15.5px/1.2 inherit; font-family: inherit; color: inherit; text-align: left;
+}
+.m-sheet-item:active { background: var(--m-surface-2, #1c222c); }
+body.mobile .quality-menu.open,
+body.mobile #chat-settings-menu,
+body.mobile .emote-picker-menu {
+  left: 0 !important; right: 0 !important; top: auto !important; bottom: 0 !important; transform: none !important;
+  width: auto !important; max-width: none !important; min-width: 0 !important;
+  border-radius: 18px 18px 0 0 !important; border-left: 0; border-right: 0; border-bottom: 0;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)) !important;
+  box-shadow: 0 -10px 40px rgba(0,0,0,.6) !important;
+}
+body.mobile .quality-menu.open { max-height: 70vh; overflow-y: auto; }
+body.mobile .emote-picker-menu { height: min(52vh, 420px) !important; }
 
-/* ---- watching, upright: no header, the video at the top, then the channel row, then chat ---- */
+/* ---- watching, upright: no header, the video at the top, chat filling the rest ---- */
 body.mobile.m-watching .m-tabs { display: none; }
 body.mobile.m-watching #app {
   padding-top: var(--m-safe-top);
@@ -10658,76 +10718,124 @@ body.mobile.m-watching #chat-pane {
   border-left: 0; padding-bottom: var(--m-safe-bottom);
   background: var(--m-bg);
 }
-/* who's streaming: one slim row under the video (Follow and Videos stay one tap away) */
-body.mobile.m-watching #channel-info-bar { padding: 8px 12px; gap: 10px; align-items: center; background: var(--m-bg); }
-body.mobile #channel-info-avatar { width: 32px; height: 32px; }
-body.mobile #channel-info-title,
-body.mobile #channel-info-tags,
-body.mobile #channel-info-subscribe-btn,
-body.mobile #channel-info-kick-alias-btn,
-body.mobile #channel-info-viewers { display: none !important; }
-body.mobile .channel-info-top-row { flex-wrap: nowrap; gap: 8px; min-width: 0; }
-body.mobile #channel-info-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 
-/* on the video, with the controls: the back arrow, then who's streaming, what and how many watch */
-body.mobile .m-vback {
-  display: flex; position: absolute; z-index: 5; top: 6px; left: 4px;
-  width: 44px; height: 44px; align-items: center; justify-content: center;
-  border: 0; background: none; color: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8));
-  opacity: 0; pointer-events: none; transition: opacity .2s ease;
+/* ---- the player's overlay (Frosty's): shown with the controls, over a fade top and bottom ---- */
+body.mobile .m-ov {
+  display: block; position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  opacity: 0; transition: opacity .2s ease;
 }
-body.mobile #video-frame.controls-visible .m-vback { opacity: 1; pointer-events: auto; }
-body.mobile #stream-info-overlay { top: 10px; left: 48px; max-width: calc(100% - 64px); gap: 9px; }
-body.mobile.no-stream-info-overlay #stream-info-overlay { display: flex !important; }
-body.mobile .stream-info-avatar { width: 30px; height: 30px; border-radius: 50%; }
-body.mobile .stream-info-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
-body.mobile .stream-info-meta { font-size: 12px; }
+body.mobile #video-frame.controls-visible .m-ov { opacity: 1; }
+body.mobile #video-frame.controls-visible .m-ov button { pointer-events: auto; }
+body.mobile .m-ov::before, body.mobile .m-ov::after { content: ""; position: absolute; left: 0; right: 0; pointer-events: none; }
+body.mobile .m-ov::before { top: 0; height: 100px; background: linear-gradient(rgba(0,0,0,.7), transparent); }
+body.mobile .m-ov::after { bottom: 0; height: 80px; background: linear-gradient(transparent, rgba(0,0,0,.7)); }
+.m-ov-top, .m-ov-bottom { position: absolute; left: 0; right: 0; z-index: 1; display: flex; align-items: center; color: #fff; }
+.m-ov-top { top: 0; padding: 4px 4px 0 0; align-items: flex-start; }
+.m-ov-bottom { bottom: 0; padding: 0 4px 2px 14px; justify-content: space-between; }
+.m-ov-btn {
+  width: 44px; height: 44px; flex: none; display: flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8));
+}
+.m-ov-info { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding-top: 6px; }
+.m-ov-avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; object-fit: cover; }
+.m-ov-words { min-width: 0; text-shadow: 0 1px 3px rgba(0,0,0,.85); }
+.m-ov-name { font-size: 14.5px; font-weight: 700; }
+.m-ov-title, .m-ov-game { font-size: 12.5px; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-ov-chat, .m-ov-full { display: none; }
+.m-ov-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1;
+  width: 64px; height: 64px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%; background: rgba(0,0,0,.35); color: #fff;
+}
+.m-ov-stats { display: flex; align-items: center; gap: 14px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0,0,0,.85); }
+.m-ov-uptime::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #eb0400; vertical-align: 1px; }
+.m-ov-viewers { display: inline-flex; align-items: center; gap: 5px; }
+.m-ov-right { display: flex; align-items: center; }
 
-/* full screen (the controls' full-screen button): chat steps aside */
-body.mobile.m-watching.m-full #chat-pane,
-body.mobile.m-watching.m-full #channel-info-bar { display: none !important; }
-body.mobile.m-watching.m-full #app { grid-template-rows: 0 minmax(0, 1fr) 0 !important; }
-body.mobile.m-watching.m-full #video-column { height: 100%; display: flex; align-items: center; }
+/* ---- chat's input row: emotes, the message, send, ⋯ ---- */
+body.mobile .chat-input-row { display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 10px; }
+body.mobile .chat-input-wrapper { flex: 1; min-width: 0; display: flex; align-items: center; border-radius: 22px; padding-left: 4px; }
+body.mobile #chat-emote-btn { order: -1; position: static; }
+body.mobile #chat-input { font-size: 16px; min-height: 40px; }
+body.mobile .m-send, body.mobile #chat-settings-btn {
+  flex: none; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%; background: none; color: var(--m-muted, #9aa5b4); position: static;
+}
+body.mobile .m-send { display: none; }
+body.mobile .chat-input-row.m-has-text .m-send { display: flex; color: #fff; }
 
 /* ---- watching, sideways: video and chat side by side ---- */
 @media (orientation: landscape) {
   body.mobile.m-watching #app {
     padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
-    grid-template-columns: minmax(0, 1fr) min(34vw, 380px) !important;
+    grid-template-columns: minmax(0, 1fr) min(30vw, 360px) !important;
     grid-template-rows: 0 minmax(0, 1fr) !important;
+    position: relative;
   }
   body.mobile.m-watching #video-column { grid-column: 1; grid-row: 2; height: 100%; display: flex; flex-direction: column; justify-content: center; }
   body.mobile.m-watching #video-frame { height: 100%; }
   body.mobile.m-watching #video-region { height: 100%; aspect-ratio: auto; }
-  body.mobile.m-watching #channel-info-bar { display: none !important; }
   body.mobile.m-watching #chat-pane { grid-column: 2; grid-row: 2; border-left: 1px solid rgba(255,255,255,.06); padding-bottom: 0; }
+  body.mobile .m-ov-full { display: flex; }
+  /* full screen: the video takes the screen; chat is hidden, or laid over the right side, see-through */
   body.mobile.m-watching.m-full #app { grid-template-columns: minmax(0, 1fr) !important; }
+  body.mobile.m-watching.m-full #chat-pane { display: none; }
+  body.mobile.m-full .m-ov-chat { display: flex; }
+  body.mobile.m-full.m-chatover .m-ov-chat svg { fill: currentColor; }
+  body.mobile.m-watching.m-full.m-chatover #chat-pane {
+    display: flex; position: absolute; z-index: 20; top: 0; bottom: 0; right: 0;
+    width: min(30vw, 340px); border-left: 0; background: rgba(0, 0, 0, .5);
+  }
+  body.mobile.m-watching.m-full.m-chatover #chat-pane > * { background: transparent; }
+  /* the overlay's controls stay in the space left of chat, as in Frosty */
+  body.mobile.m-watching.m-full.m-chatover .m-ov { right: min(30vw, 340px); }
 }
 
-/* touch: bigger hit areas on the player's controls */
-body.mobile .controls-bar button { min-width: 40px; min-height: 40px; }
-
-/* Settings on a phone: full screen, sections as a row of chips above the settings, controls under their text */
-body.mobile .settings-backdrop { padding: 0; align-items: stretch; z-index: 11800; }
+/* ---- Settings: Frosty's list (your account, Customize, Other); each section is its own page ---- */
+body.mobile .settings-backdrop { padding: 0; align-items: stretch; z-index: 11800; background: var(--m-bg); backdrop-filter: none; }
 body.mobile .settings-panel {
-  width: 100%; height: 100%;
-  grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
-  border: 0; border-radius: 0;
-  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
-  box-sizing: border-box;
+  width: 100%; height: 100%; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr);
+  border: 0; border-radius: 0; box-shadow: none; background: var(--m-bg);
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box;
 }
-body.mobile .settings-nav { gap: 8px; padding: 10px 12px 8px; border-right: 0; border-bottom: 1px solid var(--m-border-soft, #212832); }
-body.mobile .settings-nav-title { display: none; }
-body.mobile .settings-search { height: 40px; }
-body.mobile .settings-search input { font-size: 16px; }
-body.mobile .settings-nav-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 6px; scrollbar-width: none; }
-body.mobile .settings-nav-list::-webkit-scrollbar { display: none; }
-body.mobile .settings-nav-item { width: auto; flex: none; padding: 8px 12px; border-radius: 999px; background: var(--m-surface, #161b22); white-space: nowrap; }
-body.mobile .settings-nav-item.active { background: var(--m-surface-2, #1c222c); box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
-body.mobile .settings-main-head { padding: 12px 8px 8px 16px; }
-body.mobile .settings-close { width: 40px; height: 40px; }
-body.mobile .settings-rows { padding: 4px 16px 24px; }
+body.mobile .settings-panel:not(.m-sec) .settings-main { display: none; }
+body.mobile .settings-panel.m-sec .settings-nav { display: none; }
+body.mobile .settings-nav { gap: 0; padding: 0 0 20px; border: 0; background: none; overflow-y: auto; }
+body.mobile .settings-nav-title { display: flex; align-items: center; gap: 4px; padding: 8px 8px 10px; font-size: 22px; font-weight: 800; }
+body.mobile .settings-search { display: none; }
+body.mobile .settings-nav-list { flex-direction: column; overflow: visible; gap: 0; }
+body.mobile .settings-nav-group { padding: 18px 20px 6px; font-size: 13px; font-weight: 700; color: var(--m-muted, #9aa5b4); }
+body.mobile .settings-nav-item {
+  width: 100%; gap: 18px; padding: 15px 20px; border-radius: 0; background: none;
+  font-size: 16px; font-weight: 500; color: var(--m-text, #e7ebf2);
+}
+body.mobile .settings-nav-item.active { background: none; box-shadow: none; }
+body.mobile .settings-nav-item svg { width: 22px; height: 22px; color: var(--m-muted, #9aa5b4) !important; }
+body.mobile .settings-nav-item::after { content: "\203A"; margin-left: auto; font-size: 22px; color: var(--m-muted, #9aa5b4); }
+.settings-back, .settings-account-card { display: none; }
+body.mobile .settings-back {
+  display: flex; width: 44px; height: 44px; flex: none; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--m-text, #e7ebf2);
+}
+body.mobile .settings-back svg { width: 24px; height: 24px; }
+body.mobile .settings-account-card {
+  display: flex; align-items: center; gap: 14px; margin: 4px 16px 6px; padding: 14px; width: calc(100% - 32px);
+  border: 0; border-radius: 16px; background: var(--m-surface, #161b22); text-align: left; font-family: inherit; color: var(--m-text, #e7ebf2);
+}
+.settings-account-pic { width: 48px; height: 48px; flex: none; border-radius: 50%; overflow: hidden; background: var(--m-surface-2, #1c222c); }
+.settings-account-pic img { width: 100%; height: 100%; object-fit: cover; }
+.settings-account-name { font-size: 17px; font-weight: 700; }
+.settings-account-sub { margin-top: 2px; font-size: 13px; color: var(--m-muted, #9aa5b4); }
+body.mobile .settings-main-head { justify-content: flex-start; gap: 4px; padding: 8px 8px 8px 8px; border-bottom: 0; }
+body.mobile .settings-main-title { font-size: 22px; }
+body.mobile .settings-close { display: none; }
+body.mobile .settings-rows { padding: 0 20px 24px; }
 body.mobile .settings-row { flex-wrap: wrap; gap: 10px 14px; }
 body.mobile .settings-row-text { flex: 1 1 200px; }
 body.mobile .settings-row-control { max-width: 100%; overflow-x: auto; }
 body.mobile .settings-chat-preview { display: none; }
+/* only the category's words open it (as in Frosty), not the whole line: the rest of the row opens the stream */
+.m-row-game { width: fit-content; max-width: 100%; }
+/* Frosty's Top has no filter chips */
+body.mobile .browse-pills-row { display: none !important; }
+body.mobile #chat-send-btn { display: none !important; }

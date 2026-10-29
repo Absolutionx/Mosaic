@@ -121,3 +121,8 @@ windows-core = "0.61"
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security_Cryptography", "Win32_System_Com", "Win32_UI_Shell"] }
 # checking the streamlink installer's download against its published SHA-256 (deps_check.rs)
 sha2 = "0.10"
+
+# Android only: Java calls into the app's Android activity (app_extras.rs set_orientation, the player's
+# rotate button). Same version Tauri's webview (wry) uses, so it's one copy
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

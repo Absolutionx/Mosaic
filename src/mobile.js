@@ -1,29 +1,50 @@
-// Mosaic on Android phones. The layout follows Frosty (github.com/tommyxchow/frosty), a Twitch app for phones:
-// its design, not its code (Frosty is AGPL; nothing here is taken from it).
-//   bottom tabs        Following, Browse, Search
+// Mosaic on Android phones. The layout and behavior follow Frosty (github.com/tommyxchow/frosty), a Twitch app
+// for phones: its design, not its code (Frosty is AGPL; nothing here is taken from it).
+//   bottom tabs        Following, Top, Search
 //   header             the page's name, large, on the left; your profile picture on the right opens Settings
-//   Following          your live channels as rows (thumbnail, then channel, title, category, viewers), then offline ones
-//   Search             channels and categories as you type
-//   watching           no header: the video at the top, chat filling the rest; tap the video for the back arrow,
-//                      who's streaming and the controls. Sideways: video and chat side by side
+//   Following          Pinned (your favorites), All (live), Offline (folded away); long-press a stream to pin it
+//   stream rows        thumbnail with uptime; channel, title, category, "1,234 viewers"
+//   Top                the app's Browse page, as Streams and Categories
+//   Search             your recent searches; channels and categories as you type
+//   watching           no header and no bar under the video: everything is on the video, shown with a tap.
+//                      Top: back, who's streaming, quality. Middle: play/pause. Bottom: uptime and viewers;
+//                      refresh, rotate, and (sideways) full screen. Chat fills the rest, with one input row:
+//                      emotes, the message, send, and ⋯ for chat options
+//   sideways           video and chat side by side; full screen (or a double tap) gives the video the screen,
+//                      with a chat button to lay chat over it, see-through
 //   leaving a stream   stops it (back arrow, Android's back button or swipe)
-// Body classes the CSS keys off (styles.css, "Phones"): mobile, m-watching, m-vods, m-full, and data-mtab.
-// Desktop never runs any of this: isAndroid is false there and initMobile returns at once.
+// Body classes the CSS keys off (styles.css, "Phones"): mobile, m-watching, m-vods, m-full, m-chatover, and
+// data-mtab. Desktop never runs any of this: isAndroid is false there and initMobile returns at once.
 
 import { invoke } from "@tauri-apps/api/core";
-import { escapeCount, onEscapeChange, closeTopEscape } from "./escape-stack.js";
+import { escapeCount, onEscapeChange, closeTopEscape, pushEscape } from "./escape-stack.js";
 
 export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
 const ICONS = {
   following: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
-  browse: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  top: '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   back: '<path d="M15 18 9 12l6-6"/>',
   clear: '<path d="M18 6 6 18M6 6l12 12"/>',
+  rotate: '<rect x="2" y="7" width="20" height="10" rx="2"/><path d="M8 3.5a9 9 0 0 1 8.5 0"/><path d="m15 2 1.5 1.5L15 5"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  play: '<path d="M7 4.5v15l12-7.5z" fill="currentColor"/>',
+  pause: '<rect x="6" y="4.5" width="4" height="15" rx="1" fill="currentColor"/><rect x="14" y="4.5" width="4" height="15" rx="1" fill="currentColor"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+  full: '<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  fullExit: '<path d="M9 3v3a2 2 0 0 1-2 2H4M15 3v3a2 2 0 0 0 2 2h3M9 21v-3a2 2 0 0 0-2-2H4M15 21v-3a2 2 0 0 1 2-2h3"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  more: '<circle cx="5" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="19" cy="12" r="1.6" fill="currentColor"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>',
+  pin: '<path d="M12 17v5"/><path d="M9 3h6l-1 6 4 4H6l4-4z"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
 };
 const svg = (d, size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-const TITLES = { following: "Following", browse: "Browse", search: "Search" };
+const TITLES = { following: "Following", browse: "Top", search: "Search" };
+const TAB_ICON = { following: "following", browse: "top", search: "search" };
 
 let deps = {};
 let tabs = null;
@@ -32,12 +53,15 @@ let followingEl = null;
 let searchEl = null;
 
 // d: what the app shell provides (main.js)
-//   getFollowed()            the sidebar's followed channels: { login, name, avatar, live, viewers, game, title, thumbnail }
+//   getFollowed()            the sidebar's followed channels: { login, name, avatar, live, viewers, game, title, thumbnail, startedAt }
+//   isPinned(login)          is it one of your favorites (Following's Pinned)
+//   togglePin(login)         add it to, or take it out of, your favorites
 //   watch(login)             start watching a channel
 //   stop()                   stop the stream (the full stop the Stop button does)
+//   currentChannel()         the channel playing now ("" when none)
 //   searchChannels(q)        Twitch channels matching q: [{ login, name, live, game, title, avatar }]
 //   searchCategories(q)      Twitch categories matching q: [{ name, box_art_url }]
-//   openCategory(game)       Browse that category
+//   openCategory(game)       Top's page for that category
 //   openSettings()           the Settings page
 export function initMobile(d = {}) {
   if (!isAndroid) return;
@@ -47,7 +71,8 @@ export function initMobile(d = {}) {
   buildPages();
   buildTabBar();
   watchPlayer();
-  wireVideoOverlay();
+  buildPlayerOverlay();
+  buildChatRow();
   wireBack();
   wireWake();
   setTab("following");
@@ -59,6 +84,47 @@ function wireWake() {
   const wake = () => invoke("chat_wake").catch(() => {});
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") wake(); });
   window.addEventListener("online", wake);
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function iconBtn(cls, icon, label, onClick, size = 22) {
+  const b = el("button", cls);
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  b.title = label;
+  b.innerHTML = svg(ICONS[icon], size);
+  b.addEventListener("click", (e) => { e.stopPropagation(); onClick(e); });
+  return b;
+}
+
+// ---- a bottom sheet of choices (long-press on a stream, as in Frosty) ----
+function openSheet(title, items) {
+  const shade = el("div", "m-sheet-shade");
+  const sheet = el("div", "m-sheet");
+  sheet.setAttribute("role", "dialog");
+  sheet.appendChild(el("div", "m-sheet-grip"));
+  if (title) sheet.appendChild(el("div", "m-sheet-title", title));
+  let popEsc = null;
+  const close = () => { shade.remove(); popEsc?.(); popEsc = null; };
+  for (const it of items) {
+    const b = el("button", "m-sheet-item");
+    b.type = "button";
+    b.innerHTML = it.icon ? svg(ICONS[it.icon], 20) : "";
+    b.appendChild(el("span", null, it.label));
+    b.addEventListener("click", () => { close(); it.run(); });
+    sheet.appendChild(b);
+  }
+  shade.appendChild(sheet);
+  shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
+  document.body.appendChild(shade);
+  // Escape and Android's back button close it (escape-stack counts it as a dialog)
+  popEsc = pushEscape(close);
 }
 
 // ---- header: the page's name, and your picture for Settings ----
@@ -88,7 +154,7 @@ function buildTabBar() {
     b.type = "button";
     b.className = "m-tab";
     b.dataset.tab = id;
-    b.innerHTML = `${svg(ICONS[id])}<span>${TITLES[id]}</span>`;
+    b.innerHTML = `${svg(ICONS[TAB_ICON[id]])}<span>${TITLES[id]}</span>`;
     b.addEventListener("click", () => {
       // tapping the tab you're on takes you back to its top, as phone apps do
       if (document.body.dataset.mtab === id && !document.body.classList.contains("m-vods")) scrollTabTop(id);
@@ -100,31 +166,55 @@ function buildTabBar() {
 }
 
 function scrollTabTop(id) {
-  const el = id === "following" ? followingEl : id === "search" ? searchEl : document.getElementById("browse-page");
-  el?.scrollTo?.({ top: 0, behavior: "smooth" });
+  const target = id === "following" ? followingEl : id === "search" ? searchEl : document.getElementById("browse-page");
+  target?.scrollTo?.({ top: 0, behavior: "smooth" });
 }
 
 function setTab(id) {
   document.body.dataset.mtab = id;
   if (titleEl) titleEl.textContent = TITLES[id];
   tabs?.querySelectorAll(".m-tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === id));
-  // Browse is the app's own page; the others are ours, shown over the (hidden) Home page. switching also closes
-  // a channel's Videos page if one is open
+  // Top is the app's own Browse page; the others are ours, shown over the (hidden) Home page. switching also
+  // closes a channel's Videos page if one is open
   document.getElementById(id === "browse" ? "browse-tab" : "home-tab")?.click();
+  if (id === "browse") topTabs();
   if (id === "following") renderFollowing();
-  if (id === "search") setTimeout(() => searchEl?.querySelector("input")?.focus(), 50);
+  if (id === "search") showSearchStart();
+}
+
+// Top is the app's Browse page with Frosty's two tabs: Streams (Browse's Live, first and opened first) and
+// Categories. Browse redraws its tabs as you use it, so they're renamed each time they appear
+let topOpened = false;
+function topTabs() {
+  const page = document.getElementById("browse-page");
+  if (!page) return;
+  const fix = () => {
+    const tabsEls = [...page.querySelectorAll(".browse-tab")];
+    for (const t of tabsEls) {
+      if (/^Live/.test(t.textContent.trim())) t.textContent = "Streams";
+    }
+    // the first time Top opens, it opens on Streams, as in Frosty
+    const streams = tabsEls.find((t) => t.textContent.trim() === "Streams");
+    if (!topOpened && streams && document.body.dataset.mtab === "browse") {
+      topOpened = true;
+      if (!streams.classList.contains("is-active")) streams.click();
+    }
+  };
+  if (!page._mTabs) {
+    page._mTabs = true;
+    new MutationObserver(fix).observe(page, { childList: true, subtree: true });
+  }
+  fix();
 }
 
 // ---- Following and Search pages ----
 function buildPages() {
   const column = document.getElementById("video-column");
   if (!column) return;
-  followingEl = document.createElement("div");
+  followingEl = el("div", "m-page");
   followingEl.id = "m-following";
-  followingEl.className = "m-page";
-  searchEl = document.createElement("div");
+  searchEl = el("div", "m-page");
   searchEl.id = "m-search";
-  searchEl.className = "m-page";
   column.prepend(followingEl, searchEl);
   buildSearch();
   // the sidebar refreshes the followed list every so often (and when you log in or out); redraw with it
@@ -132,30 +222,44 @@ function buildPages() {
   let t = null;
   if (side) new MutationObserver(() => { clearTimeout(t); t = setTimeout(renderFollowing, 250); })
     .observe(side, { childList: true, subtree: true });
-  // logging in or out changes what Following can show
   const loginBtn = document.getElementById("login-btn");
   if (loginBtn) new MutationObserver(() => renderFollowing()).observe(loginBtn, { attributes: true, attributeFilter: ["class"] });
 }
 
-function el(tag, cls, text) {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text != null) e.textContent = text;
-  return e;
-}
-
-function fmtViewers(n) {
-  n = Number(n) || 0;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, "")}K`;
-  return String(n);
+function fmtUptime(startedAt) {
+  const t = Date.parse(startedAt || "");
+  if (!Number.isFinite(t)) return "";
+  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 }
 
 function thumbUrl(t) {
   return String(t || "").replace("{width}", "440").replace("{height}", "248");
 }
 
-// one live channel: thumbnail on the left with its viewer count, then who, what and the category
+// long-press a stream (as in Frosty): pin or unpin it
+function onLongPress(node, run) {
+  let timer = null;
+  let fired = false;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  node.addEventListener("pointerdown", () => { fired = false; cancel(); timer = setTimeout(() => { fired = true; run(); }, 500); });
+  for (const ev of ["pointerup", "pointerleave", "pointercancel", "pointermove"]) {
+    node.addEventListener(ev, (e) => { if (ev !== "pointermove" || Math.abs(e.movementY) > 4) cancel(); });
+  }
+  node.addEventListener("contextmenu", (e) => e.preventDefault());
+  // the click that ends a long press isn't a tap
+  node.addEventListener("click", (e) => { if (fired) { e.stopImmediatePropagation(); e.preventDefault(); fired = false; } }, true);
+}
+
+function streamActions(c) {
+  const pinned = !!deps.isPinned?.(c.login);
+  openSheet(c.name || c.login, [
+    { icon: "pin", label: pinned ? "Unpin" : "Pin", run: () => { deps.togglePin?.(c.login); renderFollowing(); } },
+  ]);
+}
+
+// one live channel, as Frosty draws it: the thumbnail with its uptime, then who, what, the category and viewers
 function liveRow(c) {
   const row = el("button", "m-row");
   row.type = "button";
@@ -167,7 +271,8 @@ function liveRow(c) {
     img.src = thumbUrl(c.thumbnail);
     thumb.appendChild(img);
   }
-  thumb.appendChild(el("span", "m-viewers", fmtViewers(c.viewers)));
+  const up = fmtUptime(c.startedAt);
+  if (up) thumb.appendChild(el("span", "m-uptime", up));
   const text = el("div", "m-row-text");
   const who = el("div", "m-row-who");
   if (c.avatar) {
@@ -178,9 +283,17 @@ function liveRow(c) {
     who.appendChild(a);
   }
   who.appendChild(el("span", "m-row-name", c.name || c.login));
-  text.append(who, el("div", "m-row-title", c.title || ""), el("div", "m-row-game", c.game || ""));
+  text.append(who, el("div", "m-row-title", c.title || ""));
+  if (c.game) {
+    const game = el("div", "m-row-game", c.game);
+    // the category opens its streams in Top, as in Frosty
+    game.addEventListener("click", (e) => { e.stopPropagation(); setTab("browse"); deps.openCategory?.({ name: c.game }); });
+    text.appendChild(game);
+  }
+  text.appendChild(el("div", "m-row-viewers", `${(Number(c.viewers) || 0).toLocaleString()} viewers`));
   row.append(thumb, text);
   row.addEventListener("click", () => deps.watch?.(c.login));
+  onLongPress(row, () => streamActions(c));
   return row;
 }
 
@@ -193,14 +306,19 @@ function offlineRow(c) {
   if (c.avatar) a.src = c.avatar;
   row.append(a, el("span", "m-row-name", c.name || c.login));
   row.addEventListener("click", () => deps.watch?.(c.login));
+  onLongPress(row, () => streamActions(c));
   return row;
 }
 
+let offlineOpen = false; // Frosty keeps Offline folded until you open it
 function renderFollowing() {
   if (!followingEl || document.body.dataset.mtab !== "following") return;
   const loggedIn = document.getElementById("login-btn")?.classList.contains("logged-in");
   const all = (deps.getFollowed?.() || []).filter((c) => c && c.login);
-  const live = all.filter((c) => c.live).sort((a, b) => (b.viewers || 0) - (a.viewers || 0));
+  const byViewers = (a, b) => (b.viewers || 0) - (a.viewers || 0);
+  const live = all.filter((c) => c.live).sort(byViewers);
+  const pinned = live.filter((c) => deps.isPinned?.(c.login));
+  const rest = live.filter((c) => !deps.isPinned?.(c.login));
   const offline = all.filter((c) => !c.live).sort((a, b) => String(a.name || a.login).localeCompare(String(b.name || b.login)));
   const scroll = followingEl.scrollTop;
   followingEl.replaceChildren();
@@ -218,25 +336,50 @@ function renderFollowing() {
     followingEl.appendChild(el("div", "m-empty-text m-loading", "Loading the channels you follow…"));
     return;
   }
+  const section = (label, list) => {
+    followingEl.appendChild(el("div", "m-section", label));
+    const box = el("div", "m-list");
+    list.forEach((c) => box.appendChild(liveRow(c)));
+    followingEl.appendChild(box);
+  };
+  if (pinned.length) section("Pinned", pinned);
+  if (rest.length) section(pinned.length ? "All" : "Live", rest);
   if (!live.length) followingEl.appendChild(el("div", "m-empty-text m-pad", "None of the channels you follow are live right now."));
-  const liveList = el("div", "m-list");
-  live.forEach((c) => liveList.appendChild(liveRow(c)));
-  followingEl.appendChild(liveList);
   if (offline.length) {
-    followingEl.appendChild(el("div", "m-section", `Offline · ${offline.length}`));
-    const list = el("div", "m-list m-list-offline");
-    offline.forEach((c) => list.appendChild(offlineRow(c)));
-    followingEl.appendChild(list);
+    const head = el("button", "m-section m-section-toggle" + (offlineOpen ? " open" : ""));
+    head.type = "button";
+    head.append(el("span", null, `Offline · ${offline.length}`));
+    head.insertAdjacentHTML("beforeend", svg(ICONS.chevron, 16));
+    head.addEventListener("click", () => { offlineOpen = !offlineOpen; renderFollowing(); });
+    followingEl.appendChild(head);
+    if (offlineOpen) {
+      const list = el("div", "m-list m-list-offline");
+      offline.forEach((c) => list.appendChild(offlineRow(c)));
+      followingEl.appendChild(list);
+    }
   }
   followingEl.scrollTop = scroll;
 }
+
+// ---- Search: recent searches until you type, then channels and categories ----
+const HISTORY_KEY = "mobileSearchHistory";
+function readHistory() {
+  try { const a = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); return Array.isArray(a) ? a.filter((x) => typeof x === "string") : []; } catch { return []; }
+}
+function saveHistory(term) {
+  const t = String(term || "").trim();
+  if (!t) return;
+  const list = [t, ...readHistory().filter((x) => x.toLowerCase() !== t.toLowerCase())].slice(0, 15);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+}
+let showSearchStart = () => {};
 
 function buildSearch() {
   const bar = el("div", "m-search-bar");
   bar.innerHTML = svg(ICONS.search, 18);
   const input = el("input", "m-search-input");
   input.type = "search";
-  input.placeholder = "Channels and categories";
+  input.placeholder = "Search";
   input.setAttribute("enterkeyhint", "search");
   input.autocomplete = "off";
   input.spellcheck = false;
@@ -248,69 +391,93 @@ function buildSearch() {
   const results = el("div", "m-search-results");
   searchEl.append(bar, results);
 
+  const renderHistory = () => {
+    const list = readHistory();
+    results.replaceChildren();
+    if (!list.length) { results.appendChild(el("div", "m-empty-text m-loading", "No recent searches")); return; }
+    const head = el("div", "m-section m-section-row");
+    head.appendChild(el("span", null, "History"));
+    const clr = el("button", "m-text-btn", "Clear");
+    clr.type = "button";
+    clr.addEventListener("click", () => { try { localStorage.removeItem(HISTORY_KEY); } catch { /* ignore */ } renderHistory(); });
+    head.appendChild(clr);
+    results.appendChild(head);
+    for (const term of list) {
+      const row = el("button", "m-row m-row-history");
+      row.type = "button";
+      row.innerHTML = svg(ICONS.history, 20);
+      row.appendChild(el("span", "m-row-name", term));
+      row.addEventListener("click", () => { input.value = term; run(); });
+      results.appendChild(row);
+    }
+  };
+
   let seq = 0;
   let timer = null;
   const run = async () => {
     const q = input.value.trim();
     const mine = ++seq;
     clear.style.visibility = q ? "visible" : "hidden";
-    if (!q) { results.replaceChildren(el("div", "m-empty-text m-pad", "Find a channel or a category.")); return; }
+    if (!q) { renderHistory(); return; }
     const [chans, cats] = await Promise.all([
       Promise.resolve(deps.searchChannels?.(q)).catch(() => null),
       Promise.resolve(deps.searchCategories?.(q)).catch(() => null),
     ]);
     if (mine !== seq) return; // a newer search started meanwhile
     results.replaceChildren();
-    // typing a channel's name and pressing search goes straight to it, as the desktop's Watch box does
-    const direct = el("button", "m-row m-row-direct");
-    direct.type = "button";
-    direct.append(el("span", "m-direct-label", "Watch"), el("span", "m-row-name", q));
-    direct.addEventListener("click", () => deps.watch?.(q.toLowerCase().replace(/^.*twitch\.tv\//, "").split(/[/?#]/)[0]));
-    results.appendChild(direct);
     const channels = Array.isArray(chans) ? chans : [];
-    if (channels.length) {
-      results.appendChild(el("div", "m-section", "Channels"));
-      const list = el("div", "m-list");
-      for (const c of channels) {
-        const row = el("button", "m-row m-row-offline");
-        row.type = "button";
-        const a = el("img", "m-avatar");
-        a.alt = "";
-        if (c.avatar) a.src = c.avatar;
-        const text = el("div", "m-row-text");
-        const name = el("div", "m-row-who");
-        name.appendChild(el("span", "m-row-name", c.name || c.login));
-        if (c.live) name.appendChild(el("span", "m-live-dot", "LIVE"));
-        text.append(name, el("div", "m-row-game", c.live ? (c.game || c.title || "") : "Offline"));
-        row.append(a, text);
-        row.addEventListener("click", () => deps.watch?.(c.login));
-        list.appendChild(row);
-      }
-      results.appendChild(list);
-    } else if (chans === null) {
-      results.appendChild(el("div", "m-empty-text m-pad", "Log in to search channels."));
+    results.appendChild(el("div", "m-section", "Channels"));
+    const list = el("div", "m-list");
+    for (const c of channels) {
+      const row = el("button", "m-row m-row-offline");
+      row.type = "button";
+      const a = el("img", "m-avatar");
+      a.alt = "";
+      if (c.avatar) a.src = c.avatar;
+      const text = el("div", "m-row-text");
+      const name = el("div", "m-row-who");
+      name.appendChild(el("span", "m-row-name", c.name || c.login));
+      if (c.live) name.appendChild(el("span", "m-live-dot", "LIVE"));
+      text.append(name, el("div", "m-row-game", c.live ? (c.game || c.title || "") : "Offline"));
+      row.append(a, text);
+      row.addEventListener("click", () => { saveHistory(q); deps.watch?.(c.login); });
+      list.appendChild(row);
     }
+    // no exact match among them: go to the channel by its name anyway, as Frosty offers
+    const login = q.toLowerCase().replace(/^.*twitch\.tv\//, "").split(/[/?#\s]/)[0];
+    if (/^[a-z0-9_]{2,25}$/.test(login) && !channels.some((c) => String(c.login).toLowerCase() === login)) {
+      const go = el("button", "m-row m-row-direct");
+      go.type = "button";
+      go.append(el("span", "m-direct-label", "Go to channel"), el("span", "m-row-name", login));
+      go.addEventListener("click", () => { saveHistory(q); deps.watch?.(login); });
+      list.appendChild(go);
+    }
+    if (!list.children.length) list.appendChild(el("div", "m-empty-text m-pad", chans === null ? "Log in to search channels." : "Unable to find channel"));
+    results.appendChild(list);
+    results.appendChild(el("div", "m-section", "Categories"));
     const categories = Array.isArray(cats) ? cats : [];
-    if (categories.length) {
-      results.appendChild(el("div", "m-section", "Categories"));
-      const grid = el("div", "m-cat-grid");
-      for (const g of categories.slice(0, 18)) {
-        const card = el("button", "m-cat");
-        card.type = "button";
-        const art = el("img");
-        art.alt = "";
-        art.loading = "lazy";
-        art.src = String(g.box_art_url || "").replace(/\d+x\d+(?=\.\w+$)/, "188x250").replace("{width}", "188").replace("{height}", "250");
-        card.append(art, el("span", "m-cat-name", g.name || ""));
-        card.addEventListener("click", () => { setTab("browse"); deps.openCategory?.(g); });
-        grid.appendChild(card);
-      }
-      results.appendChild(grid);
+    if (!categories.length) {
+      results.appendChild(el("div", "m-empty-text m-pad", cats === null ? "Unable to load categories" : "No matching categories"));
+      return;
     }
+    const grid = el("div", "m-cat-grid");
+    for (const g of categories.slice(0, 18)) {
+      const card = el("button", "m-cat");
+      card.type = "button";
+      const art = el("img");
+      art.alt = "";
+      art.loading = "lazy";
+      art.src = String(g.box_art_url || "").replace(/\d+x\d+(?=\.\w+$)/, "188x250").replace("{width}", "188").replace("{height}", "250");
+      card.append(art, el("span", "m-cat-name", g.name || ""));
+      card.addEventListener("click", () => { saveHistory(q); setTab("browse"); deps.openCategory?.(g); });
+      grid.appendChild(card);
+    }
+    results.appendChild(grid);
   };
   input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 300); });
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(timer); run(); input.blur(); } });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); clearTimeout(timer); saveHistory(input.value); run(); input.blur(); } });
   clear.addEventListener("click", () => { input.value = ""; run(); input.focus(); });
+  showSearchStart = () => { if (!input.value.trim()) renderHistory(); };
   run();
 }
 
@@ -327,7 +494,9 @@ function watchPlayer() {
     const wasVods = document.body.classList.contains("m-vods");
     document.body.classList.toggle("m-watching", watching);
     document.body.classList.toggle("m-vods", inVods && !watching);
-    if (!watching) document.body.classList.remove("m-full");
+    if (!watching) document.body.classList.remove("m-full", "m-chatover");
+    // a stream that ends any way (not just the back arrow) hands the screen's turning back to the phone
+    if (!watching && was) setOrientation("auto");
     if (titleEl) titleEl.textContent = inVods && !watching ? "Videos" : TITLES[document.body.dataset.mtab] || "";
     if (watching !== was || inVods !== wasVods) {
       if (!watching && was && document.body.dataset.mtab === "following") renderFollowing();
@@ -342,28 +511,151 @@ function watchPlayer() {
 
 // leaving a stream stops it, like Frosty: back to the tab you came from
 function leavePlayer() {
+  setOrientation("auto");
   if (deps.stop) deps.stop();
   else document.getElementById("home-tab")?.click();
   setTab(document.body.dataset.mtab || "following");
 }
 
-// on the video: a back arrow top-left (shown with the controls), and the full-screen button hides chat
-function wireVideoOverlay() {
-  const region = document.getElementById("video-region");
-  if (region && !region.querySelector(".m-vback")) {
-    const back = el("button", "m-vback");
-    back.type = "button";
-    back.setAttribute("aria-label", "Back");
-    back.innerHTML = svg(ICONS.back, 24);
-    back.addEventListener("click", (e) => { e.stopPropagation(); leavePlayer(); });
-    region.appendChild(back);
+// the screen's turning (app_extras.rs set_orientation): "landscape", "portrait", or "auto" (the phone decides)
+function setOrientation(mode) {
+  invoke("set_orientation", { mode }).catch(() => {});
+}
+const isLandscape = () => window.matchMedia("(orientation: landscape)").matches;
+
+function rotate() {
+  if (isLandscape()) {
+    document.body.classList.remove("m-full", "m-chatover");
+    setOrientation("portrait");
+  } else {
+    setOrientation("landscape");
   }
-  // the desktop full-screen button resizes the window; a phone has none, so it hides chat instead
-  document.getElementById("fullscreen-btn")?.addEventListener("click", (e) => {
+}
+
+function toggleFull() {
+  if (!isLandscape()) return; // upright, the video already spans the width
+  const on = document.body.classList.toggle("m-full");
+  if (!on) document.body.classList.remove("m-chatover");
+}
+
+// the player's overlay, laid out as Frosty's. Shown with the controls (a tap on the video); it drives the app's
+// own player (the hidden desktop controls) so playback works exactly as on desktop
+function buildPlayerOverlay() {
+  const region = document.getElementById("video-region");
+  const frame = document.getElementById("video-frame");
+  const video = document.getElementById("video-element");
+  if (!region || region.querySelector(".m-ov")) return;
+  const ov = el("div", "m-ov");
+
+  const top = el("div", "m-ov-top");
+  top.appendChild(iconBtn("m-ov-btn", "back", "Back", () => leavePlayer(), 24));
+  const info = el("div", "m-ov-info");
+  const avatar = el("img", "m-ov-avatar");
+  avatar.alt = "";
+  const words = el("div", "m-ov-words");
+  const name = el("div", "m-ov-name");
+  const title = el("div", "m-ov-title");
+  const game = el("div", "m-ov-game");
+  words.append(name, title, game);
+  info.append(avatar, words);
+  top.appendChild(info);
+  const chatBtn = iconBtn("m-ov-btn m-ov-chat", "chat", "Chat over the video", () => document.body.classList.toggle("m-chatover"));
+  // quality and the rest of the player's settings (the app's quality menu, as a sheet)
+  const qualityBtn = iconBtn("m-ov-btn", "gear", "Video settings", () => {
+    const btn = document.getElementById("settings-btn");
+    btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  top.append(chatBtn, qualityBtn);
+
+  const play = el("button", "m-ov-play");
+  play.type = "button";
+  play.setAttribute("aria-label", "Play or pause");
+  const drawPlay = () => { play.innerHTML = svg(video && !video.paused ? ICONS.pause : ICONS.play, 34); };
+  play.addEventListener("click", (e) => { e.stopPropagation(); document.getElementById("play-pause-btn")?.click(); setTimeout(drawPlay, 50); });
+  if (video) for (const ev of ["play", "pause", "playing"]) video.addEventListener(ev, drawPlay);
+  drawPlay();
+
+  const bottom = el("div", "m-ov-bottom");
+  const stats = el("div", "m-ov-stats");
+  const uptime = el("span", "m-ov-uptime");
+  const viewers = el("span", "m-ov-viewers");
+  stats.append(uptime, viewers);
+  const right = el("div", "m-ov-right");
+  const fullBtn = iconBtn("m-ov-btn m-ov-full", "full", "Full screen", () => toggleFull());
+  right.append(
+    iconBtn("m-ov-btn", "refresh", "Refresh", () => { const c = deps.currentChannel?.(); if (c) deps.watch?.(c); }),
+    iconBtn("m-ov-btn", "rotate", "Turn the screen", () => rotate()),
+    fullBtn,
+  );
+  bottom.append(stats, right);
+  ov.append(top, play, bottom);
+  region.appendChild(ov);
+
+  // who's streaming, from the same data the desktop overlay uses (channel-info-bar.js)
+  let startedAt = "";
+  window.addEventListener("mosaic:stream-info", (e) => {
+    const { channel, stream, avatarUrl } = e.detail || {};
+    name.textContent = stream?.user_name || channel || "";
+    title.textContent = stream?.title || "";
+    game.textContent = stream?.game_name || "";
+    if (avatarUrl) avatar.src = avatarUrl;
+    avatar.style.visibility = avatarUrl ? "visible" : "hidden";
+    startedAt = stream?.started_at || "";
+    viewers.innerHTML = typeof stream?.viewer_count === "number" ? svg(ICONS.eye, 15) : "";
+    if (typeof stream?.viewer_count === "number") viewers.append(stream.viewer_count.toLocaleString());
+    tick();
+  });
+  const tick = () => {
+    const up = fmtUptime(startedAt);
+    uptime.textContent = up;
+    uptime.style.display = up ? "" : "none";
+  };
+  setInterval(() => { if (frame?.classList.contains("controls-visible")) tick(); }, 1000);
+  const drawFull = () => { fullBtn.innerHTML = svg(document.body.classList.contains("m-full") ? ICONS.fullExit : ICONS.full, 22); };
+  new MutationObserver(drawFull).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+  // double tap: full screen, sideways only (upright, the video already spans the width)
+  region.addEventListener("dblclick", (e) => {
     e.stopImmediatePropagation();
     e.preventDefault();
-    document.body.classList.toggle("m-full");
+    if (isLandscape()) toggleFull();
   }, true);
+  // the desktop's theater and full-screen buttons (hidden here, but their shortcuts still reach them)
+  document.getElementById("theater-btn")?.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); rotate(); }, true);
+  document.getElementById("fullscreen-btn")?.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); toggleFull(); }, true);
+  // turned upright by hand: full screen is a sideways thing
+  window.matchMedia("(orientation: landscape)").addEventListener("change", (e) => {
+    if (!e.matches) document.body.classList.remove("m-full", "m-chatover");
+  });
+}
+
+// ---- chat's input row, as Frosty has it: emotes, the message, send, ⋯ ----
+function buildChatRow() {
+  const row = document.getElementById("chat-input-row");
+  const wrapper = document.getElementById("chat-input-wrapper");
+  const input = document.getElementById("chat-input");
+  const gear = document.getElementById("chat-settings-btn");
+  if (!row || !wrapper || !input || row.querySelector(".m-send")) return;
+  input.placeholder = "Chat";
+  input.setAttribute("enterkeyhint", "send");
+  // Frosty's send arrow, outside the box; it presses the app's own Send (hidden on a phone)
+  const send = iconBtn("m-send", "send", "Send", () => {
+    const own = document.getElementById("chat-send-btn");
+    if (own && !own.disabled) own.click();
+    else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  }, 20);
+  row.appendChild(send);
+  // the chat settings button becomes Frosty's ⋯ at the end of the row (its menu opens as a sheet)
+  if (gear) {
+    gear.innerHTML = svg(ICONS.more, 22);
+    gear.title = "More";
+    gear.setAttribute("aria-label", "More");
+    row.appendChild(gear);
+  }
+  const syncSend = () => row.classList.toggle("m-has-text", !!input.value.trim());
+  input.addEventListener("input", syncSend);
+  input.addEventListener("keyup", syncSend);
+  syncSend();
 }
 
 // ---- Android's back button ----
@@ -372,7 +664,7 @@ function wireVideoOverlay() {
 // closes that layer. When a layer closes some other way (its X, a tab), its step is taken back off too, so back
 // never needs pressing twice. The tabs themselves add no steps: back on a tab leaves Mosaic, as in other apps.
 // Dialogs that use the shared Escape stack are counted exactly; older ones are found by their overlay class.
-const DIALOGS = ".chat-filter-overlay, .whisper-overlay, .modmenu-overlay, .hidden-channels-overlay, .cp-backdrop";
+const DIALOGS = ".chat-filter-overlay, .whisper-overlay, .modmenu-overlay, .hidden-channels-overlay, .cp-backdrop, .m-sheet-shade";
 let steps = 0;      // history steps Mosaic has added
 let skipPops = 0;   // pops Mosaic caused itself (taking steps back off), to ignore
 const dialogOpen = () => escapeCount() > 0 || !!document.querySelector(DIALOGS);
