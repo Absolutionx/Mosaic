@@ -10903,3 +10903,53 @@ body.mobile .browse-game-viewers { font-size: 12.5px; }
   body.mobile.m-watching .m-send, body.mobile.m-watching #chat-settings-btn { width: 34px; height: 34px; }
   body.mobile.m-watching #chat-input { min-height: 34px; white-space: nowrap; }
 }
+
+/* the chat box: one slim line, as in Frosty */
+body.mobile .chat-input-row { padding: 4px 4px 4px 8px !important; gap: 2px !important; }
+body.mobile .chat-input-wrapper { min-height: 0 !important; height: auto; padding: 0 6px 0 2px !important; border-radius: 20px !important; }
+body.mobile #chat-input {
+  min-height: 0 !important; height: 36px; padding: 8px 4px !important; line-height: 20px !important;
+  font-size: 15px !important; box-sizing: border-box; resize: none;
+}
+body.mobile #chat-emote-btn { width: 32px; height: 32px; padding: 0; }
+/* channel points (the balance shows) and the mod tools, next to ⋯ */
+body.mobile .chat-input-row .m-chat-extra {
+  flex: none; height: 32px; padding: 0 8px; margin: 0; border-radius: 16px;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+body.mobile .chat-input-row #rewards-btn .rewards-balance { display: inline; font-size: 12px; }
+@media (orientation: landscape) {
+  body.mobile.m-watching #chat-input { height: 32px; padding: 6px 4px !important; font-size: 14px !important; }
+  body.mobile.m-watching .chat-input-row .m-chat-extra { padding: 0 6px; }
+}
+
+/* the player's Options sheet (Twitch's layout): rows with a title and a line under it, switches and choices */
+.m-options { max-height: 80vh; overflow-y: auto; }
+.m-opt-row {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 20px; border: 0; background: none;
+  text-align: left; font-family: inherit; color: var(--m-text, #e7ebf2); box-sizing: border-box;
+}
+button.m-opt-row:active { background: var(--m-surface-2, #1c222c); }
+.m-opt-stack { flex-direction: column; align-items: stretch; gap: 10px; }
+.m-opt-text { flex: 1; min-width: 0; }
+.m-opt-title { font-size: 16px; font-weight: 600; }
+.m-opt-sub { margin-top: 3px; font-size: 13.5px; line-height: 1.35; color: var(--m-muted, #9aa5b4); }
+.m-opt-section { padding: 18px 20px 4px; font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--m-muted, #9aa5b4); }
+.m-switch { flex: none; position: relative; width: 46px; height: 26px; border-radius: 13px; border: 0; background: var(--m-raised, #2b3340); }
+.m-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #c9ced6; transition: transform .15s ease; }
+.m-switch.on { background: #fff; }
+.m-switch.on::after { transform: translateX(20px); background: #0e1116; }
+.m-seg { display: flex; gap: 0; border: 1px solid var(--m-border, #29313d); border-radius: 10px; overflow: hidden; }
+.m-seg-btn { flex: 1; padding: 9px 4px; border: 0; background: none; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--m-muted, #9aa5b4); }
+.m-seg-btn + .m-seg-btn { border-left: 1px solid var(--m-border, #29313d); }
+.m-seg-btn.on { background: #fff; color: #0e1116; }
+
+/* floating (picture-in-picture): the window is a small video box, so only the video shows, filling it */
+body.mobile.m-pip #app { padding: 0 !important; grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: 0 minmax(0, 1fr) !important; }
+body.mobile.m-pip #chat-pane, body.mobile.m-pip .m-ov, body.mobile.m-pip .m-tabs { display: none !important; }
+body.mobile.m-pip #video-column, body.mobile.m-pip #video-frame, body.mobile.m-pip #video-region { width: 100% !important; height: 100% !important; aspect-ratio: auto !important; }
+
+/* the app is as tall as the space above the keyboard (mobile.js wireKeyboard), so typing in chat keeps the
+   video in view and shortens chat instead */
+body.mobile #app { height: var(--m-vh, 100dvh) !important; }
+html:has(body.mobile), body.mobile { overflow: hidden; height: 100%; }

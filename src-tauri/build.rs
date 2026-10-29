@@ -66,6 +66,7 @@ const APP_COMMANDS: &[&str] = &[
     "chat_wake",
     "set_orientation",
     "set_system_bars",
+    "set_pip",
     "get_notify_channels",
     "set_notify_channels",
     "get_notify_category_targets",

@@ -782,3 +782,56 @@ fn android_system_bars(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, 
     }
     Ok(())
 }
+
+// ---- picture-in-picture on a phone (mobile.js, the player's PiP button and Options) ----
+// Android's own floating player: the app's whole window shrinks to a small video window over other apps, and
+// mobile.js shows only the video while it's that small. `auto`: go into it by itself when you leave the app
+// while watching (Android 12+; older versions only go in with the button). `enter_now`: go into it now.
+// Needs android:supportsPictureInPicture on the activity, which the Android build adds (build-android.yml)
+#[tauri::command]
+pub fn set_pip(webview: tauri::Webview, auto: bool, enter_now: bool) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, _webview| {
+                    if android_pip(env, activity, auto, enter_now).is_err() {
+                        let _ = env.exception_clear();
+                    }
+                });
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (webview, auto, enter_now);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn android_pip(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, auto: bool, enter_now: bool) -> jni::errors::Result<()> {
+    use jni::objects::JValue;
+    let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+    if sdk < 26 {
+        return Ok(()); // picture-in-picture for apps arrived in Android 8
+    }
+    let builder = env.new_object("android/app/PictureInPictureParams$Builder", "()V", &[])?;
+    let ratio = env.new_object("android/util/Rational", "(II)V", &[JValue::Int(16), JValue::Int(9)])?;
+    env.call_method(&builder, "setAspectRatio",
+        "(Landroid/util/Rational;)Landroid/app/PictureInPictureParams$Builder;", &[JValue::Object(&ratio)])?;
+    if sdk >= 31 {
+        env.call_method(&builder, "setAutoEnterEnabled",
+            "(Z)Landroid/app/PictureInPictureParams$Builder;", &[JValue::Bool(auto as u8)])?;
+        env.call_method(&builder, "setSeamlessResizeEnabled",
+            "(Z)Landroid/app/PictureInPictureParams$Builder;", &[JValue::Bool(1)])?;
+    }
+    let params = env.call_method(&builder, "build", "()Landroid/app/PictureInPictureParams;", &[])?.l()?;
+    env.call_method(activity, "setPictureInPictureParams",
+        "(Landroid/app/PictureInPictureParams;)V", &[JValue::Object(&params)])?;
+    if enter_now {
+        env.call_method(activity, "enterPictureInPictureMode",
+            "(Landroid/app/PictureInPictureParams;)Z", &[JValue::Object(&params)])?;
+    }
+    Ok(())
+}

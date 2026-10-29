@@ -41,6 +41,8 @@ const ICONS = {
   pin: '<path d="M12 17v5"/><path d="M9 3h6l-1 6 4 4H6l4-4z"/>',
   history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/>',
   chevron: '<path d="m6 9 6 6 6-6"/>',
+  pip: '<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M9 2h6"/>',
 };
 const svg = (d, size = 22) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
 const TITLES = { following: "Following", browse: "Top", search: "Search" };
@@ -75,7 +77,24 @@ export function initMobile(d = {}) {
   buildChatRow();
   wireBack();
   wireWake();
+  wireKeyboard();
   setTab("following");
+}
+
+// the keyboard: the app fits the space above it (as Twitch's does), so the video stays at the top and chat gets
+// shorter, instead of the whole page sliding up out of sight. index.html asks the web view to resize for the
+// keyboard (interactive-widget=resizes-content); this covers web views that only shrink the visible area
+function wireKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const fit = () => {
+    document.documentElement.style.setProperty("--m-vh", `${Math.round(vv.height)}px`);
+    // the web view scrolls the page to show the chat box; the layout already puts it in view
+    if (window.scrollY || document.documentElement.scrollTop) window.scrollTo(0, 0);
+  };
+  vv.addEventListener("resize", fit);
+  vv.addEventListener("scroll", fit);
+  fit();
 }
 
 // a phone drops Mosaic's connections while it's in the background or switching networks. chat reconnects on
@@ -498,6 +517,7 @@ function watchPlayer() {
     // a stream that ends any way (not just the back arrow) hands the screen's turning back to the phone
     if (!watching && was) setOrientation("auto");
     syncSystemBars();
+    if (watching !== was) { syncAutoPip(); if (!watching) stopSleepTimer(); }
     if (titleEl) titleEl.textContent = inVods && !watching ? "Videos" : TITLES[document.body.dataset.mtab] || "";
     if (watching !== was || inVods !== wasVods) {
       if (!watching && was && document.body.dataset.mtab === "following") renderFollowing();
@@ -512,6 +532,7 @@ function watchPlayer() {
 
 // leaving a stream stops it, like Frosty: back to the tab you came from
 function leavePlayer() {
+  heldFor = null;
   setOrientation("auto");
   if (deps.stop) deps.stop();
   else document.getElementById("home-tab")?.click();
@@ -535,14 +556,26 @@ function syncSystemBars() {
 }
 window.matchMedia("(orientation: landscape)").addEventListener("change", () => syncSystemBars());
 
+// the rotate button turns the screen and holds it there only until the phone itself is turned that way (as
+// YouTube's and Twitch's apps do): from then on the phone's own turning takes over again, so turning it later
+// switches between upright and sideways as usual
+let heldFor = null; // "landscape" or "portrait" while the button's choice is held
 function rotate() {
-  if (isLandscape()) {
-    document.body.classList.remove("m-full", "m-chatover");
-    setOrientation("portrait");
-  } else {
-    setOrientation("landscape");
-  }
+  heldFor = isLandscape() ? "portrait" : "landscape";
+  if (heldFor === "portrait") document.body.classList.remove("m-full", "m-chatover");
+  setOrientation(heldFor);
 }
+// how the phone is actually held, from its motion sensor (the screen's orientation is held, so it can't say)
+window.addEventListener("deviceorientation", (e) => {
+  if (!heldFor || e.beta == null || e.gamma == null) return;
+  const beta = Math.abs(e.beta), gamma = Math.abs(e.gamma);
+  const heldSideways = gamma > 55 && beta < 40;
+  const heldUpright = beta > 55 && gamma < 35;
+  if ((heldFor === "landscape" && heldSideways) || (heldFor === "portrait" && heldUpright)) {
+    heldFor = null;
+    setOrientation("auto");
+  }
+});
 
 function toggleFull() {
   if (!isLandscape()) return; // upright, the video already spans the width
@@ -573,10 +606,8 @@ function buildPlayerOverlay() {
   top.appendChild(info);
   const chatBtn = iconBtn("m-ov-btn m-ov-chat", "chat", "Chat over the video", () => document.body.classList.toggle("m-chatover"));
   // quality and the rest of the player's settings (the app's quality menu, as a sheet)
-  const qualityBtn = iconBtn("m-ov-btn", "gear", "Video settings", () => {
-    const btn = document.getElementById("settings-btn");
-    btn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
+  // the player's Options (quality, and Twitch's external playback options), as a sheet
+  const qualityBtn = iconBtn("m-ov-btn", "gear", "Options", () => openPlayerOptions());
   top.append(chatBtn, qualityBtn);
 
   const play = el("button", "m-ov-play");
@@ -595,6 +626,7 @@ function buildPlayerOverlay() {
   const right = el("div", "m-ov-right");
   const fullBtn = iconBtn("m-ov-btn m-ov-full", "full", "Full screen", () => toggleFull());
   right.append(
+    iconBtn("m-ov-btn", "pip", "Picture-in-picture", () => enterPip()),
     iconBtn("m-ov-btn", "refresh", "Refresh", () => { const c = deps.currentChannel?.(); if (c) deps.watch?.(c); }),
     iconBtn("m-ov-btn", "rotate", "Turn the screen", () => rotate()),
     fullBtn,
@@ -635,10 +667,143 @@ function buildPlayerOverlay() {
   // the desktop's theater and full-screen buttons (hidden here, but their shortcuts still reach them)
   document.getElementById("theater-btn")?.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); rotate(); }, true);
   document.getElementById("fullscreen-btn")?.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); toggleFull(); }, true);
+  // the desktop's PiP opens its own window, which a phone can't: Android's floating player instead
+  document.getElementById("pip-btn")?.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); enterPip(); }, true);
   // turned upright by hand: full screen is a sideways thing
   window.matchMedia("(orientation: landscape)").addEventListener("change", (e) => {
     if (!e.matches) document.body.classList.remove("m-full", "m-chatover");
   });
+}
+
+// ---- Twitch's external playback options: background audio, picture-in-picture, sleep timer ----
+const PREFS_KEY = "mobilePlayback";
+function readPrefs() {
+  let p = {};
+  try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* defaults */ }
+  return { backgroundAudio: p.backgroundAudio === "always" ? "always" : "never", pip: p.pip !== false };
+}
+function savePrefs(p) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+}
+
+// picture-in-picture (app_extras.rs set_pip): with the option on, leaving the app while watching shrinks Mosaic
+// to a floating video (Android 12+); the player's PiP button goes into it on any Android 8+
+function syncAutoPip() {
+  const on = document.body.classList.contains("m-watching") && readPrefs().pip;
+  invoke("set_pip", { auto: on, enterNow: false }).catch(() => {});
+}
+function enterPip() {
+  invoke("set_pip", { auto: readPrefs().pip, enterNow: true }).catch(() => {});
+}
+// while floating, the window is a small 16:9 box: show only the video in it
+function syncPipLayout() {
+  const small = window.innerWidth < 520 && window.innerHeight < 360 && window.innerWidth > window.innerHeight;
+  document.body.classList.toggle("m-pip", small && document.body.classList.contains("m-watching"));
+}
+window.addEventListener("resize", syncPipLayout);
+
+// background audio: "Never" pauses the stream when you leave the app (unless it's floating), and plays it
+// again when you come back; "Always" lets it keep playing. Android can still stop an app in the background
+let pausedForBackground = false;
+document.addEventListener("visibilitychange", () => {
+  const video = document.getElementById("video-element");
+  if (!video || !document.body.classList.contains("m-watching")) return;
+  if (document.visibilityState === "hidden") {
+    if (readPrefs().backgroundAudio === "never" && !document.body.classList.contains("m-pip") && !video.paused) {
+      pausedForBackground = true;
+      document.getElementById("play-pause-btn")?.click();
+    }
+  } else if (pausedForBackground) {
+    pausedForBackground = false;
+    if (video.paused) document.getElementById("play-pause-btn")?.click();
+  }
+});
+
+// sleep timer: stops the stream after a while
+let sleepTimer = null;
+let sleepEndsAt = 0;
+function stopSleepTimer() {
+  clearTimeout(sleepTimer);
+  sleepTimer = null;
+  sleepEndsAt = 0;
+}
+function startSleepTimer(minutes) {
+  stopSleepTimer();
+  if (!minutes) return;
+  sleepEndsAt = Date.now() + minutes * 60000;
+  sleepTimer = setTimeout(() => { stopSleepTimer(); if (document.body.classList.contains("m-watching")) leavePlayer(); }, minutes * 60000);
+}
+function sleepLabel() {
+  if (!sleepEndsAt) return "Off";
+  const m = Math.max(1, Math.round((sleepEndsAt - Date.now()) / 60000));
+  return `Stops in ${m} min`;
+}
+
+// the Options sheet, laid out as Twitch's: Quality, then External playback options
+function openPlayerOptions() {
+  const prefs = readPrefs();
+  const shade = el("div", "m-sheet-shade");
+  const sheet = el("div", "m-sheet m-options");
+  sheet.setAttribute("role", "dialog");
+  sheet.appendChild(el("div", "m-sheet-grip"));
+  sheet.appendChild(el("div", "m-sheet-title", "Options"));
+  let popEsc = null;
+  const close = () => { shade.remove(); popEsc?.(); popEsc = null; };
+
+  const row = (title, sub, control, onClick) => {
+    const r = el(onClick ? "button" : "div", "m-opt-row");
+    if (onClick) { r.type = "button"; r.addEventListener("click", onClick); }
+    const text = el("div", "m-opt-text");
+    text.appendChild(el("div", "m-opt-title", title));
+    if (sub) text.appendChild(el("div", "m-opt-sub", sub));
+    r.appendChild(text);
+    if (control) r.appendChild(control);
+    sheet.appendChild(r);
+    return r;
+  };
+  const toggle = (on, change) => {
+    const t = el("button", "m-switch" + (on ? " on" : ""));
+    t.type = "button";
+    t.setAttribute("role", "switch");
+    t.setAttribute("aria-checked", String(on));
+    t.addEventListener("click", (e) => { e.stopPropagation(); const now = !t.classList.contains("on"); t.classList.toggle("on", now); t.setAttribute("aria-checked", String(now)); change(now); });
+    return t;
+  };
+  const segmented = (options, value, change) => {
+    const g = el("div", "m-seg");
+    for (const [v, label] of options) {
+      const b = el("button", "m-seg-btn" + (v === value ? " on" : ""), label);
+      b.type = "button";
+      b.addEventListener("click", () => { g.querySelectorAll(".m-seg-btn").forEach((x) => x.classList.toggle("on", x === b)); change(v); });
+      g.appendChild(b);
+    }
+    return g;
+  };
+
+  const q = String(deps.currentQuality?.() || "");
+  const qualityLabel = !q ? "" : q === "best" ? "Source" : q === "worst" ? "Lowest" : q === "auto" ? "Auto"
+    : q === "audio_only" ? "Audio only" : q.split(",")[0];
+  row("Quality", qualityLabel || "Choose the stream's quality", null, () => {
+    close();
+    setTimeout(() => document.getElementById("settings-btn")?.dispatchEvent(new MouseEvent("click", { bubbles: true })), 0);
+  });
+  sheet.appendChild(el("div", "m-opt-section", "External playback options"));
+  const bg = row("Background audio", "Keep the stream's sound playing when you leave Mosaic.", null);
+  bg.classList.add("m-opt-stack");
+  bg.appendChild(segmented([["never", "Never"], ["always", "Always"]], prefs.backgroundAudio, (v) => { prefs.backgroundAudio = v; savePrefs(prefs); }));
+  row("Picture-in-Picture", "Automatically continue playing in a floating window when you leave the app.",
+    toggle(prefs.pip, (on) => { prefs.pip = on; savePrefs(prefs); syncAutoPip(); }));
+  const sleep = row("Sleep timer", "Stop the stream after a while.", null);
+  sleep.classList.add("m-opt-stack");
+  const sleepNow = el("div", "m-opt-sub m-sleep-now", sleepLabel());
+  sleep.querySelector(".m-opt-text").appendChild(sleepNow);
+  sleep.appendChild(segmented([[0, "Off"], [15, "15m"], [30, "30m"], [60, "1h"], [120, "2h"]], sleepEndsAt ? -1 : 0,
+    (v) => { startSleepTimer(v); sleepNow.textContent = sleepLabel(); }));
+
+  shade.appendChild(sheet);
+  shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
+  document.body.appendChild(shade);
+  popEsc = pushEscape(close);
 }
 
 // ---- chat's input row, as Frosty has it: emotes, the message, send, ⋯ ----
@@ -663,6 +828,12 @@ function buildChatRow() {
     else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   }, 20);
   row.appendChild(send);
+  // channel points (and, on channels you moderate, the mod tools) from the row Frosty doesn't have: here,
+  // next to ⋯, with their own buttons and panels as on desktop
+  for (const id of ["modmenu-btn", "modlog-btn", "rewards-btn"]) {
+    const b = document.getElementById(id);
+    if (b) { b.classList.add("m-chat-extra"); row.appendChild(b); }
+  }
   // the chat settings button becomes Frosty's ⋯ at the end of the row (its menu opens as a sheet)
   if (gear) {
     gear.innerHTML = svg(ICONS.more, 22);

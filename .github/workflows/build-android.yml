@@ -81,6 +81,14 @@ jobs:
           sed -i 's/manifestPlaceholders\["usesCleartextTraffic"\] = "false"/manifestPlaceholders["usesCleartextTraffic"] = "true"/' "$f"
           if grep -q 'usesCleartextTraffic"\] = "false"' "$f"; then echo "::error::couldn't switch usesCleartextTraffic on"; exit 1; fi
 
+      # Picture-in-picture (the player's PiP button, and going into it by itself when you leave the app while
+      # watching) needs the activity to say it supports it; Tauri's template doesn't
+      - name: Allow picture-in-picture
+        run: |
+          f=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          sed -i 's/<activity /<activity android:supportsPictureInPicture="true" android:resizeableActivity="true" /' "$f"
+          grep -n 'supportsPictureInPicture' "$f" || { echo "::error::couldn't mark the activity as picture-in-picture capable"; exit 1; }
+
       - name: Build the APK
         run: npx tauri android build --apk --target aarch64
         env:

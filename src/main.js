@@ -613,6 +613,7 @@ initMobile({
   watch: (login) => paletteWatch(login),
   stop: () => stopPlayback({ returnToPage: true }),
   currentChannel: () => (session.playing ? String(playbackControls.currentChannel || "") : ""),
+  currentQuality: () => playbackControls.currentQuality || "",
   searchChannels: (q) => invoke("search_twitch_channels", { query: q }),
   searchCategories: async (q) => JSON.parse(await feedInvoke("search_categories", { query: q })),
   // a stream row knows its category only by name: find its id first
@@ -728,6 +729,8 @@ async function cursorIsOnOtherMonitor() {
 }
 
 appWindow.onFocusChanged(async ({ payload: focused }) => {
+  // a phone has its own picture-in-picture (mobile.js); the desktop's pop-out window can't open there
+  if (isAndroid) return;
   if (localStorage.getItem("autoPipOnBlur") !== "1") return;
 
   if (!focused) {

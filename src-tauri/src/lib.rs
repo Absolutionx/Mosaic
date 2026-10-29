@@ -327,6 +327,7 @@ pub fn run() {
             chat::chat_wake,
             app_extras::set_orientation,
             app_extras::set_system_bars,
+            app_extras::set_pip,
             notify_prefs::get_notify_channels,
             notify_prefs::set_notify_channels,
             notify_prefs::get_notify_category_targets,

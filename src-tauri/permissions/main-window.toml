@@ -66,6 +66,7 @@ permissions = [
   "allow-chat-wake",
   "allow-set-orientation",
   "allow-set-system-bars",
+  "allow-set-pip",
   "allow-get-notify-channels",
   "allow-set-notify-channels",
   "allow-get-notify-category-targets",
