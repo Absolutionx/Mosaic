@@ -315,6 +315,16 @@ export class TwitchChat {
       this.jumpToLatestBtn.addEventListener("click", () => this.scrollToLatest());
     }
     if (this.container) {
+      // a size change without a scroll event (lines rewrapping to a new width) mustn't leave chat short of the
+      // newest message either; this also records the size the scroll handler above compares against
+      if (typeof ResizeObserver !== "undefined") {
+        new ResizeObserver(() => {
+          const size = `${this.container.clientWidth}x${this.container.clientHeight}`;
+          if (size === this._chatSize) return;
+          this._chatSize = size;
+          if (!this.userScrolledUp && this.container.clientHeight > 0) this._pinToNewest();
+        }).observe(this.container);
+      }
       this.container.addEventListener("scroll", () => {
         // ignore scroll events from our own scrollTop writes (auto-scroll, Jump to latest, connect() reset),
         // checked FIRST. this used to run after dismissing the link preview, so every auto-scroll canceled an
@@ -323,6 +333,15 @@ export class TwitchChat {
           this._suppressNextScrollEvent = false;
           return;
         }
+        // the chat area changed size (a phone turned, the window resized): the browser moved the scroll position to
+        // fit, which isn't the user scrolling up. if chat was following the newest message, it keeps following
+        const size = `${this.container.clientWidth}x${this.container.clientHeight}`;
+        if (this._chatSize && size !== this._chatSize) {
+          this._chatSize = size;
+          if (!this.userScrolledUp) this._pinToNewest();
+          return;
+        }
+        this._chatSize = size;
         // a scroll reaching here is a genuine user scroll, trimAndScroll() suppresses its own scrollTop compensation explicitly
         this._cancelLinkPreview();
         // same as the link preview above, the card is anchored to a username span whose position goes stale once the list scrolls
@@ -669,6 +688,16 @@ export class TwitchChat {
       this.jumpToLatestCount.textContent =
         this.newMessageCountWhileScrolledUp > 0 ? `${this.newMessageCountWhileScrolledUp} new -` : "";
     }
+  }
+
+  // back to the newest message without it counting as the user scrolling. the "ignore the next scroll" flag is
+  // only set when the position really moves: a write that changes nothing fires no scroll event, and the flag
+  // would then swallow the user's next real scroll
+  _pinToNewest() {
+    const target = this.container.scrollHeight - this.container.clientHeight;
+    if (Math.abs(this.container.scrollTop - target) <= 1) return;
+    this._suppressNextScrollEvent = true;
+    this.container.scrollTop = this.container.scrollHeight;
   }
 
   scrollToLatest() {

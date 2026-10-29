@@ -9559,7 +9559,7 @@ body.chat-overlay-active #chat-overlay { display: flex; }
 .nerd-stats-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-weight: 700; font-family: inherit; }
 .nerd-stats-head span { flex: 1; }
 .nerd-stats-btn {
-  padding: 1px 7px; border-radius: 5px; cursor: pointer; font: 11px/1.5 inherit;
+  padding: 1px 7px; border-radius: 5px; cursor: pointer; font-size: 11px; line-height: 1.5;
   color: var(--m-text); background: color-mix(in srgb, var(--m-text) 8%, transparent); border: 1px solid color-mix(in srgb, var(--m-text) 14%, transparent);
 }
 .nerd-stats-btn:hover { background: color-mix(in srgb, var(--m-text) 16%, transparent); }
@@ -10599,12 +10599,12 @@ body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
 .m-live-dot { flex: none; padding: 0 5px; border-radius: 4px; background: #eb0400; color: #fff; font-size: 10.5px; font-weight: 800; line-height: 17px; }
 .m-section {
   display: block; width: 100%; padding: 16px 16px 6px; border: 0; background: none; text-align: left;
-  font: 700 15px/1.2 inherit; font-family: inherit; color: var(--m-text, #e7ebf2);
+  font-weight: 700; font-size: 15px; line-height: 1.2; font-family: inherit; color: var(--m-text, #e7ebf2);
 }
 .m-section-toggle, .m-section-row { display: flex; align-items: center; justify-content: space-between; }
 .m-section-toggle svg { transition: transform .15s ease; color: var(--m-muted, #9aa5b4); }
 .m-section-toggle.open svg { transform: rotate(180deg); }
-.m-text-btn { border: 0; background: none; padding: 4px 6px; font: 600 14px/1 inherit; font-family: inherit; color: var(--m-muted, #9aa5b4); }
+.m-text-btn { border: 0; background: none; padding: 4px 6px; font-weight: 600; font-size: 14px; line-height: 1; font-family: inherit; color: var(--m-muted, #9aa5b4); }
 .m-row-history { align-items: center; color: var(--m-muted, #9aa5b4); }
 .m-row-history .m-row-name { font-weight: 500; color: var(--m-text, #e7ebf2); }
 .m-empty { padding: 48px 28px; text-align: center; }
@@ -10614,7 +10614,7 @@ body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
 .m-loading { padding: 40px 16px; text-align: center; }
 .m-empty-btn {
   margin-top: 18px; padding: 11px 26px; border-radius: 999px; border: 0;
-  background: #fff; color: #0e1116; font: 700 15px/1 inherit; font-family: inherit;
+  background: #fff; color: #0e1116; font-weight: 700; font-size: 15px; line-height: 1; font-family: inherit;
 }
 
 /* Search */
@@ -10627,7 +10627,7 @@ body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
 .m-search-bar:focus-within { border-color: rgba(255,255,255,.55); box-shadow: 0 0 0 3px rgba(255,255,255,.08); }
 .m-search-input {
   flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none;
-  font: 16px/1 inherit; font-family: inherit; color: var(--m-text, #e7ebf2);
+  font-size: 16px; line-height: 1; font-family: inherit; color: var(--m-text, #e7ebf2);
 }
 .m-search-input::-webkit-search-cancel-button { display: none; }
 .m-search-clear { width: 36px; height: 36px; border: 0; background: none; color: var(--m-muted, #9aa5b4); visibility: hidden; display: flex; align-items: center; justify-content: center; }
@@ -10642,7 +10642,7 @@ body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
 body.mobile .browse-tabs-row { display: flex; gap: 0; padding: 0 16px; border-bottom: 1px solid rgba(255,255,255,.08); margin-bottom: 6px; }
 body.mobile .browse-tab {
   flex: 1; padding: 12px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none;
-  font: 600 15px/1 inherit; font-family: inherit; color: var(--m-muted, #9aa5b4);
+  font-weight: 600; font-size: 15px; line-height: 1; font-family: inherit; color: var(--m-muted, #9aa5b4);
 }
 body.mobile .browse-tab:last-child { order: -1; } /* Streams first */
 body.mobile .browse-tab.is-active { color: #fff; border-bottom-color: #fff; }
@@ -10686,7 +10686,7 @@ body.mobile .m-tabs {
 .m-sheet-title { padding: 2px 20px 10px; font-size: 16px; font-weight: 700; }
 .m-sheet-item {
   display: flex; align-items: center; gap: 16px; width: 100%; padding: 14px 20px; border: 0; background: none;
-  font: 500 15.5px/1.2 inherit; font-family: inherit; color: inherit; text-align: left;
+  font-weight: 500; font-size: 15.5px; line-height: 1.2; font-family: inherit; color: inherit; text-align: left;
 }
 .m-sheet-item:active { background: var(--m-surface-2, #1c222c); }
 body.mobile .quality-menu.open,
@@ -10839,3 +10839,19 @@ body.mobile .settings-chat-preview { display: none; }
 /* Frosty's Top has no filter chips */
 body.mobile .browse-pills-row { display: none !important; }
 body.mobile #chat-send-btn { display: none !important; }
+/* stream rows: a fixed two-column grid and a 16:9 thumbnail made with padding, which holds on every webview
+   (Android's stretched the thumbnails and pushed rows sideways with the flex + aspect-ratio version) */
+body.mobile .m-row:not(.m-row-offline):not(.m-row-history):not(.m-row-direct) {
+  display: grid; grid-template-columns: 42% minmax(0, 1fr); column-gap: 12px; align-items: start;
+  box-sizing: border-box; max-width: 100%; overflow: hidden;
+}
+body.mobile .m-thumb { width: 100%; height: 0; padding-top: 56.25%; aspect-ratio: auto; flex: none; }
+body.mobile .m-thumb img { position: absolute; inset: 0; }
+body.mobile .m-row-text { min-width: 0; overflow: hidden; }
+body.mobile .m-page, body.mobile #browse-page { overflow-x: hidden; }
+body.mobile .m-row-offline, body.mobile .m-row-history, body.mobile .m-row-direct { box-sizing: border-box; max-width: 100%; overflow: hidden; }
+/* Frosty's message box has no badges in it (they made it scroll and cut off the text) */
+body.mobile #chat-input-badge { display: none !important; }
+body.mobile .chat-input-wrapper { align-items: center; }
+body.mobile #chat-emote-btn { align-self: center; }
+body.mobile .m-thumb img { top: 0; left: 0; width: 100%; height: 100%; }
