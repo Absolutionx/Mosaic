@@ -698,9 +698,40 @@ function enterPip() {
 // while floating, the window is a small 16:9 box: show only the video in it
 function syncPipLayout() {
   const small = window.innerWidth < 520 && window.innerHeight < 360 && window.innerWidth > window.innerHeight;
-  document.body.classList.toggle("m-pip", small && document.body.classList.contains("m-watching"));
+  const floating = small && document.body.classList.contains("m-watching");
+  const was = document.body.classList.contains("m-pip");
+  document.body.classList.toggle("m-pip", floating);
+  if (floating && !was) keepPlayingWhileFloating();
 }
 window.addEventListener("resize", syncPipLayout);
+
+// Android pauses the app (and its web view, which stops the video) when it starts floating. While it floats,
+// app_extras.rs pip_keep_playing resumes the web view, and the stream plays on; once a second it also asks
+// whether the app is still floating, since closing the floating window tells the page nothing. Closed, the
+// stream pauses unless Background audio is Always
+let floatLoop = null;
+function keepPlayingWhileFloating() {
+  clearInterval(floatLoop);
+  const tick = async () => {
+    let floating = false;
+    try { floating = await invoke("pip_keep_playing"); } catch { /* not Android */ }
+    const video = document.getElementById("video-element");
+    if (floating) {
+      if (video?.paused) document.getElementById("play-pause-btn")?.click();
+      return;
+    }
+    // back to full size (the resize handler takes it from here) or the floating window was closed
+    clearInterval(floatLoop);
+    floatLoop = null;
+    const small = window.innerWidth < 520 && window.innerHeight < 360;
+    if (small && readPrefs().backgroundAudio === "never" && video && !video.paused) {
+      pausedForBackground = true;
+      document.getElementById("play-pause-btn")?.click();
+    }
+  };
+  tick();
+  floatLoop = setInterval(tick, 1000);
+}
 
 // background audio: "Never" pauses the stream when you leave the app (unless it's floating), and plays it
 // again when you come back; "Always" lets it keep playing. Android can still stop an app in the background
@@ -709,11 +740,16 @@ document.addEventListener("visibilitychange", () => {
   const video = document.getElementById("video-element");
   if (!video || !document.body.classList.contains("m-watching")) return;
   if (document.visibilityState === "hidden") {
-    if (readPrefs().backgroundAudio === "never" && !document.body.classList.contains("m-pip") && !video.paused) {
-      pausedForBackground = true;
-      document.getElementById("play-pause-btn")?.click();
-    }
-  } else if (pausedForBackground) {
+    if (readPrefs().backgroundAudio !== "never") return;
+    // going into the floating window hides the page for a moment before it shrinks: wait to see which it is
+    setTimeout(() => {
+      if (document.visibilityState !== "hidden" || document.body.classList.contains("m-pip")) return;
+      if (!video.paused) {
+        pausedForBackground = true;
+        document.getElementById("play-pause-btn")?.click();
+      }
+    }, 800);
+  } else if (pausedForBackground && !document.body.classList.contains("m-pip")) {
     pausedForBackground = false;
     if (video.paused) document.getElementById("play-pause-btn")?.click();
   }

@@ -835,3 +835,48 @@ fn android_pip(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, auto: bo
     }
     Ok(())
 }
+
+// Android pauses an app that goes into picture-in-picture, and Tauri's Android activity pauses the web view
+// with it (WryActivity.onPause -> WebView.onPause), which stops the video in the floating window. While the
+// app is floating, this resumes the web view so the stream keeps playing; and it says whether the app is still
+// floating (closing the floating window doesn't otherwise tell the page)
+#[tauri::command]
+pub async fn pip_keep_playing(webview: tauri::Webview) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, webview| {
+                    let floating = android_keep_playing(env, activity, webview).unwrap_or(false);
+                    if !floating {
+                        let _ = env.exception_clear();
+                    }
+                    let _ = tx.send(floating);
+                });
+            })
+            .map_err(|e| e.to_string())?;
+        // the call runs on Android's main thread; wait for it off this one
+        return tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(false))
+            .await
+            .map_err(|e| e.to_string());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = webview;
+        Ok(false)
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_keep_playing(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, webview: &jni::objects::JObject) -> jni::errors::Result<bool> {
+    let sdk = env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()?;
+    if sdk < 24 {
+        return Ok(false);
+    }
+    let floating = env.call_method(activity, "isInPictureInPictureMode", "()Z", &[])?.z()?;
+    if floating {
+        env.call_method(webview, "onResume", "()V", &[])?;
+    }
+    Ok(floating)
+}
