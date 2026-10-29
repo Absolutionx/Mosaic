@@ -86,8 +86,10 @@ jobs:
       - name: Allow picture-in-picture
         run: |
           f=src-tauri/gen/android/app/src/main/AndroidManifest.xml
-          sed -i 's/<activity /<activity android:supportsPictureInPicture="true" android:resizeableActivity="true" /' "$f"
-          grep -n 'supportsPictureInPicture' "$f" || { echo "::error::couldn't mark the activity as picture-in-picture capable"; exit 1; }
+          # Tauri's template may put "<activity" on a line of its own, so match it before a space or the line's end
+          sed -i -E 's/<activity([[:space:]]|$)/<activity android:supportsPictureInPicture="true"\1/' "$f"
+          grep -n -A3 '<activity' "$f"
+          grep -q 'supportsPictureInPicture' "$f" || { echo "::error::couldn't mark the activity as picture-in-picture capable"; exit 1; }
 
       - name: Build the APK
         run: npx tauri android build --apk --target aarch64
