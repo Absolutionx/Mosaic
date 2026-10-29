@@ -10953,3 +10953,15 @@ body.mobile.m-pip #video-column, body.mobile.m-pip #video-frame, body.mobile.m-p
    video in view and shortens chat instead */
 body.mobile #app { height: var(--m-vh, 100dvh) !important; }
 html:has(body.mobile), body.mobile { overflow: hidden; height: 100%; }
+
+/* chat's row: the mod and channel points buttons together */
+body.mobile .m-chat-extras { display: flex; align-items: center; gap: 4px; flex: none; }
+body.mobile .chat-input-wrapper { flex: 1 1 0; min-width: 0; }
+/* sideways, chat is narrow: those buttons get their own line above the box, which then has the full width */
+@media (orientation: landscape) {
+  body.mobile.m-watching .chat-input-row { flex-wrap: wrap; row-gap: 4px; }
+  body.mobile.m-watching .m-chat-extras { order: -1; flex: 0 0 100%; justify-content: flex-end; }
+  body.mobile.m-watching .m-chat-extras:not(:has(.m-chat-extra:not([style*="display: none"]))) { display: none; }
+  body.mobile.m-watching .chat-input-row .m-chat-extra { height: 28px; padding: 0 8px; }
+  body.mobile.m-watching #chat-emote-btn { width: 28px; height: 28px; }
+}

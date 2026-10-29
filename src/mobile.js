@@ -866,10 +866,13 @@ function buildChatRow() {
   row.appendChild(send);
   // channel points (and, on channels you moderate, the mod tools) from the row Frosty doesn't have: here,
   // next to ⋯, with their own buttons and panels as on desktop
+  // grouped, so sideways (narrow chat) they can sit on their own line above the box (styles.css)
+  const extras = el("div", "m-chat-extras");
   for (const id of ["modmenu-btn", "modlog-btn", "rewards-btn"]) {
     const b = document.getElementById(id);
-    if (b) { b.classList.add("m-chat-extra"); row.appendChild(b); }
+    if (b) { b.classList.add("m-chat-extra"); extras.appendChild(b); }
   }
+  row.appendChild(extras);
   // the chat settings button becomes Frosty's ⋯ at the end of the row (its menu opens as a sheet)
   if (gear) {
     gear.innerHTML = svg(ICONS.more, 22);

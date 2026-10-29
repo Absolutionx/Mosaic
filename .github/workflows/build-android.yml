@@ -91,6 +91,52 @@ jobs:
           grep -n -A3 '<activity' "$f"
           grep -q 'supportsPictureInPicture' "$f" || { echo "::error::couldn't mark the activity as picture-in-picture capable"; exit 1; }
 
+      # Android pauses the app when it goes into picture-in-picture, and Tauri's activity pauses the web view with
+      # it, which freezes the floating window on its last frame. MainActivity resumes the web view while floating
+      - name: Keep the stream playing in picture-in-picture
+        run: |
+          f=$(find src-tauri/gen/android/app/src/main -name MainActivity.kt | head -n1)
+          if [ -z "$f" ]; then echo "::error::MainActivity.kt not found"; exit 1; fi
+          echo "Before:"; cat "$f"
+          python3 - "$f" <<'PY'
+          import re, sys
+          path = sys.argv[1]
+          src = open(path).read()
+          methods = """
+              // the web view the app lives in (found in the window, not a private field of Tauri's activity)
+              private fun mosaicWebView(v: android.view.View?): android.webkit.WebView? {
+                  if (v is android.webkit.WebView) return v
+                  if (v is android.view.ViewGroup) {
+                      for (i in 0 until v.childCount) {
+                          mosaicWebView(v.getChildAt(i))?.let { return it }
+                      }
+                  }
+                  return null
+              }
+
+              // floating (picture-in-picture): Android pauses the activity and Tauri pauses the web view with it,
+              // which freezes the video. Resume it so the stream keeps playing in the floating window
+              override fun onPause() {
+                  super.onPause()
+                  if (isInPictureInPictureMode) mosaicWebView(window.decorView)?.onResume()
+              }
+
+              override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+                  super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+                  if (isInPictureInPictureMode) mosaicWebView(window.decorView)?.onResume()
+              }
+          """
+          m = re.search(r"(class MainActivity\s*:\s*TauriActivity\(\))(\s*\{)?", src)
+          if not m:
+              sys.exit("couldn't find class MainActivity : TauriActivity()")
+          if m.group(2):
+              src = src[:m.end()] + methods + src[m.end():]
+          else:
+              src = src[:m.end(1)] + " {" + methods + "}" + src[m.end(1):]
+          open(path, "w").write(src)
+          PY
+          echo "After:"; cat "$f"
+
       - name: Build the APK
         run: npx tauri android build --apk --target aarch64
         env:
