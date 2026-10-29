@@ -601,7 +601,16 @@ const sidebar = new ChannelsSidebar({
   },
 });
 sidebar.init(loginSettled);
-initMobile(); // phone layout on Android (mobile.js); nothing on desktop
+// phone layout on Android (mobile.js); nothing on desktop
+initMobile({
+  getFollowed: () => sidebar.followed || [],
+  watch: (login) => paletteWatch(login),
+  stop: () => stopPlayback({ returnToPage: true }),
+  searchChannels: (q) => invoke("search_twitch_channels", { query: q }),
+  searchCategories: async (q) => JSON.parse(await feedInvoke("search_categories", { query: q })),
+  openCategory: (game) => browsePage.openGame(game),
+  openSettings: () => openSettingsPanel(),
+});
 // the channel info bar can start a stream, change page, and write the status line, app-shell concerns it can't import without a cycle, so they're handed to it here
 // streamlink (what blocks Twitch ads) and a newer version of it, checked daily. Android plays without it (direct_hls.rs)
 if (!isAndroid) { checkStreamDeps(); initStreamlinkUpdate(); }
@@ -1183,6 +1192,8 @@ initLunaPanel({
 configureSettingsPanel({
   exportBackup, importBackup, checkForUpdatesNow,
   openWatchStats: () => showWatchStats(),
+  openDrops: () => openDropsHub(),
+  signOut: () => auth.logout(),
   openWhatsNew: () => openWhatsNew(),
   openChatFilter: () => openChatFilterModal(() => chat.reloadChatFilter()),
   openHiddenChannels: () => openHiddenChannelsModal(),

@@ -231,11 +231,23 @@ const SECTIONS = [
 // developer tools, pop-out windows, MultiView) are left out
 if (isAndroid) {
   const desktopOnly = new Set(["autostart", "startMinimized", "closeToTray", "autoUpdateCheck", "devTools", "videoContextMenu",
-    "autoPipOnBlur", "lurkMode", "autoTheater", "homeLauncher", "multiviewLayout", "multiviewSound"]);
+    "autoPipOnBlur", "lurkMode", "autoTheater", "miniPlayer", "streamInfoOverlay"]);
   const desktopTitles = new Set(["Check for updates", "MultiView"]);
+  // the phone has no sidebar or Home page (mobile.js): Following and the tabs take their place
+  for (let i = SECTIONS.length - 1; i >= 0; i--) if (SECTIONS[i].id === "sidebar" || SECTIONS[i].id === "home") SECTIONS.splice(i, 1);
   for (const sec of SECTIONS) {
     sec.rows = sec.rows.filter((r) => !desktopOnly.has(r.id) && !desktopTitles.has(r.title));
-    if (sec.id === "home") sec.label = "Home";
+    // the header's Drops button and account menu live here on a phone
+    if (sec.id === "twitch") {
+      sec.rows.unshift(
+        { kind: "action", title: "Drops", desc: "Your drops in progress, what you can claim, and the campaigns running now.", button: "Open",
+          run: () => { closeSettingsPanel(); actions.openDrops?.(); } },
+      );
+      sec.rows.push(
+        { kind: "action", title: "Sign out", desc: "Log Mosaic out of your Twitch account on this phone.", button: "Sign out", danger: true, confirm: true,
+          run: () => { closeSettingsPanel(); actions.signOut?.(); } },
+      );
+    }
   }
 }
 

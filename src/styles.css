@@ -10475,30 +10475,40 @@ body.fav-reordering, body.fav-reordering * { cursor: grabbing !important; user-s
 
 /* =================================================================
    Phones (Android). mobile.js sets body.mobile on Android, so none of this touches desktop.
-   One column: a compact header, the page, and a bottom tab bar. While watching (body.m-watching) the
-   video sits under the header at 16:9 with chat filling the rest; turned sideways, the video takes the
-   whole screen. The desktop sidebar becomes the Following drawer (body.m-drawer).
+   Laid out after Frosty (a Twitch app for phones): tabs at the bottom (Following, Browse, Search), the page's
+   name large at the top, and while watching the video at the top with chat filling the rest, or side by side
+   when the phone is turned. Neutral, with white for what's selected.
    ================================================================= */
 body.mobile {
-  --m-tabs-h: 56px;
+  --m-tabs-h: 58px;
+  --m-head-h: 56px;
   --m-safe-top: env(safe-area-inset-top, 0px);
   --m-safe-bottom: env(safe-area-inset-bottom, 0px);
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
+/* desktop-only parts of the window */
 body.mobile .resize-grip,
 body.mobile .win-controls,
 body.mobile .nav-tabs,
+body.mobile .mosaic-brand,
+body.mobile .channel-launcher,
+body.mobile #platform-toggle,
+body.mobile #kick-login-btn,
 body.mobile #luna-btn,
 body.mobile #settings-open-btn,
 body.mobile #status-text,
 body.mobile #update-btn,
 body.mobile #sl-update-btn,
+body.mobile #back-to-stream-btn,
 body.mobile #theater-drag-strip,
-body.mobile .mosaic-brand-name { display: none !important; }
+body.mobile #channels-sidebar,
+body.mobile #home-feed,
+body.mobile #ambient-glow-wrap,
+body.mobile .login-label { display: none !important; }
 
 body.mobile #app {
-  --header-height: calc(52px + var(--m-safe-top));
+  --header-height: calc(var(--m-head-h) + var(--m-safe-top));
   width: 100vw;
   height: 100dvh;
   grid-template-columns: minmax(0, 1fr) !important;
@@ -10507,115 +10517,191 @@ body.mobile #app {
   box-sizing: border-box;
   transition: none;
 }
-body.mobile #app > header {
-  padding: var(--m-safe-top) 10px 0 10px;
-  gap: 8px;
-  min-width: 0;
-}
-body.mobile #app > header { display: flex; align-items: center; overflow: visible; }
-body.mobile .mosaic-brand { width: auto; min-width: 0; flex: none; }
-body.mobile #watch-btn { display: none; } /* the keyboard's Go key watches (Enter) */
-body.mobile .channel-launcher input { padding-right: 10px !important; }
-body.mobile .header-actions { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; position: static; }
-body.mobile .titlebar-action-buttons { position: static; display: flex; align-items: center; gap: 0; flex: none; transform: none; }
-body.mobile .channel-launcher { position: relative; left: auto; right: auto; top: auto; transform: none; flex: 1; min-width: 0; width: auto; }
-body.mobile #back-to-stream-btn { flex: none; }
-body.mobile .channel-launcher input { min-width: 0; width: 100%; font-size: 16px; /* no zoom-on-focus */ }
-body.mobile .login-label { display: none; }
-body.mobile #login-btn { padding: 8px; }
-body.mobile .platform-label { display: none; }
-body.mobile #back-to-stream-label { display: none; }
-body.mobile .header-whispers-btn, body.mobile .win-btn { min-width: 40px; min-height: 40px; }
-
-/* watching turns on theater mode, which hides the header on desktop; a phone keeps it (the back arrow lives there) */
+/* watching turns on theater mode, which hides the header on desktop; on a phone the layout below decides */
 body.mobile #app.header-collapsed > header { visibility: visible; overflow: visible; }
-body.mobile #theater-drag-strip { display: none !important; }
-body.mobile #video-column { grid-column: 1; grid-row: 2; }
+
+/* ---- header: the page's name, then the bell, whispers and your picture ---- */
+body.mobile #app > header {
+  display: flex; align-items: center; gap: 6px;
+  padding: var(--m-safe-top) 8px 0 18px;
+  min-width: 0; overflow: visible;
+  background: var(--m-bg);
+  border-bottom: 0;
+}
+.m-title { display: none; }
+body.mobile .m-title {
+  display: block; flex: 1; min-width: 0; margin: 0;
+  font-size: 26px; font-weight: 800; letter-spacing: -.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--m-text, #e7ebf2);
+}
+body.mobile .header-actions { display: flex; align-items: center; gap: 2px; flex: none; position: static; }
+body.mobile .titlebar-action-buttons { position: static; display: flex; align-items: center; gap: 2px; transform: none; }
+body.mobile .header-whispers-btn { min-width: 42px; min-height: 42px; background: none; border: 0; }
+body.mobile #login-btn { width: 40px; height: 40px; padding: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+body.mobile #login-btn .account-avatar { width: 32px; height: 32px; border-radius: 50%; }
+
+body.mobile #video-column { grid-column: 1; grid-row: 2; min-height: 0; }
 body.mobile #chat-pane { display: none; }
+body.mobile #browse-page, body.mobile #vods-page { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+/* Browse shows only on its tab; ours show on theirs */
+body.mobile:not([data-mtab="browse"]):not(.m-vods) #browse-page { display: none !important; }
 
-/* ---- the Following drawer ---- */
-body.mobile #channels-sidebar {
-  position: fixed;
-  z-index: 60;
-  top: 0; bottom: 0; left: 0;
-  width: min(84vw, 320px);
-  padding-top: var(--m-safe-top);
-  padding-bottom: calc(var(--m-tabs-h) + var(--m-safe-bottom));
-  box-sizing: border-box;
-  background: var(--m-bg);
-  border-right: 1px solid rgba(255,255,255,.08);
-  transform: translateX(-102%);
-  transition: transform .22s ease;
-  visibility: hidden;
+/* ---- our pages: Following and Search ---- */
+.m-page { display: none; }
+body.mobile[data-mtab="following"]:not(.m-watching):not(.m-vods) #m-following,
+body.mobile[data-mtab="search"]:not(.m-watching):not(.m-vods) #m-search {
+  display: block; height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 4px 0 16px; box-sizing: border-box;
 }
-body.mobile.m-drawer #channels-sidebar { transform: none; visibility: visible; }
-body.mobile .m-shade {
-  position: fixed; inset: 0; z-index: 55;
-  background: rgba(0,0,0,.5);
-  opacity: 0; pointer-events: none;
-  transition: opacity .2s ease;
+.m-list { display: flex; flex-direction: column; }
+.m-row {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%;
+  padding: 8px 16px; border: 0; background: none; text-align: left;
+  font-family: inherit; color: var(--m-text, #e7ebf2);
 }
-body.mobile.m-drawer .m-shade { opacity: 1; pointer-events: auto; }
-body:not(.mobile) .m-shade, body:not(.mobile) .m-tabs, body:not(.mobile) .m-back { display: none !important; }
+.m-row:active { background: var(--m-surface, #161b22); }
+.m-thumb {
+  position: relative; flex: 0 0 42%; aspect-ratio: 16 / 9; overflow: hidden;
+  border-radius: 8px; background: var(--m-surface-2, #1c222c);
+}
+.m-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.m-viewers {
+  position: absolute; left: 6px; bottom: 6px; padding: 1px 6px; border-radius: 4px;
+  background: rgba(0,0,0,.72); color: #fff; font-size: 11.5px; font-weight: 700;
+}
+.m-viewers::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #eb0400; vertical-align: 1px; }
+.m-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding-top: 1px; }
+.m-row-who { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.m-avatar { width: 22px; height: 22px; border-radius: 50%; flex: none; object-fit: cover; background: var(--m-surface-2, #1c222c); }
+.m-row-name { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-row-title {
+  font-size: 13.5px; line-height: 1.3; color: var(--m-text, #e7ebf2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.m-row-game { font-size: 13px; color: var(--m-muted, #9aa5b4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.m-row-offline { align-items: center; padding-top: 7px; padding-bottom: 7px; }
+.m-row-offline .m-avatar { width: 38px; height: 38px; }
+.m-row-offline .m-row-name { font-weight: 600; }
+.m-list-offline .m-row-name { color: var(--m-muted, #9aa5b4); }
+.m-live-dot { flex: none; padding: 0 5px; border-radius: 4px; background: #eb0400; color: #fff; font-size: 10.5px; font-weight: 800; line-height: 17px; }
+.m-section {
+  padding: 18px 16px 6px; font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--m-muted, #9aa5b4);
+}
+.m-empty { padding: 48px 28px; text-align: center; }
+.m-empty-title { font-size: 19px; font-weight: 800; margin-bottom: 6px; color: var(--m-text, #e7ebf2); }
+.m-empty-text { font-size: 14px; line-height: 1.45; color: var(--m-muted, #9aa5b4); }
+.m-pad { padding: 16px; }
+.m-loading { padding: 40px 16px; text-align: center; }
+.m-empty-btn {
+  margin-top: 18px; padding: 11px 26px; border-radius: 999px; border: 0;
+  background: #fff; color: #0e1116; font: 700 15px/1 inherit; font-family: inherit;
+}
 
-/* ---- the bottom tab bar ---- */
-.m-tabs {
-  position: fixed; z-index: 70;
-  left: 0; right: 0; bottom: 0;
-  height: calc(var(--m-tabs-h) + var(--m-safe-bottom));
-  padding-bottom: var(--m-safe-bottom);
-  box-sizing: border-box;
-  display: grid; grid-template-columns: repeat(5, 1fr);
-  background: var(--m-bg);
-  border-top: 1px solid rgba(255,255,255,.08);
+/* Search */
+.m-search-bar {
+  position: sticky; top: 0; z-index: 2; margin: 4px 16px 6px;
+  display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 6px 0 14px;
+  border-radius: 12px; background: var(--m-surface, #161b22); border: 1px solid var(--m-border, #29313d);
+  color: var(--m-muted, #9aa5b4);
+}
+.m-search-bar:focus-within { border-color: rgba(255,255,255,.55); box-shadow: 0 0 0 3px rgba(255,255,255,.08); }
+.m-search-input {
+  flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none;
+  font: 16px/1 inherit; font-family: inherit; color: var(--m-text, #e7ebf2);
+}
+.m-search-input::-webkit-search-cancel-button { display: none; }
+.m-search-clear { width: 36px; height: 36px; border: 0; background: none; color: var(--m-muted, #9aa5b4); visibility: hidden; display: flex; align-items: center; justify-content: center; }
+.m-row-direct { align-items: center; }
+.m-direct-label { flex: none; padding: 3px 9px; border-radius: 6px; background: var(--m-surface-2, #1c222c); font-size: 12px; font-weight: 700; color: var(--m-muted, #9aa5b4); }
+.m-cat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; padding: 4px 16px; }
+.m-cat { display: flex; flex-direction: column; gap: 6px; padding: 0; border: 0; background: none; text-align: left; font-family: inherit; color: var(--m-text, #e7ebf2); }
+.m-cat img { width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 8px; background: var(--m-surface-2, #1c222c); }
+.m-cat-name { font-size: 12.5px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---- the bottom tabs ---- */
+.m-tabs, .m-vback { display: none; }
+body.mobile .m-tabs {
+  position: fixed; z-index: 70; left: 0; right: 0; bottom: 0;
+  height: calc(var(--m-tabs-h) + var(--m-safe-bottom)); padding-bottom: var(--m-safe-bottom);
+  box-sizing: border-box; display: grid; grid-template-columns: repeat(3, 1fr);
+  background: color-mix(in srgb, var(--m-bg, #0e1116) 92%, transparent);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(255,255,255,.06);
 }
 .m-tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  background: none; border: 0; color: var(--m-text-dim, #9aa0aa);
-  font: 500 11px/1 "Segoe UI", system-ui, sans-serif;
+  background: none; border: 0; color: var(--m-muted, #9aa5b4); opacity: .7;
+  font: 600 11.5px/1 "Segoe UI", system-ui, sans-serif;
 }
-.m-tab.on { color: #fff; }
+.m-tab.on { color: #fff; opacity: 1; }
 .m-tab.on svg { filter: drop-shadow(0 0 6px rgba(255,255,255,.45)); }
-.m-back svg { width: 22px !important; height: 22px !important; }
-.m-back {
-  display: none; flex: none;
-  width: 40px; height: 40px; margin-left: -6px;
-  align-items: center; justify-content: center;
-  background: none; border: 0; color: var(--m-text, #fff);
-}
+.m-tab.on[data-tab="following"] svg { fill: currentColor; }
 
-/* ---- watching, upright: header / 16:9 video + info bar / chat ---- */
+/* ---- a channel's Videos page (from the info bar under the video): the tabs stay, the title says Videos ---- */
+
+/* ---- watching, upright: no header, the video at the top, then the channel row, then chat ---- */
 body.mobile.m-watching .m-tabs { display: none; }
-body.mobile.m-watching .m-back { display: flex; }
-body.mobile.m-watching .mosaic-brand { display: none; }
 body.mobile.m-watching #app {
+  padding-top: var(--m-safe-top);
   padding-bottom: 0;
-  grid-template-rows: var(--header-height) auto minmax(0, 1fr) !important;
+  grid-template-rows: 0 auto minmax(0, 1fr) !important;
+  background: #000;
 }
+body.mobile.m-watching #app > header { display: none; }
 body.mobile.m-watching #video-column { grid-row: 2; height: auto; overflow: visible; }
 body.mobile.m-watching #video-frame { width: 100%; max-height: none; }
 body.mobile.m-watching #video-region { width: 100%; height: auto; aspect-ratio: 16 / 9; }
 body.mobile.m-watching #chat-pane {
-  display: flex;
-  grid-column: 1; grid-row: 3;
-  min-height: 0;
-  border-left: 0;
-  border-top: 1px solid rgba(255,255,255,.06);
-  padding-bottom: var(--m-safe-bottom);
+  display: flex; grid-column: 1; grid-row: 3; min-height: 0;
+  border-left: 0; padding-bottom: var(--m-safe-bottom);
+  background: var(--m-bg);
 }
-body.mobile.m-watching #channel-info-bar { padding: 8px 10px; }
+/* who's streaming: one slim row under the video (Follow and Videos stay one tap away) */
+body.mobile.m-watching #channel-info-bar { padding: 8px 12px; gap: 10px; align-items: center; background: var(--m-bg); }
+body.mobile #channel-info-avatar { width: 32px; height: 32px; }
+body.mobile #channel-info-title,
+body.mobile #channel-info-tags,
+body.mobile #channel-info-subscribe-btn,
+body.mobile #channel-info-kick-alias-btn,
+body.mobile #channel-info-viewers { display: none !important; }
+body.mobile .channel-info-top-row { flex-wrap: nowrap; gap: 8px; min-width: 0; }
+body.mobile #channel-info-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
 
-/* ---- watching, sideways: the video is the whole screen ---- */
+/* on the video, with the controls: the back arrow, then who's streaming, what and how many watch */
+body.mobile .m-vback {
+  display: flex; position: absolute; z-index: 5; top: 6px; left: 4px;
+  width: 44px; height: 44px; align-items: center; justify-content: center;
+  border: 0; background: none; color: #fff; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8));
+  opacity: 0; pointer-events: none; transition: opacity .2s ease;
+}
+body.mobile #video-frame.controls-visible .m-vback { opacity: 1; pointer-events: auto; }
+body.mobile #stream-info-overlay { top: 10px; left: 48px; max-width: calc(100% - 64px); gap: 9px; }
+body.mobile.no-stream-info-overlay #stream-info-overlay { display: flex !important; }
+body.mobile .stream-info-avatar { width: 30px; height: 30px; border-radius: 50%; }
+body.mobile .stream-info-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+body.mobile .stream-info-meta { font-size: 12px; }
+
+/* full screen (the controls' full-screen button): chat steps aside */
+body.mobile.m-watching.m-full #chat-pane,
+body.mobile.m-watching.m-full #channel-info-bar { display: none !important; }
+body.mobile.m-watching.m-full #app { grid-template-rows: 0 minmax(0, 1fr) 0 !important; }
+body.mobile.m-watching.m-full #video-column { height: 100%; display: flex; align-items: center; }
+
+/* ---- watching, sideways: video and chat side by side ---- */
 @media (orientation: landscape) {
   body.mobile.m-watching #app {
-    grid-template-rows: 0 minmax(0, 1fr) 0 !important;
+    padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+    grid-template-columns: minmax(0, 1fr) min(34vw, 380px) !important;
+    grid-template-rows: 0 minmax(0, 1fr) !important;
   }
-  body.mobile.m-watching #app > header,
-  body.mobile.m-watching #chat-pane,
-  body.mobile.m-watching #channel-info-bar { display: none !important; }
-  body.mobile.m-watching #video-column { height: 100dvh; }
+  body.mobile.m-watching #video-column { grid-column: 1; grid-row: 2; height: 100%; display: flex; flex-direction: column; justify-content: center; }
   body.mobile.m-watching #video-frame { height: 100%; }
   body.mobile.m-watching #video-region { height: 100%; aspect-ratio: auto; }
+  body.mobile.m-watching #channel-info-bar { display: none !important; }
+  body.mobile.m-watching #chat-pane { grid-column: 2; grid-row: 2; border-left: 1px solid rgba(255,255,255,.06); padding-bottom: 0; }
+  body.mobile.m-watching.m-full #app { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
 /* touch: bigger hit areas on the player's controls */
@@ -10645,10 +10731,3 @@ body.mobile .settings-row { flex-wrap: wrap; gap: 10px 14px; }
 body.mobile .settings-row-text { flex: 1 1 200px; }
 body.mobile .settings-row-control { max-width: 100%; overflow-x: auto; }
 body.mobile .settings-chat-preview { display: none; }
-
-/* the corner mini player on a phone: a bit wider, and lifted above the tab bar (the bottom offset itself is
-   where it was dragged to, so the lift is a transform) */
-body.mobile #app.mini-player-active #video-frame {
-  width: 56vw !important; max-width: 56vw !important;
-  transform: translateY(calc(-1 * (var(--m-tabs-h) + var(--m-safe-bottom))));
-}
