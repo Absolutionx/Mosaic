@@ -107,20 +107,46 @@ jobs:
       # Tauri's activity pauses the web view with it, which freezes the stream. MainActivity resumes the web view
       # while floating, and while locked or in the background when Background audio says so (the player's Options).
       # For that it also runs PlaybackService (src-tauri/android-src), the foreground service that lets Android
-      # keep Mosaic awake with the screen off; it goes next to MainActivity.kt with the same package
+      # keep Mosaic awake with the screen off; it goes next to MainActivity.kt with the same package, as does
+      # RestartActivity, which starts Mosaic fresh when Android makes a second copy of its screen (Tauri can't draw
+      # into one, it stayed black: a foldable moving Mosaic between its screens while it played in the background)
       - name: Keep the stream playing in picture-in-picture and in the background
         run: |
           f=$(find src-tauri/gen/android/app/src/main -name MainActivity.kt | head -n1)
           if [ -z "$f" ]; then echo "::error::MainActivity.kt not found"; exit 1; fi
           pkg=$(grep -m1 '^package ' "$f")
           if [ -z "$pkg" ]; then echo "::error::MainActivity.kt has no package line"; exit 1; fi
-          { echo "$pkg"; echo; cat src-tauri/android-src/PlaybackService.kt; } > "$(dirname "$f")/PlaybackService.kt"
+          for kt in src-tauri/android-src/*.kt; do
+            { echo "$pkg"; echo; cat "$kt"; } > "$(dirname "$f")/$(basename "$kt")"
+          done
           echo "Before:"; cat "$f"
           python3 - "$f" <<'PY'
           import re, sys
           path = sys.argv[1]
           src = open(path).read()
           methods = """
+              companion object {
+                  // whether this run of the app has made its screen already (mosaicRestartIfRecreated)
+                  private var mosaicCreated = false
+              }
+
+              // Tauri draws into the first copy of this screen in a run of the app only. Android making another (moving Mosaic
+              // to the other screen of a foldable after it went to the background, say) would leave that copy black, so
+              // Mosaic restarts instead (RestartActivity) and picks the stream back up. Called first thing in onCreate
+              private fun mosaicRestartIfRecreated() {
+                  if (!mosaicCreated) {
+                      mosaicCreated = true
+                      return
+                  }
+                  android.util.Log.w("Mosaic", "a second copy of the activity: restarting Mosaic")
+                  try { stopService(android.content.Intent(this, PlaybackService::class.java)) } catch (_: Exception) { }
+                  val restart = android.content.Intent(this, RestartActivity::class.java)
+                      .putExtra(RestartActivity.EXTRA_PID, android.os.Process.myPid())
+                      .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                  startActivity(restart)
+                  Runtime.getRuntime().exit(0)
+              }
+
               // the web view the app lives in (found in the window, not a private field of Tauri's activity)
               private fun mosaicWebView(v: android.view.View?): android.webkit.WebView? {
                   if (v is android.webkit.WebView) return v
@@ -198,6 +224,18 @@ jobs:
               src = src[:m.end()] + methods + src[m.end():]
           else:
               src = src[:m.end(1)] + " {" + methods + "}" + src[m.end(1):]
+          # mosaicRestartIfRecreated first thing in onCreate: Tauri's template may have its own onCreate
+          oc = re.search(r"override fun onCreate\(savedInstanceState: (?:android\.os\.)?Bundle\?\)\s*\{", src)
+          if oc:
+              src = src[:oc.end()] + "\n        mosaicRestartIfRecreated()" + src[oc.end():]
+          else:
+              m2 = re.search(r"class MainActivity\s*:\s*TauriActivity\(\)\s*\{", src)
+              src = src[:m2.end()] + """
+              override fun onCreate(savedInstanceState: android.os.Bundle?) {
+                  mosaicRestartIfRecreated()
+                  super.onCreate(savedInstanceState)
+              }
+          """ + src[m2.end():]
           open(path, "w").write(src)
           PY
           echo "After:"; cat "$f"
@@ -248,7 +286,9 @@ jobs:
           if i < 0:
               sys.exit("couldn't find <application in the manifest")
           src = src[:i] + add + src[i:]
-          service = '        <service android:name=".PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />\n'
+          service = ('        <service android:name=".PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />\n'
+                     '        <activity android:name=".RestartActivity" android:process=":restart" android:exported="false"'
+                     ' android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" />\n')
           j = src.rfind("</application>")
           if j < 0:
               sys.exit("couldn't find </application> in the manifest")

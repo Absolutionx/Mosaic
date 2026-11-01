@@ -18,6 +18,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { escapeCount, onEscapeChange, closeTopEscape, pushEscape } from "./escape-stack.js";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 
 export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
@@ -830,7 +831,15 @@ function sendBackground() {
   if (key === lastBg) return;
   lastBg = key;
   invoke("set_background_playback", { mode, playing, title: bgTitle }).catch(() => {});
+  // the notification that shows while it plays in the background (and takes you back to Mosaic) needs Android's
+  // permission to show notifications (Android 13+): ask the first time it's needed. Android itself stops asking
+  // after you've said no twice
+  if (mode > 0 && playing && !askedNotifications) {
+    askedNotifications = true;
+    isPermissionGranted().then((ok) => ok || requestPermission()).catch(() => {});
+  }
 }
+let askedNotifications = false;
 // Low latency (the player's Options sheet, under the gear; off unless turned on): Twitch's prefetched segments played too, closer to
 // live (stream_relay.rs prefetch_as_segments); main.js asks for the stream with it, vod-player.js plays it
 export function phoneLowLatency() {
