@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";
 import { getSetting, notificationAllowed, notificationOptions } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
+import { isAndroid } from "./mobile.js";
 
 let chatRef = null;
 let overlay = null;
@@ -162,7 +163,7 @@ async function renderList(modal) {
   let threads = [];
   try { threads = await invoke("whisper_get_threads", { ownerId: owner }); } catch { /* ignore */ }
   if (!Array.isArray(threads) || !threads.length) {
-    body.innerHTML = '<div class="whisper-empty">No whispers yet. Click New to start one.</div>';
+    body.innerHTML = `<div class="whisper-empty">No whispers yet. ${isAndroid ? "Tap" : "Click"} New to start one.</div>`;
     return;
   }
   body.innerHTML = "";

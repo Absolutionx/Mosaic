@@ -11,6 +11,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getSetting } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
 import { CHANGELOG } from "./changelog.js";
+import { isAndroid } from "./mobile.js";
 
 const SEEN_KEY = "lastSeenVersion";
 const KINDS = [["new", "New"], ["improved", "Improved"], ["fixed", "Fixed"]];
@@ -77,7 +78,7 @@ export async function openWhatsNew({ select, fresh = new Set(), current } = {}) 
   head.append(title, close);
   const rows = el("div", "settings-rows");
   const foot = el("div", "whatsnew-foot");
-  const note = el("span", "whatsnew-note", "Turn this off in Settings › App.");
+  const note = el("span", "whatsnew-note", isAndroid ? "Turn this off in Settings › Other." : "Turn this off in Settings › App.");
   const done = el("button", "settings-action whatsnew-done", "Got it");
   done.type = "button";
   foot.append(note, done);
@@ -93,7 +94,8 @@ export async function openWhatsNew({ select, fresh = new Set(), current } = {}) 
       b.append(el("span", null, `Version ${e.version}`));
       if (e.version === current) b.append(el("span", "whatsnew-tag", "Current"));
       else if (fresh.has(e.version)) b.append(el("span", "whatsnew-dot"));
-      b.addEventListener("click", () => { selected = e; render(); });
+      // on a phone (Settings' layout there) the versions are a list and a version opens as its own page
+      b.addEventListener("click", () => { selected = e; render(); if (isAndroid) panel.classList.add("m-sec"); });
       navList.append(b);
     }
     title.textContent = `Version ${selected.version}`;
@@ -132,11 +134,27 @@ export async function openWhatsNew({ select, fresh = new Set(), current } = {}) 
     rows.scrollTop = 0;
   };
   render();
+  if (isAndroid) {
+    // as in Settings: back on the list closes, back on a version returns to the list
+    const back = (onClick) => {
+      const b = el("button", "settings-back");
+      b.type = "button";
+      b.setAttribute("aria-label", "Back");
+      b.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18 9 12l6-6"/></svg>';
+      b.addEventListener("click", onClick);
+      return b;
+    };
+    nav.querySelector(".settings-nav-title").prepend(back(() => closeWhatsNew()));
+    head.prepend(back(() => panel.classList.remove("m-sec")));
+  }
   document.body.append(backdrop);
   backdrop.addEventListener("mousedown", (e) => { if (e.target === backdrop) closeWhatsNew(); });
   close.addEventListener("click", closeWhatsNew);
   done.addEventListener("click", closeWhatsNew);
-  popEscape = pushEscape(() => closeWhatsNew());
+  popEscape = pushEscape(() => {
+    if (isAndroid && panel.classList.contains("m-sec")) { panel.classList.remove("m-sec"); return; }
+    closeWhatsNew();
+  });
   setTimeout(() => done.focus(), 30);
 }
 

@@ -3,6 +3,7 @@
 // and your streak. Tracking starts with this version; nothing is sent anywhere.
 
 import { fmtDateMDY } from "./format.js";
+import { isAndroid } from "./mobile.js";
 
 const KEY = "watchStats";
 const KEEP_DAYS = 400;
@@ -197,7 +198,7 @@ export function renderWatchStats(body, opts = {}) {
     }
 
     side.appendChild(el("h4", null, "Top channels"));
-    side.appendChild(el("p", null, "Click one to watch it"));
+    side.appendChild(el("p", null, isAndroid ? "Tap one to watch it" : "Click one to watch it"));
     if (!st.top.length) side.appendChild(el("div", "lg-empty small", "Channels you watch show up here."));
     const list = el("div", "stats-top");
     const topMax = st.top[0] ? st.top[0].secs : 1;

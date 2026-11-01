@@ -823,8 +823,10 @@ fn android_pip(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, auto: bo
     if sdk >= 31 {
         env.call_method(&builder, "setAutoEnterEnabled",
             "(Z)Landroid/app/PictureInPictureParams$Builder;", &[JValue::Bool(auto as u8)])?;
+        // video: Android's guidance is to crossfade while the floating window is resized (pinch, corner drag)
+        // rather than redraw it live, which looks smoother for a stream
         env.call_method(&builder, "setSeamlessResizeEnabled",
-            "(Z)Landroid/app/PictureInPictureParams$Builder;", &[JValue::Bool(1)])?;
+            "(Z)Landroid/app/PictureInPictureParams$Builder;", &[JValue::Bool(0)])?;
     }
     let params = env.call_method(&builder, "build", "()Landroid/app/PictureInPictureParams;", &[])?.l()?;
     env.call_method(activity, "setPictureInPictureParams",

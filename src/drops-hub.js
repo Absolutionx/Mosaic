@@ -9,6 +9,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { pushEscape } from "./escape-stack.js";
+import { isAndroid } from "./mobile.js";
 
 let viewEl = null, popEscape = null, opts = {};
 let scanObserver = null; // the paged Available list's "load more" watcher
@@ -109,7 +110,7 @@ async function loadNow(body) {
   body.replaceChildren(el("div", "hub-empty", "Loading drops…"));
   const connected = await invoke("twitch_device_connected").catch(() => false);
   if (!connected) {
-    body.replaceChildren(el("div", "hub-empty", "Drops need the Twitch connection. Set it up under Settings › Twitch account."));
+    body.replaceChildren(el("div", "hub-empty", `Drops need the Twitch connection. Set it up under Settings › ${isAndroid ? "Account" : "Twitch account"}.`));
     return;
   }
   const allP = invoke("get_drop_campaigns");

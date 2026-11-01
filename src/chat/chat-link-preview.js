@@ -6,6 +6,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { normalizeUrl, LINK_PREVIEW_HOVER_DELAY_MS } from "./shared.js";
 import { parseClipSlug, buildClipCard } from "./chat-clips.js";
 import { getSetting } from "../settings.js";
+import { isAndroid } from "../mobile.js";
+import { pushEscape } from "../escape-stack.js";
 
 export const chatLinkPreviewMixin = {
   // real href but intercept the click for openUrl(), target="_blank" does nothing in a Tauri webview
@@ -19,12 +21,17 @@ export const chatLinkPreviewMixin = {
     a.rel = "noopener noreferrer";
     a.addEventListener("click", (e) => {
       e.preventDefault();
+      // on a phone a tap shows the preview first (as a tap on an emote shows its card), with a button to open it
+      if (isAndroid && getSetting("linkPreviews")) { this._tapLinkPreview(a, url); return; }
       openUrl(url).catch((err) => {
         console.error("Failed to open chat link in browser:", err);
       });
     });
-    a.addEventListener("mouseenter", () => this._scheduleLinkPreview(a, url));
-    a.addEventListener("mouseleave", () => this._cancelLinkPreview());
+    // a phone has no hover (a tap fakes one just before the click): only the tap path above runs there
+    if (!isAndroid) {
+      a.addEventListener("mouseenter", () => this._scheduleLinkPreview(a, url));
+      a.addEventListener("mouseleave", () => this._cancelLinkPreview());
+    }
     // Twitch clip links become a clip card that plays in-app (chat-clips.js); `a` is its fallback
     const clipSlug = parseClipSlug(url);
     if (clipSlug && getSetting("clipCards")) return buildClipCard(clipSlug, a);
@@ -32,6 +39,125 @@ export const chatLinkPreviewMixin = {
   },
 
   // cancel any in-flight timer/request first, so moving across links only fetches the one settled on
+  // the preview's data: cached, or fetched once (null when the page has nothing to show)
+  async _loadLinkPreview(url) {
+    const cached = this._linkPreviewCache.get(url);
+    if (cached !== undefined) return cached;
+    let preview;
+    try {
+      preview = await invoke("fetch_link_preview", { url });
+    } catch (err) {
+      console.error("Link preview fetch failed:", url, err);
+      preview = null;
+    }
+    const hasContent = preview && (preview.title || preview.description || preview.image);
+    this._linkPreviewCache.set(url, hasContent ? preview : null);
+    if (this._linkPreviewCache.size > 300) this._linkPreviewCache.delete(this._linkPreviewCache.keys().next().value);
+    return hasContent ? preview : null;
+  },
+
+  // ---- phone: tap a link for its preview ----
+  // The card opens beside the link right away (the site and address while the preview loads), with Open link
+  // and Copy. It follows the link as chat scrolls and closes on a tap elsewhere, on Android's back button, or
+  // when the link scrolls out of chat
+  _tapLinkPreview(linkEl, url) {
+    this._closeTapPreview?.();
+    const popup = this._linkPreviewPopup;
+    const token = ++this._linkPreviewToken;
+    let host = url;
+    try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { /* keep the whole address */ }
+    popup.classList.add("tap");
+
+    const draw = (preview, loading) => {
+      popup.innerHTML = "";
+      if (preview?.image) {
+        const img = document.createElement("img");
+        img.className = "link-preview-image";
+        img.src = preview.image;
+        img.alt = "";
+        img.addEventListener("error", () => img.remove());
+        img.addEventListener("load", place);
+        popup.appendChild(img);
+      }
+      const body = document.createElement("div");
+      body.className = "link-preview-body";
+      const add = (cls, text) => { const e = document.createElement("div"); e.className = cls; e.textContent = text; body.appendChild(e); };
+      add("link-preview-site", preview?.site_name || host);
+      if (preview?.title) add("link-preview-title", preview.title);
+      if (preview?.description) add("link-preview-description", preview.description);
+      add("link-preview-url", url);
+      if (loading) add("link-preview-loading", "Loading preview…");
+      popup.appendChild(body);
+      const actions = document.createElement("div");
+      actions.className = "link-preview-actions";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "link-preview-btn primary";
+      open.textContent = "Open link";
+      open.addEventListener("click", () => {
+        close();
+        openUrl(url).catch((err) => console.error("Failed to open chat link in browser:", err));
+      });
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "link-preview-btn";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(url); copy.textContent = "Copied"; } catch { copy.textContent = "Couldn't copy"; }
+      });
+      actions.append(open, copy);
+      popup.appendChild(actions);
+      popup.style.display = "block";
+      place();
+    };
+
+    // above the link, or below it when there's no room; inside the screen. closes once the link leaves chat
+    function place() {
+      if (!linkEl.isConnected) { close(); return; }
+      const r = linkEl.getBoundingClientRect();
+      const scroller = linkEl.closest(".chat-body, .multiview-chat-body, .thread-panel-body");
+      if (scroller) {
+        const b = scroller.getBoundingClientRect();
+        if (r.bottom < b.top || r.top > b.bottom) { close(); return; }
+      }
+      const w = popup.offsetWidth, h = popup.offsetHeight;
+      let top = r.top - h - 8;
+      if (top < 8) top = r.bottom + 8;
+      popup.style.top = `${Math.max(8, Math.min(window.innerHeight - h - 8, top))}px`;
+      popup.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.left))}px`;
+    }
+    const onScroll = () => place();
+    // a tap anywhere but the card closes it (a tap on another link then opens that one's)
+    const onDown = (e) => { if (!popup.contains(e.target)) close(); };
+    let popEsc = null;
+    const close = () => {
+      if (this._closeTapPreview !== close) return;
+      this._closeTapPreview = null;
+      ++this._linkPreviewToken;
+      document.removeEventListener("scroll", onScroll, true);
+      document.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("resize", onScroll);
+      popEsc?.();
+      popEsc = null;
+      popup.classList.remove("tap");
+      this._hideLinkPreviewPopup();
+    };
+    this._closeTapPreview = close;
+    document.addEventListener("scroll", onScroll, true);
+    document.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("resize", onScroll);
+    // Escape and Android's back button close it (escape-stack.js)
+    popEsc = pushEscape(close);
+
+    const cached = this._linkPreviewCache.get(url);
+    if (cached !== undefined) { draw(cached, false); return; }
+    draw(null, true);
+    this._loadLinkPreview(url).then((preview) => {
+      if (token !== this._linkPreviewToken || this._closeTapPreview !== close) return; // closed or moved on
+      draw(preview, false);
+    });
+  },
+
   _scheduleLinkPreview(linkEl, url) {
     if (!getSetting("linkPreviews")) return; // Settings > Chat
     this._cancelLinkPreview();

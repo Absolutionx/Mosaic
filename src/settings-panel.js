@@ -231,12 +231,39 @@ const SECTIONS = [
 // developer tools, pop-out windows, MultiView) are left out
 if (isAndroid) {
   const desktopOnly = new Set(["autostart", "startMinimized", "closeToTray", "autoUpdateCheck", "devTools", "videoContextMenu",
-    "autoPipOnBlur", "lurkMode", "autoTheater", "miniPlayer", "streamInfoOverlay"]);
-  const desktopTitles = new Set(["Check for updates", "MultiView"]);
+    "autoPipOnBlur", "lurkMode", "autoTheater", "miniPlayer", "streamInfoOverlay",
+    // a phone has no arrow keys or mouse to hover with
+    "seekStep", "pauseOnHover"]);
+  // Customize parts works by pointing at parts of the desktop layout (the sidebar, Home, MultiView…), and the chat
+  // overlay's handle is the desktop's; the phone draws its own versions of these
+  const desktopTitles = new Set(["Check for updates", "MultiView", "Customize parts", "Your changes", "All parts", "Reset all parts", "Overlay position"]);
+  // a phone's wording: tap rather than click or hover, and no keys or right-clicking
+  const phoneDesc = {
+    vodSpeed: "Speed VODs play at, remembered between VODs.",
+    chatSpellcheck: "Underline misspelled words while you type a message.",
+    chatFontSize: "Size of chat messages.",
+    chatOverlayInput: "The chat box moves into the overlay, with the emote button and emote suggestions.",
+    emoteHoverCard: "Tapping an emote shows a bigger preview, where it's from and who made it.",
+    linkPreviews: "Tapping a link in chat shows a preview first, with a button to open it. Off, links open straight away. The preview loads from the link's site, which can see your IP address.",
+    hypeGiftBanners: "Banners for hype trains and big gift-sub drops. Tap the hype train banner for details.",
+    skipMutedSegments: "When a VOD reaches a part whose audio was muted for copyright: play it, ask with a Skip button on the player, or skip it. Tapping into one on the seek bar always plays it. Needs the Twitch login.",
+    seekThumbnails: "Preview images along the VOD seek bar.",
+    notifyWhispers: "When a whisper arrives while you're not in Mosaic.",
+    customCss: "Your own CSS rules, applied on top of everything. Only paste CSS you understand: it can make Mosaic hard to use. Use custom CSS above is the quick way back, and if it hides Settings itself, hold two fingers still on the screen for 3 seconds to switch custom CSS off until you restart.",
+    "Saved looks": "Your whole look (theme, colors, customized parts and custom CSS) saved under a name. Tap one to switch to it.",
+  };
+  const phoneTitle = { emoteHoverCard: "Emote cards" };
   // the phone has no sidebar or Home page (mobile.js): Following and the tabs take their place
   for (let i = SECTIONS.length - 1; i >= 0; i--) if (SECTIONS[i].id === "sidebar" || SECTIONS[i].id === "home") SECTIONS.splice(i, 1);
   for (const sec of SECTIONS) {
     sec.rows = sec.rows.filter((r) => !desktopOnly.has(r.id) && !desktopTitles.has(r.title));
+    for (const r of sec.rows) {
+      const key = r.id || r.title;
+      if (phoneDesc[key]) r.desc = phoneDesc[key];
+      if (phoneTitle[key]) r.title = phoneTitle[key];
+    }
+    // a heading whose rows were all left out goes too
+    sec.rows = sec.rows.filter((r, i, a) => r.kind !== "group" || (a[i + 1] && a[i + 1].kind !== "group"));
     // Frosty's names for them: Appearance is General, Player is Video, App is Other
     if (sec.id === "appearance") { sec.label = "General"; sec.group = "Customize"; }
     if (sec.id === "player") { sec.label = "Video"; sec.group = "Customize"; }

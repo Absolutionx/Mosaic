@@ -60,6 +60,8 @@ let searchEl = null;
 //   togglePin(login)         add it to, or take it out of, your favorites
 //   watch(login)             start watching a channel
 //   stop()                   stop the stream (the full stop the Stop button does)
+//   showMini()               float the stream as the mini player (mini-player.js)
+//   expandStream()           from the mini player back to the full stream
 //   currentChannel()         the channel playing now ("" when none)
 //   searchChannels(q)        Twitch channels matching q: [{ login, name, live, game, title, avatar }]
 //   searchCategories(q)      Twitch categories matching q: [{ name, box_art_url }]
@@ -75,6 +77,10 @@ export function initMobile(d = {}) {
   watchPlayer();
   buildPlayerOverlay();
   buildChatRow();
+  placePausedPill();
+  wireMini();
+  wireSwipeDown();
+  wireInputBadges();
   wireBack();
   wireWake();
   wireKeyboard();
@@ -513,11 +519,20 @@ function watchPlayer() {
     const wasVods = document.body.classList.contains("m-vods");
     document.body.classList.toggle("m-watching", watching);
     document.body.classList.toggle("m-vods", inVods && !watching);
+    // the stream floating over the pages as the mini player (mini-player.js; placed by placeMini)
+    const mini = !!app?.classList.contains("mini-player-active");
+    const wasMini = document.body.classList.contains("m-mini");
+    document.body.classList.toggle("m-mini", mini);
+    if (mini && !wasMini) requestAnimationFrame(() => placeMini());
+    // back from the mini player into a floating window: the floating layout applies now it's the full player
+    document.body.classList.toggle("m-pip", floatingNow && watching);
     if (!watching) document.body.classList.remove("m-full", "m-chatover");
     // a stream that ends any way (not just the back arrow) hands the screen's turning back to the phone
     if (!watching && was) setOrientation("auto");
     syncSystemBars();
-    if (watching !== was) { syncAutoPip(); if (!watching) stopSleepTimer(); }
+    if (watching !== was || mini !== wasMini) syncAutoPip();
+    // the sleep timer runs while the stream plays, full size or as the mini player
+    if (!watching && !mini && (was || wasMini)) stopSleepTimer();
     if (titleEl) titleEl.textContent = inVods && !watching ? "Videos" : TITLES[document.body.dataset.mtab] || "";
     if (watching !== was || inVods !== wasVods) {
       if (!watching && was && document.body.dataset.mtab === "following") renderFollowing();
@@ -530,7 +545,20 @@ function watchPlayer() {
   sync();
 }
 
-// leaving a stream stops it, like Frosty: back to the tab you came from
+// leaving the stream (back, the overlay's back arrow, swiping the video down) shrinks it to the mini player
+// over the tab you came from, as Twitch's app does; the mini player's ✕ stops it
+function minimizePlayer() {
+  heldFor = null;
+  setOrientation("auto");
+  document.body.classList.remove("m-full", "m-chatover");
+  document.activeElement?.blur?.(); // the keyboard goes away with chat
+  // the tab's page (the app's Home or Browse) takes the screen; the app then floats the stream (mini-player.js)
+  setTab(document.body.dataset.mtab || "following");
+  // even with the desktop's Mini player setting off, or its ✕ used on desktop this session
+  if (!document.getElementById("app")?.classList.contains("mini-player-active")) deps.showMini?.();
+}
+
+// stopping the stream outright (the sleep timer, the mini player's ✕): back to the tab you came from
 function leavePlayer() {
   heldFor = null;
   setOrientation("auto");
@@ -593,7 +621,7 @@ function buildPlayerOverlay() {
   const ov = el("div", "m-ov");
 
   const top = el("div", "m-ov-top");
-  top.appendChild(iconBtn("m-ov-btn", "back", "Back", () => leavePlayer(), 24));
+  top.appendChild(iconBtn("m-ov-btn", "back", "Back", () => minimizePlayer(), 24));
   const info = el("div", "m-ov-info");
   const avatar = el("img", "m-ov-avatar");
   avatar.alt = "";
@@ -634,6 +662,24 @@ function buildPlayerOverlay() {
   bottom.append(stats, right);
   ov.append(top, play, bottom);
   region.appendChild(ov);
+
+  // Android's web view draws its own big grey play-button picture in a video that has no picture yet (while the
+  // stream starts); a see-through poster replaces it, so the player is plain black until the first frame
+  if (video) video.poster = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  // and while the stream starts or buffers, a spinner in the middle instead of the play/pause button
+  const spinner = el("div", "m-spinner");
+  spinner.setAttribute("role", "status");
+  spinner.setAttribute("aria-label", "Loading");
+  region.appendChild(spinner);
+  const setLoading = (on) => region.classList.toggle("m-is-loading", on);
+  if (video) {
+    for (const ev of ["loadstart", "waiting", "stalled"]) video.addEventListener(ev, () => { if (!video.paused || ev === "loadstart") setLoading(true); });
+    for (const ev of ["playing", "canplay", "pause", "error", "emptied", "ended"]) video.addEventListener(ev, () => setLoading(false));
+    // a channel that turns out offline never loads: its message shows instead of the spinner
+    const placeholder = document.getElementById("video-placeholder");
+    if (placeholder) new MutationObserver(() => { if (getComputedStyle(placeholder).display !== "none") setLoading(false); })
+      .observe(placeholder, { attributes: true, attributeFilter: ["style"] });
+  }
 
   // who's streaming, from the same data the desktop overlay uses (channel-info-bar.js)
   let startedAt = "";
@@ -689,42 +735,59 @@ function savePrefs(p) {
 // picture-in-picture (app_extras.rs set_pip): with the option on, leaving the app while watching shrinks Mosaic
 // to a floating video (Android 12+); the player's PiP button goes into it on any Android 8+
 function syncAutoPip() {
-  const on = document.body.classList.contains("m-watching") && readPrefs().pip;
+  const b = document.body.classList;
+  const on = (b.contains("m-watching") || b.contains("m-mini")) && readPrefs().pip;
   invoke("set_pip", { auto: on, enterNow: false }).catch(() => {});
 }
 function enterPip() {
   invoke("set_pip", { auto: readPrefs().pip, enterNow: true }).catch(() => {});
 }
-// while floating, the window is a small 16:9 box: show only the video in it
+// while floating, only the video shows, at whatever size the floating window is (Android lets you pinch it,
+// drag its corner, or double-tap it to resize). Whether the app is floating comes from Android itself
+// (app_extras.rs pip_keep_playing), not from the window's size: a floating window pinched large is still
+// floating, and the layout must not turn back into the whole app inside it
+let floatLoop = null;
+let floatingNow = false;
+function setFloating(on) {
+  floatingNow = on;
+  document.body.classList.toggle("m-pip", on && document.body.classList.contains("m-watching"));
+}
 function syncPipLayout() {
+  const b = document.body.classList;
+  if (!b.contains("m-watching") && !b.contains("m-mini")) { setFloating(false); return; }
+  // a quick first guess so the layout switches at once; Android's answer settles it right after
   const small = window.innerWidth < 520 && window.innerHeight < 360 && window.innerWidth > window.innerHeight;
-  const floating = small && document.body.classList.contains("m-watching");
-  const was = document.body.classList.contains("m-pip");
-  document.body.classList.toggle("m-pip", floating);
-  if (floating && !was) keepPlayingWhileFloating();
+  if (small && !floatingNow) setFloating(true);
+  keepPlayingWhileFloating();
 }
 window.addEventListener("resize", syncPipLayout);
 
 // Android pauses the app (and its web view, which stops the video) when it starts floating. While it floats,
-// app_extras.rs pip_keep_playing resumes the web view, and the stream plays on; once a second it also asks
-// whether the app is still floating, since closing the floating window tells the page nothing. Closed, the
-// stream pauses unless Background audio is Always
-let floatLoop = null;
+// pip_keep_playing resumes the web view (MainActivity does too, build-android.yml), and the stream plays on;
+// once a second it also asks whether the app is still floating, since closing the floating window tells the
+// page nothing. Closed, the stream pauses unless Background audio is Always
 function keepPlayingWhileFloating() {
-  clearInterval(floatLoop);
+  if (floatLoop) return; // already checking
   const tick = async () => {
     let floating = false;
     try { floating = await invoke("pip_keep_playing"); } catch { /* not Android */ }
     const video = document.getElementById("video-element");
     if (floating) {
+      // floating from the mini player: the floating window shows the stream, not the page under it
+      if (document.body.classList.contains("m-mini")) deps.expandStream?.();
+      setFloating(true);
       if (video?.paused) document.getElementById("play-pause-btn")?.click();
       return;
     }
-    // back to full size (the resize handler takes it from here) or the floating window was closed
     clearInterval(floatLoop);
     floatLoop = null;
+    const wasFloating = floatingNow;
+    setFloating(false);
+    // not floating any more: back to full size, or the floating window was closed (the window stays small,
+    // or the page is hidden). Closed with Background audio on Never: pause
     const small = window.innerWidth < 520 && window.innerHeight < 360;
-    if (small && readPrefs().backgroundAudio === "never" && video && !video.paused) {
+    const closed = wasFloating && (small || document.visibilityState === "hidden");
+    if (closed && readPrefs().backgroundAudio === "never" && video && !video.paused) {
       pausedForBackground = true;
       document.getElementById("play-pause-btn")?.click();
     }
@@ -732,14 +795,15 @@ function keepPlayingWhileFloating() {
   tick();
   floatLoop = setInterval(tick, 1000);
 }
-
 // background audio: "Never" pauses the stream when you leave the app (unless it's floating), and plays it
 // again when you come back; "Always" lets it keep playing. Android can still stop an app in the background
 let pausedForBackground = false;
 document.addEventListener("visibilitychange", () => {
   const video = document.getElementById("video-element");
-  if (!video || !document.body.classList.contains("m-watching")) return;
+  const playing = document.body.classList.contains("m-watching") || document.body.classList.contains("m-mini");
+  if (!video || (!playing && !pausedForBackground)) return;
   if (document.visibilityState === "hidden") {
+    if (!playing) return;
     if (readPrefs().backgroundAudio !== "never") return;
     // going into the floating window hides the page for a moment before it shrinks: wait to see which it is
     setTimeout(() => {
@@ -767,7 +831,11 @@ function startSleepTimer(minutes) {
   stopSleepTimer();
   if (!minutes) return;
   sleepEndsAt = Date.now() + minutes * 60000;
-  sleepTimer = setTimeout(() => { stopSleepTimer(); if (document.body.classList.contains("m-watching")) leavePlayer(); }, minutes * 60000);
+  sleepTimer = setTimeout(() => {
+    stopSleepTimer();
+    const b = document.body.classList;
+    if (b.contains("m-watching") || b.contains("m-mini")) leavePlayer();
+  }, minutes * 60000);
 }
 function sleepLabel() {
   if (!sleepEndsAt) return "Off";
@@ -840,6 +908,156 @@ function openPlayerOptions() {
   shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
   document.body.appendChild(shade);
   popEsc = pushEscape(close);
+}
+
+// ---- the mini player ----
+// The app's own mini player (mini-player.js) floats the same video over the pages. On a phone it sits above the
+// tab bar on the right; a tap on it returns to the stream, its ✕ stops the stream (a phone has no stream playing
+// out of sight), and it can be dragged up and down the screen
+function placeMini(top) {
+  const frame = document.getElementById("video-frame");
+  const bar = document.querySelector(".m-tabs");
+  if (!frame) return;
+  const barTop = bar && getComputedStyle(bar).display !== "none" ? bar.getBoundingClientRect().top : window.innerHeight;
+  const h = frame.offsetHeight || 0;
+  const lowest = Math.max(8, window.innerHeight - barTop + 10);
+  const highest = Math.max(lowest, window.innerHeight - h - 8);
+  // where it was dragged to, kept for this run of Mosaic; otherwise just above the tabs
+  const want = top != null ? window.innerHeight - top - h : (miniBottom ?? lowest);
+  miniBottom = Math.max(lowest, Math.min(highest, want));
+  frame.style.setProperty("bottom", `${miniBottom}px`, "important");
+  frame.style.setProperty("right", "10px", "important");
+  frame.style.setProperty("left", "auto", "important");
+  frame.style.setProperty("top", "auto", "important");
+}
+let miniBottom = null;
+function wireMini() {
+  const frame = document.getElementById("video-frame");
+  if (!frame) return;
+  // the ✕ (mini-player.js would only hide it): stop the stream
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest?.(".mini-player-close") || !document.body.classList.contains("m-mini")) return;
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    leavePlayer();
+  }, true);
+  // drag it up or down by the video; a tap (no real movement) goes on to open the stream
+  let start = null;
+  let moved = false;
+  frame.addEventListener("touchstart", (e) => {
+    if (!document.body.classList.contains("m-mini") || e.touches.length !== 1) return;
+    if (e.target.closest?.(".mini-player-btn")) return;
+    start = { y: e.touches[0].clientY, top: frame.getBoundingClientRect().top };
+    moved = false;
+  }, { passive: true });
+  frame.addEventListener("touchmove", (e) => {
+    if (!start) return;
+    const dy = e.touches[0].clientY - start.y;
+    if (!moved && Math.abs(dy) < 8) return;
+    moved = true;
+    e.preventDefault();
+    placeMini(start.top + dy);
+  }, { passive: false });
+  const end = (e) => {
+    if (start && moved) { e.preventDefault?.(); suppressClick = true; setTimeout(() => { suppressClick = false; }, 350); }
+    start = null;
+  };
+  frame.addEventListener("touchend", end);
+  frame.addEventListener("touchcancel", end);
+  let suppressClick = false;
+  frame.addEventListener("click", (e) => { if (suppressClick) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+  window.addEventListener("resize", () => { if (document.body.classList.contains("m-mini")) placeMini(); });
+}
+
+// ---- swiping the video down shrinks it to the mini player (Twitch's gesture) ----
+function wireSwipeDown() {
+  const region = document.getElementById("video-region");
+  if (!region) return;
+  let start = null;
+  const reset = () => {
+    region.style.transform = "";
+    region.style.transition = "";
+    start = null;
+  };
+  region.addEventListener("touchstart", (e) => {
+    if (!document.body.classList.contains("m-watching") || e.touches.length !== 1) { start = null; return; }
+    // the overlay's buttons take their own taps
+    if (e.target.closest?.("button, input, .m-ov-bottom")) { start = null; return; }
+    start = { x: e.touches[0].clientX, y: e.touches[0].clientY, down: false };
+  }, { passive: true });
+  region.addEventListener("touchmove", (e) => {
+    if (!start || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - start.x;
+    const dy = e.touches[0].clientY - start.y;
+    // a mostly-downward drag; anything sideways or upward is left alone
+    if (!start.down) {
+      if (dy < 12) { if (Math.abs(dx) > 12 || dy < -12) start = null; return; }
+      if (Math.abs(dx) > dy) { start = null; return; }
+      start.down = true;
+    }
+    e.preventDefault();
+    region.style.transition = "none";
+    region.style.transform = `translateY(${Math.min(dy, 160) * 0.5}px) scale(${1 - Math.min(dy, 160) / 1600})`;
+  }, { passive: false });
+  const end = (e) => {
+    if (!start) return;
+    const t = e.changedTouches?.[0];
+    const dy = t ? t.clientY - start.y : 0;
+    const wasDown = start.down;
+    region.style.transition = "transform .15s ease";
+    region.style.transform = "";
+    setTimeout(reset, 160);
+    start = null;
+    if (wasDown && dy > 70) minimizePlayer();
+  };
+  region.addEventListener("touchend", end);
+  region.addEventListener("touchcancel", reset);
+}
+
+// ---- your chat badges in the chat box ----
+// Upright they sit in the box before the message, as on twitch.tv. Sideways the chat column is too narrow to
+// spare the room, so they move up to the line above the box (with the points and mod buttons), on its left
+function wireInputBadges() {
+  const badge = document.getElementById("chat-input-badge");
+  const wrapper = document.getElementById("chat-input-wrapper");
+  const input = document.getElementById("chat-input");
+  if (!badge || !wrapper || !input) return;
+  const place = () => {
+    const extras = document.querySelector(".m-chat-extras");
+    if (isLandscape() && extras) {
+      if (badge.parentElement !== extras) extras.prepend(badge);
+    } else if (badge.parentElement !== wrapper) {
+      wrapper.insertBefore(badge, input);
+    }
+  };
+  window.matchMedia("(orientation: landscape)").addEventListener("change", place);
+  place();
+}
+
+// ---- "Chat paused due to scroll": just above the chat box ----
+// On desktop the pill sits the chat box's height above the bottom. The phone's row is taller (the send arrow, the
+// points button, the gap for Android's own buttons, sideways its extra line), so the pill measures where the
+// messages actually end and sits above that instead of overlapping the box
+function placePausedPill() {
+  const pane = document.getElementById("chat-pane");
+  const messages = document.getElementById("chat-messages");
+  if (!pane || !messages || typeof ResizeObserver === "undefined") return;
+  let frame = 0;
+  const measure = () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const below = Math.max(0, Math.round(pane.getBoundingClientRect().bottom - messages.getBoundingClientRect().bottom));
+      pane.style.setProperty("--m-chat-below", `${below}px`);
+    });
+  };
+  const ro = new ResizeObserver(measure);
+  ro.observe(pane);
+  ro.observe(messages);
+  const row = document.getElementById("chat-input-row");
+  if (row) ro.observe(row);
+  window.addEventListener("resize", measure);
+  window.visualViewport?.addEventListener("resize", measure);
+  measure();
 }
 
 // ---- chat's input row, as Frosty has it: emotes, the message, send, ⋯ ----
@@ -919,7 +1137,7 @@ function closeTop() {
     return;
   }
   const b = document.body.classList;
-  if (b.contains("m-watching")) { leavePlayer(); return; }
+  if (b.contains("m-watching")) { minimizePlayer(); return; }
   if (b.contains("m-vods")) setTab(document.body.dataset.mtab || "following");
 }
 function wireBack() {

@@ -2,6 +2,8 @@
 // app (sidebar, Home, Browse). Stored as lowercased logins in localStorage. A single shared module so
 // every view filters against the same set and reacts to changes live.
 
+import { isAndroid } from "./mobile.js";
+
 const KEY = "hiddenChannels";
 const listeners = new Set();
 
@@ -123,7 +125,7 @@ export function openHiddenChannelsModal() {
     if (!list.length) {
       const empty = document.createElement("div");
       empty.className = "hidden-channels-empty";
-      empty.textContent = "No hidden channels. Right-click a streamer to hide them.";
+      empty.textContent = isAndroid ? "No hidden channels." : "No hidden channels. Right-click a streamer to hide them.";
       listEl.appendChild(empty);
       return;
     }

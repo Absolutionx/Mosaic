@@ -612,6 +612,8 @@ initMobile({
   },
   watch: (login) => paletteWatch(login),
   stop: () => stopPlayback({ returnToPage: true }),
+  showMini: () => activateMiniPlayer(),
+  expandStream: () => returnToFullStream(),
   currentChannel: () => (session.playing ? String(playbackControls.currentChannel || "") : ""),
   currentQuality: () => playbackControls.currentQuality || "",
   searchChannels: (q) => invoke("search_twitch_channels", { query: q }),

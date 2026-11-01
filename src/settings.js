@@ -219,12 +219,44 @@ if (typeof document !== "undefined") {
     showSafeModeNote(safeMode);
   }, true);
 }
+// A phone has no keyboard for that: holding two fingers still on the screen for 3 seconds does the same. It
+// listens on the document itself, so CSS that hides or covers everything can't get in its way
+const SAFE_HOLD_MS = 3000;
+const onPhone = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+if (typeof document !== "undefined" && onPhone) {
+  let timer = null;
+  let from = null;
+  const cancel = () => { clearTimeout(timer); timer = null; from = null; };
+  document.addEventListener("touchstart", (e) => {
+    cancel();
+    if (e.touches.length !== 2) return;
+    from = [...e.touches].map((t) => [t.clientX, t.clientY]);
+    timer = setTimeout(() => {
+      timer = null; from = null;
+      safeMode = !safeMode;
+      applyAppearance();
+      showSafeModeNote(safeMode);
+      try { navigator.vibrate?.(30); } catch { /* ignore */ }
+    }, SAFE_HOLD_MS);
+  }, { capture: true, passive: true });
+  document.addEventListener("touchmove", (e) => {
+    if (!timer || !from) return;
+    // moving the fingers (a pinch, a scroll) isn't the hold
+    const moved = [...e.touches].some((t, i) => from[i] && Math.hypot(t.clientX - from[i][0], t.clientY - from[i][1]) > 24);
+    if (moved) cancel();
+  }, { capture: true, passive: true });
+  for (const ev of ["touchend", "touchcancel"]) {
+    document.addEventListener(ev, (e) => { if (e.touches.length !== 2) cancel(); }, { capture: true, passive: true });
+  }
+}
 function showSafeModeNote(on) {
   document.getElementById("mosaic-safe-note")?.remove();
   const n = document.createElement("div");
   n.id = "mosaic-safe-note";
   n.textContent = on
-    ? "Custom CSS and customized parts are off until you press Ctrl+Alt+Shift+S again or restart Mosaic."
+    ? (onPhone
+      ? "Custom CSS and customized parts are off until you hold two fingers on the screen again or restart Mosaic."
+      : "Custom CSS and customized parts are off until you press Ctrl+Alt+Shift+S again or restart Mosaic.")
     : "Custom CSS and customized parts are back on.";
   Object.assign(n.style, {
     position: "fixed", left: "50%", bottom: "24px", transform: "translateX(-50%)", zIndex: "2147483647",

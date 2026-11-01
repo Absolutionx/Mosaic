@@ -10850,8 +10850,6 @@ body.mobile .m-thumb img { position: absolute; inset: 0; }
 body.mobile .m-row-text { min-width: 0; overflow: hidden; }
 body.mobile .m-page, body.mobile #browse-page { overflow-x: hidden; }
 body.mobile .m-row-offline, body.mobile .m-row-history, body.mobile .m-row-direct { box-sizing: border-box; max-width: 100%; overflow: hidden; }
-/* Frosty's message box has no badges in it (they made it scroll and cut off the text) */
-body.mobile #chat-input-badge { display: none !important; }
 body.mobile .chat-input-wrapper { align-items: center; }
 body.mobile #chat-emote-btn { align-self: center; }
 body.mobile .m-thumb img { top: 0; left: 0; width: 100%; height: 100%; }
@@ -10965,3 +10963,142 @@ body.mobile .chat-input-wrapper { flex: 1 1 0; min-width: 0; }
   body.mobile.m-watching .chat-input-row .m-chat-extra { height: 28px; padding: 0 8px; }
   body.mobile.m-watching #chat-emote-btn { width: 28px; height: 28px; }
 }
+
+/* ---- Phones: dialogs as bottom sheets (Points & Drops, the Drops hub, Mod Actions, chat filter, Twitch
+   connection, hidden channels, channels to preload, whispers, notifications, mod controls). Upright, a centered
+   desktop box leaves thin margins and squeezes its header; a full-width sheet from the bottom is what Frosty and
+   Twitch's app use. Sideways there's room for the desktop layouts, so they stay ---- */
+@media (orientation: portrait) {
+  body.mobile .chat-filter-overlay,
+  body.mobile .hidden-channels-overlay,
+  body.mobile .hub-backdrop { align-items: flex-end; justify-content: stretch; padding: 0; }
+  body.mobile .chat-filter-modal,
+  body.mobile .hidden-channels-modal,
+  body.mobile .rewards-modal.rw-wide,
+  body.mobile .hub-panel,
+  body.mobile .whisper-modal,
+  body.mobile .notif-panel,
+  body.mobile .modmenu {
+    width: 100% !important; max-width: none !important; margin: 0;
+    border-radius: 18px 18px 0 0; border-width: 1px 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    animation: m-sheet-up .18s ease-out;
+  }
+  body.mobile .chat-filter-modal { max-height: 88dvh; padding: 18px 18px calc(18px + env(safe-area-inset-bottom, 0px)); }
+  body.mobile .rewards-modal.rw-wide { height: 88dvh; max-height: 88dvh; }
+  body.mobile .hidden-channels-modal { max-height: 80dvh; }
+  body.mobile .hub-panel { height: 90dvh; }
+  /* the ones placed beside their button on desktop sit at the bottom instead */
+  body.mobile .whisper-modal,
+  body.mobile .notif-panel,
+  body.mobile .modmenu { position: fixed; top: auto !important; bottom: 0 !important; left: 0 !important; right: 0 !important; }
+  body.mobile .whisper-modal { height: 85dvh; max-height: none; }
+  body.mobile .notif-panel { height: 85dvh !important; max-height: none !important; }
+  body.mobile .modmenu { max-height: 85dvh; overflow-y: auto; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
+  body.mobile .whisper-overlay, body.mobile .modmenu-overlay { background: rgba(0, 0, 0, .5); }
+
+  /* Points & Drops: the title and ✕ on one line, the tabs across the sheet under them */
+  body.mobile .rewards-modal .chat-filter-header { flex-wrap: wrap; row-gap: 12px; }
+  body.mobile .rewards-modal .chat-filter-header > span:first-child { white-space: nowrap; font-size: 18px; }
+  body.mobile .rewards-modal .rw-tabs { order: 3; flex: 1 0 100%; display: flex; margin: 0; padding: 3px; gap: 3px;
+    border-radius: 10px; background: var(--m-bg, #0e1116); }
+  body.mobile .rewards-modal .rw-tab { flex: 1; padding: 8px 6px; font-size: 14px; white-space: nowrap; }
+  body.mobile .rewards-modal .chat-filter-close { margin-left: auto; }
+
+  /* Drops hub: Drops, Refresh and ✕ on top, the search across the sheet under them */
+  body.mobile .hub-head { flex-wrap: wrap; gap: 10px; padding: 16px 14px 12px 18px; }
+  body.mobile .hub-search { order: 5; flex: 1 0 100%; width: auto; height: 40px; }
+  body.mobile .hub-search input { font-size: 15px; }
+  body.mobile .hub-body { padding-left: 14px; padding-right: 14px; }
+  /* a campaign: small box art beside its game and name, the rewards across the whole card under them */
+  body.mobile .drops-campaign { display: grid; grid-template-columns: 52px 1fr; column-gap: 12px; align-items: start; }
+  body.mobile .drops-campaign > .drops-art { width: 52px; height: 70px; grid-row: 1 / span 2; }
+  body.mobile .drops-campaign > .drops-main { display: contents; }
+  body.mobile .drops-campaign .drops-game,
+  body.mobile .drops-campaign .drops-campaign-name { grid-column: 2; }
+  body.mobile .drops-campaign .drops-game { align-self: end; }
+  body.mobile .drops-campaign .drops-campaign-name { align-self: start; margin-top: 2px; }
+  body.mobile .drops-campaign .drops-reward { grid-column: 1 / -1; }
+  body.mobile .drops-campaign .drops-reward-name { white-space: normal; }
+}
+/* fingers, not a mouse: the text boxes and buttons in dialogs get a little taller */
+body.mobile .chat-filter-modal input[type="text"], body.mobile .chat-filter-modal input:not([type]) { min-height: 40px; font-size: 15px; }
+body.mobile .chat-filter-modal .chat-filter-add, body.mobile .pin-auth-btn { min-height: 40px; padding-left: 16px; padding-right: 16px; }
+body.mobile .chat-filter-close { min-width: 36px; min-height: 36px; }
+/* the theme-code box and its Use button share the row's width (they ran off the right edge) */
+body.mobile .settings-row.wide-control .settings-row-control { flex: 1 0 100%; width: 100%; }
+body.mobile .settings-import { width: 100%; }
+body.mobile .settings-import .settings-text { flex: 1; width: auto; min-width: 0; }
+/* "Chat paused due to scroll" sits just above where the messages end (mobile.js placePausedPill), a little larger
+   for a finger */
+body.mobile .jump-to-latest-btn { bottom: calc(var(--m-chat-below, 56px) + 8px); font-size: 12px; padding: 6px 12px; }
+/* sideways the chat column is narrow: the pill keeps inside it, on two lines if it has to */
+@media (orientation: landscape) {
+  body.mobile .jump-to-latest-btn { font-size: 11px; padding: 5px 10px; max-width: calc(100% - 12px); white-space: normal; text-align: center; line-height: 1.25; }
+}
+/* a phone's link preview (chat-link-preview.js _tapLinkPreview): opened by a tap, so it takes taps itself, with
+   the address and Open link / Copy under the preview */
+.link-preview-popup.tap { pointer-events: auto; width: min(320px, calc(100vw - 16px)); animation: emote-card-in .12s ease-out; }
+.link-preview-url {
+  font-size: 11.5px; color: var(--m-faint, #697386); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.link-preview-loading { font-size: 12px; color: var(--m-muted, #9aa5b4); }
+.link-preview-actions { display: flex; gap: 8px; padding: 0 12px 12px; }
+.link-preview-btn {
+  flex: 1; min-height: 38px; padding: 0 12px; border-radius: 9px; font: inherit; font-size: 13.5px; font-weight: 700;
+  color: var(--m-text, #e7ebf2); background: var(--m-raised, #232b36); border: 1px solid var(--m-border, #29313d); cursor: pointer;
+}
+.link-preview-btn.primary { color: var(--m-bg, #0e1116); background: var(--m-text, #e7ebf2); border-color: transparent; }
+
+/* ---- Phones: the mini player (mobile.js minimizePlayer / placeMini over mini-player.js). The stream floats
+   above the tab bar on the right while you browse; a tap returns to it, ✕ stops it, and it drags up and down.
+   mobile.js sets its place inline (as mini-player.js does on desktop) ---- */
+body.mobile #app.mini-player-active #video-frame {
+  width: min(58vw, 280px) !important; max-width: none !important; z-index: 9500;
+  border-radius: 10px; touch-action: none;
+}
+@media (orientation: landscape) {
+  body.mobile #app.mini-player-active #video-frame { width: min(34vw, 300px) !important; }
+}
+body.mobile.m-mini .m-ov, body.mobile.m-mini #chat-pane { display: none !important; }
+/* only the ✕, always showing (there's no hover to bring it up), and big enough for a finger */
+body.mobile .mini-player-bar { opacity: 1; padding: 5px; background: linear-gradient(to bottom, rgba(0, 0, 0, .45), rgba(0, 0, 0, 0)); justify-content: flex-end; }
+body.mobile .mini-player-expand, body.mobile .mini-player-drag { display: none; }
+body.mobile .mini-player-btn { width: 30px; height: 30px; border-radius: 15px; }
+/* the pages scroll clear of it at the bottom */
+body.mobile.m-mini .m-page, body.mobile.m-mini #browse-page { padding-bottom: calc(min(58vw, 280px) * 9 / 16 + 24px); }
+
+/* ---- Phones: your chat badges in the chat box (mobile.js wireInputBadges) ----
+   upright: in the box before the message, centered on the line, never scrolling; sideways: on the line above
+   the box, at its left */
+body.mobile #chat-input-badge:not(:empty) { display: flex !important; }
+body.mobile #chat-input-badge {
+  flex: none; align-self: center; align-items: center; gap: 3px; padding: 0 2px 0 4px; overflow: hidden; max-width: 92px;
+}
+body.mobile #chat-input-badge .chat-badge { width: 18px; height: 18px; flex: none; margin: 0; vertical-align: middle; }
+body.mobile .m-chat-extras #chat-input-badge { margin-right: auto; padding: 0 4px; max-width: none; }
+@media (orientation: landscape) {
+  body.mobile.m-watching .m-chat-extras:has(#chat-input-badge:not(:empty)) { display: flex !important; }
+}
+
+/* ---- Phones: the player while the stream starts (mobile.js): a spinner in place of the play button ---- */
+.m-spinner { display: none; }
+body.mobile #video-region.m-is-loading .m-spinner {
+  display: block; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; z-index: 3;
+  border-radius: 50%; border: 3px solid rgba(255, 255, 255, .22); border-top-color: #fff;
+  animation: m-spin .8s linear infinite; pointer-events: none;
+}
+@keyframes m-spin { to { transform: rotate(360deg); } }
+body.mobile #video-region.m-is-loading .m-ov-play { visibility: hidden; }
+body.mobile #video-element { background: #000; }
+
+/* ---- Phones: only the stream in the floating window and the mini player. Banners (drops, toasts, the app's
+   notices) belong to the full app; in a small floating box they'd cover the video or push it aside ---- */
+body.mobile.m-pip > *:not(#app),
+body.mobile.m-pip #app > *:not(#video-column),
+body.mobile.m-pip #video-column > *:not(#video-frame),
+body.mobile.m-pip #video-frame > *:not(#video-region),
+body.mobile.m-pip #video-region > *:not(video):not(#video-placeholder):not(#audio-only-overlay):not(.m-spinner) { display: none !important; }
+body.mobile.m-mini #drops-banner,
+body.mobile.m-mini #video-region > *:not(video):not(#video-placeholder):not(#audio-only-overlay):not(.m-spinner):not(.mini-player-overlay) { display: none !important; }
+body.mobile.m-mini #video-region.m-is-loading .m-spinner { width: 28px; height: 28px; margin: -14px 0 0 -14px; }

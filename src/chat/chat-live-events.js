@@ -10,6 +10,7 @@ import { getSetting } from "../settings.js";
 
 import { invoke } from "@tauri-apps/api/core";
 import { noteKnown, expectLater } from "../points-ledger.js";
+import { isAndroid } from "../mobile.js";
 
 // adaptive polling: fast only while something is running (countdowns, betting), slow otherwise. a fixed
 // 5s cadence meant two requests every 5 seconds for channels that almost never run a prediction or poll
@@ -695,7 +696,7 @@ export const chatLiveEventsMixin = {
       row.title = ended ? c.title : voted ? (voted === c.id ? "Your vote" : c.title) : `Vote for ${c.title}`;
     });
     const foot = card.querySelector(".le-poll-foot");
-    if (foot) foot.textContent = `${fmtFull(total)} vote${total === 1 ? "" : "s"}` + (voted ? " · you voted" : ended ? "" : " · click a choice to vote");
+    if (foot) foot.textContent = `${fmtFull(total)} vote${total === 1 ? "" : "s"}` + (voted ? " · you voted" : ended ? "" : (isAndroid ? " · tap a choice to vote" : " · click a choice to vote"));
     const errEl = card.querySelector(".le-error");
     if (errEl) { errEl.textContent = s.error || ""; errEl.style.display = s.error ? "" : "none"; }
   },
