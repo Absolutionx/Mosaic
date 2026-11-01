@@ -1874,8 +1874,13 @@ pub async fn get_drops_inventory(app: tauri::AppHandle) -> Result<serde_json::Va
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("{game}|{campaign}"));
                 let end = c.get("endAt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // whether your game account is linked (Twitch won't hand over a drop until it is) and where to link
+                // it. missing from the answer: taken as linked, so nothing warns without a reason
+                let connected = c.pointer("/self/isAccountConnected").and_then(|v| v.as_bool()).unwrap_or(true);
+                let link_url = c.get("accountLinkURL").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 out.push(serde_json::json!({
-                    "id": cid, "game": game, "game_id": game_id, "campaign": campaign, "box_art": box_art, "drops": drops, "end": end
+                    "id": cid, "game": game, "game_id": game_id, "campaign": campaign, "box_art": box_art, "drops": drops, "end": end,
+                    "connected": connected, "link_url": link_url
                 }));
             }
         }

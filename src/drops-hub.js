@@ -263,6 +263,19 @@ function renderInProgress(body, all, error, watching, ws, now, stale = false) {
     const sub = el("div", "drops-campaign-name", [c.campaign, fmtEnds(c.end)].filter(Boolean).join(" · "));
     if (earning) title.appendChild(el("span", "drops-earning", watching.login ? `Earning now · ${watching.login}` : "Earning now"));
     main.append(title, sub);
+    // Twitch won't hand over this campaign's rewards until your account with the game's maker is linked
+    const unlinked = c.connected === false;
+    if (unlinked) {
+      const note = el("div", "drops-link-note");
+      note.appendChild(el("span", null, `Link your ${c.game || "game"} account to get these drops.`));
+      if (c.link_url) {
+        const link = el("button", "hub-btn", "Link account");
+        link.type = "button";
+        link.addEventListener("click", () => opts.openUrl?.(c.link_url));
+        note.appendChild(link);
+      }
+      main.appendChild(note);
+    }
     for (const d of c.drops || []) {
       const row = el("div", "drops-reward" + (d.claimed ? " claimed" : ""));
       const img = el("img", "drops-reward-img"); img.alt = ""; img.loading = "lazy";
@@ -275,11 +288,16 @@ function renderInProgress(body, all, error, watching, ws, now, stale = false) {
       bar.appendChild(fill);
       info.appendChild(bar);
       const status = d.claimed ? "Claimed"
-        : d.claimable ? "Ready to claim"
+        : d.claimable ? (unlinked ? "Ready once your game account is linked" : "Ready to claim")
         : `${fmtLeft(d.required - d.current)} left · ${fmtLeft(d.current)} of ${fmtLeft(d.required)}`;
       info.appendChild(el("div", "drops-reward-status", status));
       row.append(img, info);
-      if (d.claimable && !d.claimed) {
+      if (d.claimable && !d.claimed && unlinked && c.link_url) {
+        const link = el("button", "hub-btn", "Link to claim");
+        link.type = "button";
+        link.addEventListener("click", () => opts.openUrl?.(c.link_url));
+        row.appendChild(link);
+      } else if (d.claimable && !d.claimed) {
         const claim = el("button", "hub-btn", "Claim");
         claim.type = "button";
         claim.addEventListener("click", async () => {
@@ -292,7 +310,10 @@ function renderInProgress(body, all, error, watching, ws, now, stale = false) {
             claim.remove();
           } catch (e) {
             claim.disabled = false; claim.textContent = "Claim";
-            row.querySelector(".drops-reward-status").textContent = `Couldn't claim (${String(e)})`;
+            const why = String(e);
+            row.querySelector(".drops-reward-status").textContent = /link|ACCOUNT|ELIGIB/i.test(why)
+              ? "Twitch won't hand this over until your game account is linked."
+              : /window has closed|EXPIRED|ENDED/i.test(why) ? "The time to claim this has run out." : `Couldn't claim (${why})`;
           }
         });
         row.appendChild(claim);

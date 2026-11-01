@@ -7,6 +7,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+// Twitch's activation page with the code filled in. The login's code comes back as a link that already carries
+// it (twitch.tv/activate?device-code=...), but the connection's (another Twitch client) comes back as the bare
+// page, so the code is added the same way
+export function activateUrl(uri, code) {
+  try {
+    const u = new URL(uri);
+    if (code && /(^|\.)twitch\.tv$/.test(u.hostname) && !u.searchParams.has("device-code")) u.searchParams.set("device-code", code);
+    return u.toString();
+  } catch {
+    return uri;
+  }
+}
+
 let overlay = null;
 
 function close() {
@@ -149,7 +162,7 @@ async function startFlow(modal, onConnected) {
   steps.innerHTML = `
     <div class="chat-filter-intro">1. Open the activation page and sign in if asked.</div>
     <div class="pin-auth-code" id="pin-auth-code"></div>
-    <div class="chat-filter-intro">2. Enter the code above to authorize, then come back here.</div>
+    <div class="chat-filter-intro">2. Check that Twitch shows the code above (enter it if it doesn't), authorize, then come back here.</div>
     <div class="pin-auth-actions">
       <button class="pin-auth-btn primary" id="pin-auth-open">Open twitch.tv/activate</button>
     </div>
@@ -157,7 +170,7 @@ async function startFlow(modal, onConnected) {
   modal.appendChild(steps);
   steps.querySelector("#pin-auth-code").textContent = info.user_code;
   steps.querySelector("#pin-auth-open").addEventListener("click", () => {
-    openUrl(info.verification_uri).catch(() => {});
+    openUrl(activateUrl(info.verification_uri, info.user_code)).catch(() => {});
   });
 
   // poll (long-running) until authorized or expired

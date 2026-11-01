@@ -11068,17 +11068,18 @@ body.mobile .mini-player-btn { width: 30px; height: 30px; border-radius: 15px; }
 /* the pages scroll clear of it at the bottom */
 body.mobile.m-mini .m-page, body.mobile.m-mini #browse-page { padding-bottom: calc(min(58vw, 280px) * 9 / 16 + 24px); }
 
-/* ---- Phones: your chat badges in the chat box (mobile.js wireInputBadges) ----
-   upright: in the box before the message, centered on the line, never scrolling; sideways: on the line above
-   the box, at its left */
+/* ---- Phones: your chat badges in the chat box, upright: before the message, centered on the line, never
+   scrolling. Sideways the chat column is too narrow for them, so they're left out there. The emote button, the
+   badges and the message sit evenly spaced (the box's own gap and the button's padding made wide holes) ---- */
+body.mobile .chat-input-wrapper { gap: 0 !important; }
+body.mobile #chat-emote-btn { margin-right: -6px !important; }
 body.mobile #chat-input-badge:not(:empty) { display: flex !important; }
 body.mobile #chat-input-badge {
-  flex: none; align-self: center; align-items: center; gap: 3px; padding: 0 2px 0 4px; overflow: hidden; max-width: 92px;
+  flex: none; align-self: center; align-items: center; gap: 3px; padding: 0 4px 0 2px; overflow: hidden; max-width: 92px;
 }
 body.mobile #chat-input-badge .chat-badge { width: 18px; height: 18px; flex: none; margin: 0; vertical-align: middle; }
-body.mobile .m-chat-extras #chat-input-badge { margin-right: auto; padding: 0 4px; max-width: none; }
 @media (orientation: landscape) {
-  body.mobile.m-watching .m-chat-extras:has(#chat-input-badge:not(:empty)) { display: flex !important; }
+  body.mobile.m-watching #chat-input-badge { display: none !important; }
 }
 
 /* ---- Phones: the player while the stream starts (mobile.js): a spinner in place of the play button ---- */
@@ -11102,3 +11103,24 @@ body.mobile.m-pip #video-region > *:not(video):not(#video-placeholder):not(#audi
 body.mobile.m-mini #drops-banner,
 body.mobile.m-mini #video-region > *:not(video):not(#video-placeholder):not(#audio-only-overlay):not(.m-spinner):not(.mini-player-overlay) { display: none !important; }
 body.mobile.m-mini #video-region.m-is-loading .m-spinner { width: 28px; height: 28px; margin: -14px 0 0 -14px; }
+
+/* ---- Drops that need your game account linked (rewards.js, drops-hub.js): a note with the link, in place of a
+   Claim button that can't work; why a claim didn't go through, under the reward ---- */
+.rw-link-note, .drops-link-note {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-top: 10px; padding: 8px 10px; border-radius: 9px; font-size: 12.5px; line-height: 1.35;
+  color: var(--m-text, #e7ebf2); background: color-mix(in srgb, #f5a623 12%, transparent);
+  border: 1px solid color-mix(in srgb, #f5a623 35%, transparent);
+}
+.rw-link-btn {
+  flex: none; padding: 5px 12px; border-radius: 8px; font: inherit; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  color: var(--m-bg, #0e1116); background: var(--m-text, #e7ebf2); border: 0;
+}
+.rw-claim-note {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 12px; line-height: 1.35; color: #f5c26b;
+}
+body.mobile .rw-link-btn { min-height: 34px; padding: 0 14px; font-size: 13.5px; }
+@media (orientation: portrait) {
+  body.mobile .drops-campaign .drops-link-note { grid-column: 1 / -1; }
+}

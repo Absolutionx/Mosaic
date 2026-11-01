@@ -2,6 +2,7 @@
 // user hasn't done the device login this offers to start it (reusing the pin-auth flow).
 
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { openDropsHub, fmtLeft, fmtEnds, boxArt } from "./drops-hub.js";
 import { noteKnown } from "./points-ledger.js";
 import { renderLedger } from "./ledger-view.js";
@@ -107,6 +108,33 @@ function openComposer(row, btn, { placeholder, cost, onSend }) {
     // Escape cancels the message instead of closing the whole panel
     if (e.key === "Escape") { e.stopPropagation(); close(); }
   });
+}
+
+// why a claim didn't go through, in words (Twitch's reason comes from helix.rs claim_result)
+function claimMessage(err) {
+  const e = String(err || "");
+  if (/link|ACCOUNT|ELIGIB/i.test(e)) return "Twitch won't hand this over until your game account is linked.";
+  if (/window has closed|EXPIRED|ENDED/i.test(e)) return "The time to claim this has run out.";
+  if (/Not connected/i.test(e)) return "This needs the Twitch connection (Settings › Account).";
+  return `Couldn't claim: ${e.replace(/^Error:\s*/, "")}`;
+}
+// that message under the reward's line, with the link to connect the game account when there is one
+function claimNote(btn, text, link) {
+  const row = btn.closest(".rw-drop");
+  if (!row) return;
+  row.querySelector(".rw-claim-note")?.remove();
+  const note = document.createElement("div");
+  note.className = "rw-claim-note";
+  note.appendChild(document.createElement("span")).textContent = text;
+  if (link && /linked/.test(text)) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rw-link-btn";
+    b.textContent = "Link account";
+    b.addEventListener("click", () => openUrl(link).catch(() => {}));
+    note.appendChild(b);
+  }
+  row.querySelector(".rw-drop-main")?.appendChild(note);
 }
 
 // one reward line in a drops card: picture, name, status on the right, progress bar under
@@ -324,8 +352,19 @@ async function render(body, channelLogin, channelId, flash) {
           <span class="rw-camp-count" title="Rewards claimed">${done}/${all.length}</span>
           <button class="rewards-drop-hide" data-cid="${esc(c.id)}" title="Hide these drops">×</button>
         </div>`;
+      // Twitch won't hand over this campaign's rewards until your account with the game's maker is linked:
+      // say so, with the link, instead of a Claim button that can't work
+      const unlinked = c.connected === false;
+      if (unlinked) {
+        html += `<div class="rw-link-note"><span>Link your ${esc(c.game || "game")} account to get these drops.</span>${
+          c.link_url ? `<button type="button" class="rw-link-btn" data-url="${esc(c.link_url)}">Link account</button>` : ""}</div>`;
+      }
       // rewards ready to claim come first, each with its own button
-      for (const d of ready) html += dropRow(d, `<button class="rewards-claim" data-id="${esc(d.drop_instance_id)}">Claim</button>`, 100);
+      for (const d of ready) {
+        html += dropRow(d, unlinked && c.link_url
+          ? `<button class="rw-link-btn rw-link-claim" data-url="${esc(c.link_url)}">Link to claim</button>`
+          : `<button class="rewards-claim" data-id="${esc(d.drop_instance_id)}" data-link="${esc(c.link_url || "")}">Claim</button>`, 100);
+      }
       if (next) {
         const pct = next.required > 0 ? Math.min(100, Math.round((next.current / next.required) * 100)) : 0;
         html += dropRow(next, `<span class="rw-left">${fmtLeft(next.required - next.current)} left</span>`, pct, "rw-next");
@@ -487,18 +526,26 @@ async function render(body, channelLogin, channelId, flash) {
       btn.textContent = btn.textContent.replace(open ? "hide" : "show", open ? "show" : "hide");
     });
   });
+  body.querySelectorAll(".rw-link-btn").forEach((btn) => {
+    btn.addEventListener("click", () => openUrl(btn.getAttribute("data-url")).catch(() => {}));
+  });
   body.querySelectorAll(".rewards-claim:not(.rewards-share)").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.getAttribute("data-id");
+      const link = btn.getAttribute("data-link") || "";
       btn.disabled = true;
       btn.textContent = "Claiming…";
       try {
         await invoke("claim_drop", { dropInstanceId: id });
         await render(body, channelLogin, channelId);
+        // Twitch said yes but still lists it as ready: say so rather than showing the same Claim again
+        const again = body.querySelector(`.rewards-claim[data-id="${CSS.escape(id)}"]`);
+        if (again) claimNote(again, "Twitch accepted the claim but still shows it as ready. It can take a minute; if it stays, check that your game account is linked.", link);
       } catch (err) {
         btn.disabled = false;
         btn.textContent = "Retry";
-        btn.title = `Couldn't claim: ${String(err)}`; // Twitch's reason (e.g. the claim window closed)
+        btn.title = `Couldn't claim: ${String(err)}`;
+        claimNote(btn, claimMessage(err), link);
       }
     });
   });

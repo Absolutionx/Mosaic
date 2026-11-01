@@ -80,7 +80,6 @@ export function initMobile(d = {}) {
   placePausedPill();
   wireMini();
   wireSwipeDown();
-  wireInputBadges();
   wireBack();
   wireWake();
   wireKeyboard();
@@ -195,14 +194,19 @@ function scrollTabTop(id) {
   target?.scrollTo?.({ top: 0, behavior: "smooth" });
 }
 
-function setTab(id) {
+// the tab bar and title showing a tab, without asking the app to open its page (it already has)
+function showTab(id) {
   document.body.dataset.mtab = id;
   if (titleEl) titleEl.textContent = TITLES[id];
   tabs?.querySelectorAll(".m-tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === id));
+  if (id === "browse") topTabs();
+}
+
+function setTab(id) {
+  showTab(id);
   // Top is the app's own Browse page; the others are ours, shown over the (hidden) Home page. switching also
   // closes a channel's Videos page if one is open
   document.getElementById(id === "browse" ? "browse-tab" : "home-tab")?.click();
-  if (id === "browse") topTabs();
   if (id === "following") renderFollowing();
   if (id === "search") showSearchStart();
 }
@@ -249,6 +253,14 @@ function buildPages() {
     .observe(side, { childList: true, subtree: true });
   const loginBtn = document.getElementById("login-btn");
   if (loginBtn) new MutationObserver(() => renderFollowing()).observe(loginBtn, { attributes: true, attributeFilter: ["class"] });
+  // the app opening its Browse page by itself (the Drops hub's Find streams, a category link elsewhere) is the
+  // Top tab here: switch the tabs to it, or the page stays hidden under the tab you were on
+  const browse = document.getElementById("browse-page");
+  if (browse) new MutationObserver(() => {
+    if (browse.style.display !== "block" || document.body.dataset.mtab === "browse") return;
+    topOpened = true; // it opened on something (a category): don't turn it to Streams
+    showTab("browse");
+  }).observe(browse, { attributes: true, attributeFilter: ["style"] });
 }
 
 function fmtUptime(startedAt) {
@@ -1012,26 +1024,6 @@ function wireSwipeDown() {
   };
   region.addEventListener("touchend", end);
   region.addEventListener("touchcancel", reset);
-}
-
-// ---- your chat badges in the chat box ----
-// Upright they sit in the box before the message, as on twitch.tv. Sideways the chat column is too narrow to
-// spare the room, so they move up to the line above the box (with the points and mod buttons), on its left
-function wireInputBadges() {
-  const badge = document.getElementById("chat-input-badge");
-  const wrapper = document.getElementById("chat-input-wrapper");
-  const input = document.getElementById("chat-input");
-  if (!badge || !wrapper || !input) return;
-  const place = () => {
-    const extras = document.querySelector(".m-chat-extras");
-    if (isLandscape() && extras) {
-      if (badge.parentElement !== extras) extras.prepend(badge);
-    } else if (badge.parentElement !== wrapper) {
-      wrapper.insertBefore(badge, input);
-    }
-  };
-  window.matchMedia("(orientation: landscape)").addEventListener("change", place);
-  place();
 }
 
 // ---- "Chat paused due to scroll": just above the chat box ----

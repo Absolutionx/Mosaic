@@ -31,6 +31,8 @@ async function tick() {
   const done = loadMap(DONE_KEY), retry = loadMap(RETRY_KEY);
   const now = Date.now();
   for (const c of campaigns) {
+    // the game account isn't linked: Twitch refuses these until it is (Points & Drops says so)
+    if (c.connected === false) continue;
     for (const d of c.drops || []) {
       const id = d.drop_instance_id;
       if (!d.claimable || d.claimed || !id) continue;

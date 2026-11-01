@@ -71,6 +71,18 @@ jobs:
       - name: Generate the Android project
         run: npx tauri android init --ci
 
+      # Tauri's template comes with Tauri's logo as the app icon. src-tauri/android-res holds Mosaic's: the desktop
+      # logo on Mosaic's dark background as an Android adaptive icon (with a one-color version for themed icons),
+      # plus plain tiles for launchers that don't use adaptive icons. Copied over the template's files
+      - name: Use Mosaic's app icon
+        run: |
+          res=src-tauri/gen/android/app/src/main/res
+          manifest=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          cp -r src-tauri/android-res/. "$res/"
+          ls -R "$res" | head -n 60
+          grep -n 'android:icon\|android:roundIcon' "$manifest" || true
+          grep -q 'android:icon="@mipmap/ic_launcher"' "$manifest" || { echo "::error::the manifest doesn't use @mipmap/ic_launcher as the app icon"; exit 1; }
+
       # Mosaic plays video through its own small server on the phone (http://127.0.0.1, see stream_relay.rs).
       # Android blocks plain-http connections in release builds unless the app allows them, and Tauri's
       # template only allows them in debug builds, so the release build is switched to allow them too.

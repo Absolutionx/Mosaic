@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mosaic's launcher icon (src-tauri/android-res, copied over Tauri's template by build-android.yml) -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/mosaic_icon_bg" />
+    <foreground android:drawable="@mipmap/mosaic_icon_fg" />
+    <monochrome android:drawable="@mipmap/mosaic_icon_mono" />
+</adaptive-icon>
