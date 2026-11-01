@@ -602,6 +602,8 @@ const sidebar = new ChannelsSidebar({
 });
 sidebar.init(loginSettled);
 // phone layout on Android (mobile.js); nothing on desktop
+// the quality to go back to when the phone comes back from playing Audio only in the background (initMobile)
+let qualityBeforeBackground = null;
 initMobile({
   getFollowed: () => sidebar.followed || [],
   isPinned: (login) => sidebar._isFavorite(login),
@@ -613,6 +615,20 @@ initMobile({
   watch: (login) => paletteWatch(login),
   stop: () => stopPlayback({ returnToPage: true }),
   showMini: () => activateMiniPlayer(),
+  // Background audio on a phone: Android stops a video (picture and sound) when the app is out of sight but lets
+  // sound alone play, so out of sight the stream switches to Audio only and back to its quality on return
+  backgroundAudioOnly: (on) => {
+    if (!session.playing || playbackControls._isKickSession) return;
+    if (on) {
+      if (qualityBeforeBackground || session.currentQuality === "audio_only") return;
+      qualityBeforeBackground = session.currentQuality || "best";
+      restartStreamWithQuality("audio_only");
+    } else if (qualityBeforeBackground) {
+      const q = qualityBeforeBackground;
+      qualityBeforeBackground = null;
+      if (session.currentQuality === "audio_only") restartStreamWithQuality(q);
+    }
+  },
   liveLag: () => playbackControls.liveLag(),
   jumpToLive: () => playbackControls.jumpToLive(),
   expandStream: () => returnToFullStream(),

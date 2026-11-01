@@ -10764,8 +10764,11 @@ body.mobile .m-send, body.mobile #chat-settings-btn {
 body.mobile .m-send { display: none; }
 body.mobile .chat-input-row.m-has-text .m-send { display: flex; color: #fff; }
 
+/* "Sideways" below means a screen at least 13:9 wide (a phone turned sideways), not just wider than tall: a
+   squarish screen, like a Galaxy Z Flip's cover screen or a Fold's inner one, gets the upright layout with chat
+   under the video (mobile.js isLandscape uses the same test) */
 /* ---- watching, sideways: video and chat side by side ---- */
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching #app {
     padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
     grid-template-columns: minmax(0, 1fr) min(30vw, 360px) !important;
@@ -10889,14 +10892,14 @@ body.mobile .browse-game-name { font-size: 13.5px; }
 body.mobile .browse-game-viewers { font-size: 12.5px; }
 
 /* sideways chat is Frosty's width: a fifth of the screen */
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching #app { grid-template-columns: minmax(0, 1fr) max(20vw, 170px) !important; }
   body.mobile.m-watching.m-full #app { grid-template-columns: minmax(0, 1fr) !important; }
   body.mobile.m-watching.m-full.m-chatover #chat-pane { width: max(20vw, 170px); }
   body.mobile.m-watching.m-full.m-chatover .m-ov { right: max(20vw, 170px); }
   body.mobile.m-watching #chat-input { font-size: 14px; }
 }
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching .chat-input-row { gap: 0; padding: 4px 2px 4px 6px; }
   body.mobile.m-watching .m-send, body.mobile.m-watching #chat-settings-btn { width: 34px; height: 34px; }
   body.mobile.m-watching #chat-input { min-height: 34px; white-space: nowrap; }
@@ -10916,7 +10919,7 @@ body.mobile .chat-input-row .m-chat-extra {
   display: inline-flex; align-items: center; gap: 4px;
 }
 body.mobile .chat-input-row #rewards-btn .rewards-balance { display: inline; font-size: 12px; }
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching #chat-input { height: 32px; padding: 6px 4px !important; font-size: 14px !important; }
   body.mobile.m-watching .chat-input-row .m-chat-extra { padding: 0 6px; }
 }
@@ -10956,7 +10959,7 @@ html:has(body.mobile), body.mobile { overflow: hidden; height: 100%; }
 body.mobile .m-chat-extras { display: flex; align-items: center; gap: 4px; flex: none; }
 body.mobile .chat-input-wrapper { flex: 1 1 0; min-width: 0; }
 /* sideways, chat is narrow: those buttons get their own line above the box, which then has the full width */
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching .chat-input-row { flex-wrap: wrap; row-gap: 4px; }
   body.mobile.m-watching .m-chat-extras { order: -1; flex: 0 0 100%; justify-content: flex-end; }
   body.mobile.m-watching .m-chat-extras:not(:has(.m-chat-extra:not([style*="display: none"]))) { display: none; }
@@ -10968,7 +10971,7 @@ body.mobile .chat-input-wrapper { flex: 1 1 0; min-width: 0; }
    connection, hidden channels, channels to preload, whispers, notifications, mod controls). Upright, a centered
    desktop box leaves thin margins and squeezes its header; a full-width sheet from the bottom is what Frosty and
    Twitch's app use. Sideways there's room for the desktop layouts, so they stay ---- */
-@media (orientation: portrait) {
+@media (max-aspect-ratio: 13/9) {
   body.mobile .chat-filter-overlay,
   body.mobile .hidden-channels-overlay,
   body.mobile .hub-backdrop { align-items: flex-end; justify-content: stretch; padding: 0; }
@@ -11033,7 +11036,7 @@ body.mobile .settings-import .settings-text { flex: 1; width: auto; min-width: 0
    for a finger */
 body.mobile .jump-to-latest-btn { bottom: calc(var(--m-chat-below, 56px) + 8px); font-size: 12px; padding: 6px 12px; }
 /* sideways the chat column is narrow: the pill keeps inside it, on two lines if it has to */
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile .jump-to-latest-btn { font-size: 11px; padding: 5px 10px; max-width: calc(100% - 12px); white-space: normal; text-align: center; line-height: 1.25; }
 }
 /* a phone's link preview (chat-link-preview.js _tapLinkPreview): opened by a tap, so it takes taps itself, with
@@ -11057,7 +11060,7 @@ body.mobile #app.mini-player-active #video-frame {
   width: min(58vw, 280px) !important; max-width: none !important; z-index: 9500;
   border-radius: 10px; touch-action: none;
 }
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile #app.mini-player-active #video-frame { width: min(34vw, 300px) !important; }
 }
 body.mobile.m-mini .m-ov, body.mobile.m-mini #chat-pane { display: none !important; }
@@ -11078,7 +11081,7 @@ body.mobile #chat-input-badge {
   flex: none; align-self: center; align-items: center; gap: 3px; padding: 0 4px 0 2px; overflow: hidden; max-width: 92px;
 }
 body.mobile #chat-input-badge .chat-badge { width: 18px; height: 18px; flex: none; margin: 0; vertical-align: middle; }
-@media (orientation: landscape) {
+@media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching #chat-input-badge { display: none !important; }
 }
 
@@ -11121,7 +11124,7 @@ body.mobile.m-mini #video-region.m-is-loading .m-spinner { width: 28px; height: 
   margin-top: 6px; font-size: 12px; line-height: 1.35; color: #f5c26b;
 }
 body.mobile .rw-link-btn { min-height: 34px; padding: 0 14px; font-size: 13.5px; }
-@media (orientation: portrait) {
+@media (max-aspect-ratio: 13/9) {
   body.mobile .drops-campaign .drops-link-note { grid-column: 1 / -1; }
 }
 
@@ -11147,3 +11150,22 @@ body.mobile .m-ov-stats.m-behind .m-ov-golive {
   font: inherit; font-size: 13px; font-weight: 700; color: #0e1116; background: #fff; text-shadow: none;
 }
 body.mobile .m-ov-stats.m-behind .m-ov-uptime::before { background: #8a929e; }
+
+/* ---- Phones: a small, squarish screen (a Galaxy Z Flip's cover screen): chat sits under the video with room for
+   a few messages, and a bar on top of it folds it away (mobile.js wireChatFold). Folded, the video sits in the
+   middle and the bar stays at the bottom to bring chat back ---- */
+.m-chat-fold { display: none; }
+@media (max-aspect-ratio: 13/9) and (max-height: 640px) {
+  body.mobile.m-watching .m-chat-fold {
+    display: flex; align-items: center; justify-content: center; gap: 4px; flex: none; width: 100%; height: 26px;
+    padding: 0; border: 0; border-bottom: 1px solid rgba(255, 255, 255, .06); background: var(--m-bg);
+    color: var(--m-muted, #9aa5b4); font: inherit; font-size: 12.5px; font-weight: 600;
+  }
+  body.mobile.m-watching .m-chat-fold svg { transition: transform .15s ease; }
+  body.mobile.m-watching.m-chatfold .m-chat-fold svg { transform: rotate(180deg); }
+  body.mobile.m-watching.m-chatfold .m-chat-fold { border-bottom: 0; border-top: 1px solid rgba(255, 255, 255, .06); height: 34px; }
+  body.mobile.m-watching.m-chatfold #chat-pane > :not(.m-chat-fold) { display: none !important; }
+  body.mobile.m-watching.m-chatfold #app { grid-template-rows: 0 minmax(0, 1fr) auto !important; }
+  body.mobile.m-watching.m-chatfold #video-column { height: 100%; display: flex; flex-direction: column; justify-content: center; }
+  body.mobile.m-watching.m-chatfold #chat-pane { padding-bottom: var(--m-safe-bottom); }
+}

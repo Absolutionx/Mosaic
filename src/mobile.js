@@ -61,6 +61,7 @@ let searchEl = null;
 //   watch(login)             start watching a channel
 //   stop()                   stop the stream (the full stop the Stop button does)
 //   liveLag()                seconds a live stream is behind where it should play (null: not known)
+//   backgroundAudioOnly(on)  out of sight with Background audio: switch to Audio only (on), or back (off)
 //   jumpToLive()             back to the live edge
 //   showMini()               float the stream as the mini player (mini-player.js)
 //   expandStream()           from the mini player back to the full stream
@@ -80,6 +81,7 @@ export function initMobile(d = {}) {
   buildPlayerOverlay();
   buildChatRow();
   placePausedPill();
+  wireChatFold();
   wireMini();
   wireSwipeDown();
   wireBack();
@@ -587,7 +589,10 @@ function leavePlayer() {
 function setOrientation(mode) {
   invoke("set_orientation", { mode }).catch(() => {});
 }
-const isLandscape = () => window.matchMedia("(orientation: landscape)").matches;
+// sideways: a screen at least 13:9 wide. A squarish screen (a Z Flip's cover screen) counts as upright, with chat
+// under the video (styles.css uses the same test)
+const SIDEWAYS = "(min-aspect-ratio: 13/9)";
+const isLandscape = () => window.matchMedia(SIDEWAYS).matches;
 
 // the phone's status and navigation bars hide while watching sideways, as in Frosty (app_extras.rs
 // set_system_bars); a swipe from the edge shows them for a moment
@@ -598,7 +603,7 @@ function syncSystemBars() {
   barsHidden = hide;
   invoke("set_system_bars", { visible: !hide }).catch(() => {});
 }
-window.matchMedia("(orientation: landscape)").addEventListener("change", () => syncSystemBars());
+window.matchMedia(SIDEWAYS).addEventListener("change", () => syncSystemBars());
 
 // the rotate button turns the screen and holds it there only until the phone itself is turned that way (as
 // YouTube's and Twitch's apps do): from then on the phone's own turning takes over again, so turning it later
@@ -747,7 +752,7 @@ function buildPlayerOverlay() {
   // the desktop's PiP opens its own window, which a phone can't: Android's floating player instead
   document.getElementById("pip-btn")?.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); enterPip(); }, true);
   // turned upright by hand: full screen is a sideways thing
-  window.matchMedia("(orientation: landscape)").addEventListener("change", (e) => {
+  window.matchMedia(SIDEWAYS).addEventListener("change", (e) => {
     if (!e.matches) document.body.classList.remove("m-full", "m-chatover");
   });
 }
@@ -876,6 +881,33 @@ document.addEventListener("visibilitychange", () => {
     pausedForBackground = false;
     if (video.paused) document.getElementById("play-pause-btn")?.click();
   }
+});
+
+// Background audio "When locked" / "Always": Android stops a video, picture and sound, the moment Mosaic is out
+// of sight, but lets sound alone keep playing. So out of sight (with the screen locked, for When locked;
+// anywhere, for Always) the stream switches to Audio only, as Twitch's app does, and back to its quality when you
+// return. A floating window (picture-in-picture) is in sight and keeps the video
+let audioOnlyForBackground = false;
+document.addEventListener("visibilitychange", () => {
+  const b = document.body.classList;
+  if (document.visibilityState !== "hidden") {
+    if (audioOnlyForBackground) {
+      audioOnlyForBackground = false;
+      deps.backgroundAudioOnly?.(false);
+    }
+    return;
+  }
+  if (!b.contains("m-watching") && !b.contains("m-mini")) return;
+  const mode = readPrefs().backgroundAudio;
+  if (mode === "never") return;
+  // going into the floating window hides the page for a moment too: wait to see which it is
+  setTimeout(async () => {
+    if (document.visibilityState !== "hidden" || b.contains("m-pip")) return;
+    if (mode === "locked" && await invoke("screen_on").catch(() => true)) return; // another app, not the lock
+    if (document.visibilityState !== "hidden") return;
+    audioOnlyForBackground = true;
+    deps.backgroundAudioOnly?.(true);
+  }, 700);
 });
 
 // sleep timer: stops the stream after a while
@@ -1081,6 +1113,33 @@ function wireSwipeDown() {
   };
   region.addEventListener("touchend", end);
   region.addEventListener("touchcancel", reset);
+}
+
+// ---- folding chat away on a small, squarish screen (a Z Flip's cover screen) ----
+// There chat sits under the video with room for a few messages; a bar on top of it folds it away (and back), and
+// the choice is remembered. The bar only shows on screens that short (styles.css)
+const FOLD_KEY = "mobileChatFolded";
+function wireChatFold() {
+  const pane = document.getElementById("chat-pane");
+  if (!pane || pane.querySelector(".m-chat-fold")) return;
+  const bar = el("button", "m-chat-fold");
+  bar.type = "button";
+  bar.setAttribute("aria-label", "Fold chat away");
+  bar.innerHTML = `<span>Chat</span>${svg(ICONS.chevron, 16)}`;
+  const apply = (folded) => {
+    document.body.classList.toggle("m-chatfold", folded);
+    bar.setAttribute("aria-expanded", String(!folded));
+    bar.setAttribute("aria-label", folded ? "Show chat" : "Fold chat away");
+  };
+  let folded = false;
+  try { folded = localStorage.getItem(FOLD_KEY) === "1"; } catch { /* not folded */ }
+  apply(folded);
+  bar.addEventListener("click", () => {
+    folded = !folded;
+    apply(folded);
+    try { localStorage.setItem(FOLD_KEY, folded ? "1" : "0"); } catch { /* not remembered */ }
+  });
+  pane.prepend(bar);
 }
 
 // ---- "Chat paused due to scroll": just above the chat box ----

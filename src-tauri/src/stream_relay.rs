@@ -2088,10 +2088,12 @@ async fn vod_usher_url(id: &str) -> Result<String, String> {
     .await
     .map_err(|e| format!("{e} for VOD {id}"))?;
     Ok(format!(
-        "https://usher.ttvnw.net/vod/{id}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
+        "https://usher.ttvnw.net/vod/{id}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only={}\
 &p={}&player_backend=mediaplayer&playlist_include_framerate=true&supported_codecs=avc1",
         pct_encode(&sig),
         pct_encode(&value),
+        // the phone also offers Audio only, and plays it in the background (a video stops when the screen locks)
+        cfg!(target_os = "android"),
         rand::random::<u32>() % 10_000_000,
     ))
 }
@@ -2124,10 +2126,12 @@ async fn live_usher_url(login: &str) -> Result<String, String> {
     .await
     .map_err(|e| format!("{e} for {login}"))?;
     Ok(format!(
-        "https://usher.ttvnw.net/api/channel/hls/{login}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only=false\
+        "https://usher.ttvnw.net/api/channel/hls/{login}.m3u8?sig={}&token={}&allow_source=true&allow_audio_only={}\
 &fast_bread=true&p={}&player_backend=mediaplayer&playlist_include_framerate=true&supported_codecs=avc1",
         pct_encode(&sig),
         pct_encode(&value),
+        // the phone also offers Audio only, and plays it in the background (a video stops when the screen locks)
+        cfg!(target_os = "android"),
         rand::random::<u32>() % 10_000_000,
     ))
 }

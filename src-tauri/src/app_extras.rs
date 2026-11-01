@@ -870,6 +870,40 @@ pub fn set_background_playback(webview: tauri::Webview, mode: i32, playing: bool
     Ok(())
 }
 
+// whether the phone's screen is on (PowerManager.isInteractive). Background audio "When locked" asks when the
+// app goes out of sight: with the screen off it's locked, with it on another app came in front. true off Android
+#[tauri::command]
+pub async fn screen_on(webview: tauri::Webview) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel::<bool>();
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, _webview| {
+                    let on = (|| -> jni::errors::Result<bool> {
+                        let name = env.new_string("power")?;
+                        let pm = env.call_method(activity, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;",
+                            &[jni::objects::JValue::Object(&name)])?.l()?;
+                        env.call_method(&pm, "isInteractive", "()Z", &[])?.z()
+                    })();
+                    if on.is_err() {
+                        let _ = env.exception_clear();
+                    }
+                    let _ = tx.send(on.unwrap_or(true));
+                });
+            })
+            .map_err(|e| e.to_string())?;
+        return tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(true))
+            .await
+            .map_err(|e| e.to_string());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = webview;
+        Ok(true)
+    }
+}
+
 // Android pauses an app that goes into picture-in-picture, and Tauri's Android activity pauses the web view
 // with it (WryActivity.onPause -> WebView.onPause), which stops the video in the floating window. While the
 // app is floating, this resumes the web view so the stream keeps playing; and it says whether the app is still
