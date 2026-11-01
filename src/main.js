@@ -61,7 +61,7 @@ import { isKick, togglePlatform, onPlatformChange, setPlatform, feedInvoke } fro
 import { VodsPage } from "./vods.js";
 import { streamHasDropsEnabled } from "./drops.js";
 import { session } from "./session.js";
-import { initMobile, isAndroid } from "./mobile.js";
+import { initMobile, isAndroid, phoneLowLatency } from "./mobile.js";
 import { rememberSession, forgetSession, restoreSession } from "./session-restore.js";
 import { formatViewerCount } from "./format.js";
 import { checkStreamDeps } from "./deps-banner.js";
@@ -1631,7 +1631,7 @@ async function restartStreamWithQuality(quality, { auto = false } = {}) {
     // macOS native-HLS live: switch quality by resolving a fresh ad-free m3u8 and reattaching via hls.js, the live counterpart of the VOD switch above. no start_stream (that's the MSE path)
     const restartChannel = session.intendedChannel;
     try {
-      const m3u8Url = await invoke("get_live_m3u8_url", { channel: restartChannel, quality });
+      const m3u8Url = await invoke("get_live_m3u8_url", { channel: restartChannel, quality, lowLatency: isAndroid ? phoneLowLatency() : null });
       if (session.intendedChannel !== restartChannel || session.currentQuality !== quality) return;
       playbackControls.start(restartChannel, m3u8Url, quality, 0, 0, { nativeHlsLive: true });
       if (session.kickFailover) {
@@ -1899,6 +1899,8 @@ async function watchChannel(channel, stream) {
         const m3u8Url = await invoke("get_live_m3u8_url", {
           channel,
           quality: session.currentQuality,
+          // the phone's Low latency (Options sheet): Twitch's prefetched segments too (stream_relay.rs)
+          lowLatency: isAndroid ? phoneLowLatency() : null,
         });
         if (session.intendedChannel !== channel) return;
         session.playing = true;

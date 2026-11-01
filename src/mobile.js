@@ -301,6 +301,8 @@ function liveRow(c) {
   const row = el("button", "m-row");
   row.type = "button";
   const thumb = el("div", "m-thumb");
+  // a hype train on the channel lights the thumbnail up, as the desktop's cards do (hype-badges.js)
+  if (c.id) thumb.dataset.hypeId = c.id;
   if (c.thumbnail) {
     const img = el("img");
     img.loading = "lazy";
@@ -738,7 +740,12 @@ const PREFS_KEY = "mobilePlayback";
 function readPrefs() {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* defaults */ }
-  return { backgroundAudio: p.backgroundAudio === "always" ? "always" : "never", pip: p.pip !== false };
+  return { backgroundAudio: p.backgroundAudio === "always" ? "always" : "never", pip: p.pip !== false, lowLatency: p.lowLatency !== false };
+}
+// Low latency (the Options sheet; on unless turned off): Twitch's prefetched segments played too, closer to
+// live (stream_relay.rs prefetch_as_segments); main.js asks for the stream with it, vod-player.js plays it
+export function phoneLowLatency() {
+  return readPrefs().lowLatency;
 }
 function savePrefs(p) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
@@ -903,6 +910,13 @@ function openPlayerOptions() {
     close();
     setTimeout(() => document.getElementById("settings-btn")?.dispatchEvent(new MouseEvent("click", { bubbles: true })), 0);
   });
+  // takes effect at once: the stream restarts with it (as the player's refresh button does)
+  row("Low latency", "Plays a few seconds closer to live. Turn it off if the stream keeps buffering on a weak connection.",
+    toggle(prefs.lowLatency, (on) => {
+      prefs.lowLatency = on; savePrefs(prefs);
+      const c = deps.currentChannel?.();
+      if (c) deps.watch?.(c);
+    }));
   sheet.appendChild(el("div", "m-opt-section", "External playback options"));
   const bg = row("Background audio", "Keep the stream's sound playing when you leave Mosaic.", null);
   bg.classList.add("m-opt-stack");

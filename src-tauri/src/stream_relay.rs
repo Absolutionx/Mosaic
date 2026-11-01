@@ -1156,7 +1156,13 @@ fn m3u8_base(url: &str) -> &str {
 // the URIs inside point back at the same `route` (/hls-proxy or /hls-preview). on the "hls-preview" route (live hover previews,
 // whose playlist comes straight from Twitch rather than through streamlink) Twitch's stitched-ad segments
 // are dropped too, the job --twitch-disable-ads does for the other paths
+// "hls-live" (the phone's live player with Low latency on) is "hls-preview" that also plays Twitch's
+// prefetched segments, see prefetch_as_segments
 fn rewrite_m3u8_route(content: &str, base_url: &str, proxy_base: &str, route: &str) -> String {
+    if route == "hls-live" {
+        let filtered = strip_twitch_ad_segments(&prefetch_as_segments(content));
+        return rewrite_m3u8_lines(&filtered, base_url, proxy_base, route);
+    }
     if route == "hls-preview" {
         let filtered = strip_twitch_ad_segments(content);
         return rewrite_m3u8_lines(&filtered, base_url, proxy_base, route);
@@ -1187,6 +1193,41 @@ fn rewrite_m3u8_lines(content: &str, base_url: &str, proxy_base: &str, route: &s
             out.push_str(line);
             out.push('\n');
         }
+    }
+    out
+}
+
+// Twitch's low-latency playlists (usher's fast_bread) end with the next segment or two as
+// #EXT-X-TWITCH-PREFETCH:<url>, listed before they're finished; fetching one gets it as it's being made.
+// streamlink's --twitch-low-latency plays them as ordinary segments, which is what puts playback seconds
+// closer to live, and this does the same for hls.js: each becomes a segment as long as the last listed one,
+// titled "live". Not during an ad break: when the last segment is an ad, the prefetched ones are too, and
+// they're left out (strip_twitch_ad_segments drops the listed ad segments)
+fn prefetch_as_segments(content: &str) -> String {
+    if !content.contains("#EXT-X-TWITCH-PREFETCH:") {
+        return content.to_owned();
+    }
+    let mut out = String::with_capacity(content.len() + 128);
+    let mut last_dur = String::from("2.000");
+    let mut last_live = true;
+    for l in content.lines() {
+        let t = l.trim();
+        if let Some(rest) = t.strip_prefix("#EXTINF:") {
+            let (dur, title) = rest.split_once(',').unwrap_or((rest, ""));
+            if !dur.trim().is_empty() {
+                last_dur = dur.trim().to_string();
+            }
+            let title = title.trim();
+            last_live = title.is_empty() || title.eq_ignore_ascii_case("live");
+        } else if let Some(url) = t.strip_prefix("#EXT-X-TWITCH-PREFETCH:") {
+            let url = url.trim();
+            if last_live && !url.is_empty() {
+                out.push_str(&format!("#EXTINF:{last_dur},live\n{url}\n"));
+            }
+            continue;
+        }
+        out.push_str(l);
+        out.push('\n');
     }
     out
 }
@@ -1301,7 +1342,13 @@ async fn handle_hls_proxy(
     path: &str,
 ) -> std::io::Result<()> {
     // /hls-preview is /hls-proxy plus ad-segment filtering (live hover previews), see rewrite_m3u8_route
-    let route = if path.starts_with("/hls-preview") { "hls-preview" } else { "hls-proxy" };
+    let route = if path.starts_with("/hls-preview") {
+        "hls-preview"
+    } else if path.starts_with("/hls-live") {
+        "hls-live"
+    } else {
+        "hls-proxy"
+    };
     // extract ?url= query parameter
     let raw_url = path.split('?').nth(1)
         .and_then(|q| q.split('&').find(|p| p.starts_with("url=")))
@@ -1610,7 +1657,7 @@ async fn handle_connection(
     }
 
     // route: /hls-proxy?url=... proxies a Twitch CDN request with CORS headers. all other paths fall through to the stream relay
-    if path.starts_with("/hls-proxy") || path.starts_with("/hls-preview") {
+    if path.starts_with("/hls-proxy") || path.starts_with("/hls-preview") || path.starts_with("/hls-live") {
         return handle_hls_proxy(&mut socket, &state, path).await;
     }
     // route: /clip-proxy?url=... streams a Twitch clip MP4 (chat clip cards' in-app player)
@@ -1839,7 +1886,7 @@ pub async fn get_vod_m3u8_url(
             return Err("invalid video id".into());
         }
         check_quality(&quality)?;
-        return direct_playlist(&state, &vod_usher_url(&video_id).await?, &quality, false).await;
+        return direct_playlist(&state, &vod_usher_url(&video_id).await?, &quality, "hls-proxy").await;
     }
     let cdn_url = resolve_vod_cdn_url(&video_id, &quality).await?;
     // wrap in the local proxy so HLS.js fetches through localhost, sidestepping the Twitch CDN's missing CORS headers
@@ -1942,13 +1989,16 @@ pub async fn resolve_clip_url(
 pub async fn get_live_m3u8_url(
     channel: String,
     quality: String,
+    low_latency: Option<bool>,
     state: tauri::State<'_, Arc<StreamRelayState>>,
 ) -> Result<String, String> {
     check_login(&channel)?;
     check_quality(&quality)?;
-    // Android has no streamlink: the live playlist straight from Twitch, ads filtered by /hls-preview
+    // Android has no streamlink: the live playlist straight from Twitch, ads filtered by /hls-preview, and with
+    // Low latency (the phone player asks for it; on unless turned off) Twitch's prefetched segments played too (/hls-live)
     if cfg!(target_os = "android") {
-        return direct_playlist(&state, &live_usher_url(&channel).await?, &quality, true).await;
+        let route = if low_latency == Some(true) { "hls-live" } else { "hls-preview" };
+        return direct_playlist(&state, &live_usher_url(&channel).await?, &quality, route).await;
     }
     let target = format!("https://www.twitch.tv/{channel}");
     let mut cmd = Command::new(resolve_streamlink_path());
@@ -2084,14 +2134,14 @@ async fn live_usher_url(login: &str) -> Result<String, String> {
 
 // ---- Android: playback without streamlink (direct_hls.rs) ----
 // the usher playlist from a web playback token, one quality picked from it the way streamlink picks
-// ("720p60,720p,best"). live goes through /hls-preview, which drops Twitch's stitched ads (streamlink's job on
-// desktop); VODs carry no stitched ads and go through /hls-proxy
-async fn direct_playlist(state: &Arc<StreamRelayState>, master: &str, quality: &str, live: bool) -> Result<String, String> {
+// ("720p60,720p,best"). live goes through /hls-preview or /hls-live, which drop Twitch's stitched ads
+// (streamlink's job on desktop); VODs carry no stitched ads and go through /hls-proxy
+async fn direct_playlist(state: &Arc<StreamRelayState>, master: &str, quality: &str, route: &str) -> Result<String, String> {
     let variants = crate::direct_hls::fetch_variants(master).await?;
     let v = crate::direct_hls::pick(&variants, quality).ok_or("That quality isn't available for this stream.")?;
     ensure_listener_running(state).await?;
     let port = state.port.load(Ordering::Relaxed);
-    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), if live { "hls-preview" } else { "hls-proxy" }, &v.url))
+    Ok(proxy_url(&format!("http://127.0.0.1:{port}"), route, &v.url))
 }
 
 // builds a localhost hls-proxy URL for an arbitrary upstream HLS URL, starting the proxy listener first if it isn't running. that ensure step matters: on a fresh launch where playback starts through here without start_relay ever running, state.port is still 0 and any URL built from it is unusable (black screen). shared by get_vod_m3u8_url above and the Kick failover (kick.rs), the proxy itself is host-agnostic (it fetches whatever ?url= says with browser headers and rewrites playlist URIs recursively through itself), so non-Twitch HLS rides through it the same way
@@ -2570,6 +2620,41 @@ mod preview_ad_tests {
         let p = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:2.000,Amazon\na.ts\n#EXTINF:2.000,Amazon\nb.ts\n";
         let out = strip_twitch_ad_segments(p);
         assert!(!out.contains(".ts") && out.contains("#EXT-X-MEDIA-SEQUENCE:3"));
+    }
+}
+
+#[cfg(test)]
+mod prefetch_tests {
+    use super::{prefetch_as_segments, rewrite_m3u8_route};
+
+    const LIVE: &str = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n\
+#EXTINF:2.002,live\nhttps://cdn/a/100.ts\n#EXTINF:2.002,live\nhttps://cdn/a/101.ts\n\
+#EXT-X-TWITCH-PREFETCH:https://cdn/a/102.ts\n#EXT-X-TWITCH-PREFETCH:https://cdn/a/103.ts\n";
+
+    // the prefetched segments become ordinary ones, as long as the last listed, after the listed ones
+    #[test]
+    fn prefetched_segments_are_played() {
+        let out = prefetch_as_segments(LIVE);
+        assert!(!out.contains("PREFETCH"), "{out}");
+        assert!(out.ends_with("#EXTINF:2.002,live\nhttps://cdn/a/102.ts\n#EXTINF:2.002,live\nhttps://cdn/a/103.ts\n"), "{out}");
+        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:100\n"));
+    }
+
+    // during an ad break the prefetched segments are ads too: left out, and the ad itself is dropped
+    #[test]
+    fn not_during_an_ad_break() {
+        let p = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:5\n#EXTINF:2.000,live\nhttps://cdn/a/5.ts\n\
+#EXTINF:2.000,Amazon|123\nhttps://cdn/ad/6.ts\n#EXT-X-TWITCH-PREFETCH:https://cdn/ad/7.ts\n";
+        let out = rewrite_m3u8_route(p, "https://cdn/a/", "http://127.0.0.1:1", "hls-live");
+        assert!(!out.contains("ad%2F6") && !out.contains("ad%2F7") && !out.contains("PREFETCH"), "{out}");
+        assert!(out.contains("hls-live?"), "{out}");
+    }
+
+    // the other routes leave the prefetch tags alone (players there ignore them)
+    #[test]
+    fn only_on_the_live_route() {
+        let out = rewrite_m3u8_route(LIVE, "https://cdn/a/", "http://127.0.0.1:1", "hls-preview");
+        assert!(out.contains("#EXT-X-TWITCH-PREFETCH:"), "{out}");
     }
 }
 

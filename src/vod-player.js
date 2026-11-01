@@ -25,6 +25,13 @@ export function attachHlsVod(videoEl, m3u8Url, {
   liveEdge = false,
   // so the PiP window's hls output is distinguishable from the main player's
   logPrefix = "[hls.js]",
+  // a phone's Twitch live stream (playback-controls.js): false, or { lowLatency }. hls.js's own default plays 3
+  // segments (about 6s) behind the newest one. Without Low latency this plays 2 behind; with it, the playlist
+  // also lists the segments Twitch is still making (stream_relay.rs prefetch_as_segments), so 3 behind its end
+  // is closer to live than 2 behind the finished ones. Either way it speeds up a little (at most 1.1x, voices
+  // keep their pitch) when it drifts further back, and jumps ahead when it's fallen far behind (after the app
+  // was in the background, say)
+  closeToLive = false,
 } = {}) {
   if (!Hls.isSupported()) {
     // native HLS (Safari / some Chromium)
@@ -62,6 +69,12 @@ export function attachHlsVod(videoEl, m3u8Url, {
     // them off. Twitch's own player keeps captions off unless you ask for them
     enableCEA708Captions: false,
     subtitleDisplay: false,
+
+    ...(closeToLive ? {
+      liveSyncDurationCount: closeToLive.lowLatency ? 3 : 2,
+      liveMaxLatencyDurationCount: closeToLive.lowLatency ? 10 : 8,
+      maxLiveSyncPlaybackRate: 1.1,
+    } : {}),
   });
 
   hls.loadSource(m3u8Url);

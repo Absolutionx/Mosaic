@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetchVodChapters, fetchVodSeekPreviewsUrl } from "./chapters.js";
 import { loadVodStoryboard } from "./seek-thumbnails.js";
 import { attachHlsVod } from "./vod-player.js";
+import { isAndroid, phoneLowLatency } from "./mobile.js";
 import { formatViewerCount } from "./format.js";
 import { mutedRanges, mutedSkipTarget, mutedRangeAt, mutedSkipMode } from "./muted-skip.js";
 import { attachMseStream } from "./stream-player.js";
@@ -394,6 +395,8 @@ export class PlaybackControls {
       this._hlsVod = attachHlsVod(this.videoEl, url, {
         startPosition: -1,
         liveEdge: true,
+        // the phone plays as close to live as the desktop's relay does (vod-player.js closeToLive)
+        closeToLive: isAndroid ? { lowLatency: phoneLowLatency() } : false,
         onFatalError: (data) => {
           console.error("[hls.js] fatal in live:", data);
           this.onStreamDead?.("hls.js live pipeline failed");

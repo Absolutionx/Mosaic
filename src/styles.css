@@ -11124,3 +11124,17 @@ body.mobile .rw-link-btn { min-height: 34px; padding: 0 14px; font-size: 13.5px;
 @media (orientation: portrait) {
   body.mobile .drops-campaign .drops-link-note { grid-column: 1 / -1; }
 }
+
+/* ---- Phones: a hype train lights up the stream's thumbnail, as the desktop's cards do (hype-badges.js). The
+   desktop draws the glow around the whole card; a phone's rows span the screen, which made it two lines across
+   the list. The glow is the thumbnail's own shadow (its rounded clipping can't cut it off) ---- */
+body.mobile .home-grid-card.hype-active::before, body.mobile .home-grid-card.hype-active::after,
+body.mobile .m-thumb.hype-active::before, body.mobile .m-thumb.hype-active::after { display: none; }
+body.mobile .home-grid-card.hype-active .home-grid-thumb-wrap,
+body.mobile .m-thumb.hype-active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--m-accent) 75%, transparent), 0 0 14px color-mix(in srgb, var(--m-accent) 45%, transparent);
+}
+body.mobile .home-grid-card.hype-active.hype-golden .home-grid-thumb-wrap,
+body.mobile .m-thumb.hype-active.hype-golden {
+  box-shadow: 0 0 0 2px rgba(245, 179, 1, .8), 0 0 14px rgba(245, 179, 1, .45);
+}

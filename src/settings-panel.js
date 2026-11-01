@@ -233,7 +233,9 @@ if (isAndroid) {
   const desktopOnly = new Set(["autostart", "startMinimized", "closeToTray", "autoUpdateCheck", "devTools", "videoContextMenu",
     "autoPipOnBlur", "lurkMode", "autoTheater", "miniPlayer", "streamInfoOverlay",
     // a phone has no arrow keys or mouse to hover with
-    "seekStep", "pauseOnHover"]);
+    "seekStep", "pauseOnHover",
+    // the phone's own Low latency is in the player's Options (it works differently there: no streamlink)
+    "lowLatency"]);
   // Customize parts works by pointing at parts of the desktop layout (the sidebar, Home, MultiView…), and the chat
   // overlay's handle is the desktop's; the phone draws its own versions of these
   const desktopTitles = new Set(["Check for updates", "MultiView", "Customize parts", "Your changes", "All parts", "Reset all parts", "Overlay position"]);
