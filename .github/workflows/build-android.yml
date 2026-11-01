@@ -202,6 +202,36 @@ jobs:
           PY
           echo "After:"; cat "$f"
 
+      # Folding or unfolding a phone (a Galaxy Z Flip's cover and main screens), or a change of display size or
+      # density, would otherwise make Android tear Mosaic's activity down and build it again, which Tauri's app
+      # can't come back from (it froze on a black screen). Saying the activity handles those changes itself keeps
+      # it running; the page just lays itself out for the new screen
+      - name: Keep running when the phone folds or the screen changes
+        run: |
+          f=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          python3 - "$f" <<'PY'
+          import re, sys
+          path = sys.argv[1]
+          src = open(path).read()
+          want = ["orientation", "keyboardHidden", "keyboard", "screenSize", "smallestScreenSize", "screenLayout",
+                  "density", "uiMode", "locale", "layoutDirection", "fontScale", "navigation", "colorMode"]
+          m = re.search(r"<activity\b[^>]*android:name=\"\.MainActivity\"[^>]*>", src, re.S)
+          if not m:
+              sys.exit("couldn't find the MainActivity <activity> tag in the manifest")
+          tag = m.group(0)
+          cur = re.search(r'android:configChanges="([^"]*)"', tag)
+          have = cur.group(1).split("|") if cur else []
+          merged = "|".join(have + [w for w in want if w not in have])
+          if cur:
+              new_tag = tag[:cur.start()] + f'android:configChanges="{merged}"' + tag[cur.end():]
+          else:
+              new_tag = tag.replace("<activity", f'<activity android:configChanges="{merged}"', 1)
+          src = src[:m.start()] + new_tag + src[m.end():]
+          open(path, "w").write(src)
+          print(new_tag)
+          PY
+          grep -q 'density' "$f" || { echo "::error::couldn't set the activity's configChanges"; exit 1; }
+
       # what PlaybackService needs: to run as a foreground service that plays media, to keep the processor awake,
       # and to show its notification (Android 13+ asks you about notifications; without them it still plays)
       - name: Allow background playback

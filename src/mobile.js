@@ -131,6 +131,48 @@ function iconBtn(cls, icon, label, onClick, size = 22) {
   return b;
 }
 
+// ---- dragging a bottom sheet down closes it (its grip at the top says it can) ----
+// Down from the grip or the title, or from anywhere in the sheet while it's scrolled to its top. The sheet follows
+// the finger; let go past a quarter of its height (or with a quick flick) and it slides away and closes, otherwise
+// it springs back. A tap still taps: nothing moves until the finger has gone a few pixels down
+function dragToClose(sheet, close) {
+  let start = null;
+  sheet.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1) return;
+    const onTop = e.target.closest?.(".m-sheet-grip, .m-sheet-title");
+    if (!onTop && sheet.scrollTop > 0) return;
+    start = { y: e.touches[0].clientY, t: performance.now(), dy: 0, moving: false };
+  }, { passive: true });
+  sheet.addEventListener("touchmove", (e) => {
+    if (!start || e.touches.length !== 1) return;
+    const dy = e.touches[0].clientY - start.y;
+    if (!start.moving) {
+      if (dy < 6) { if (dy < -6) start = null; return; } // a tap, or scrolling the sheet up: leave it
+      start.moving = true;
+      sheet.style.transition = "none";
+    }
+    e.preventDefault();
+    start.dy = Math.max(0, dy);
+    sheet.style.transform = `translateY(${start.dy}px)`;
+  }, { passive: false });
+  const end = () => {
+    if (!start) return;
+    const { dy, moving, t } = start;
+    start = null;
+    if (!moving) return;
+    const fast = dy > 40 && dy / Math.max(1, performance.now() - t) > 0.6;
+    sheet.style.transition = "transform .18s ease-out";
+    if (dy > sheet.offsetHeight / 4 || fast) {
+      sheet.style.transform = "translateY(100%)";
+      setTimeout(close, 170);
+    } else {
+      sheet.style.transform = "";
+    }
+  };
+  sheet.addEventListener("touchend", end);
+  sheet.addEventListener("touchcancel", end);
+}
+
 // ---- a bottom sheet of choices (long-press on a stream, as in Frosty) ----
 function openSheet(title, items) {
   const shade = el("div", "m-sheet-shade");
@@ -150,6 +192,7 @@ function openSheet(title, items) {
   }
   shade.appendChild(sheet);
   shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
+  dragToClose(sheet, close);
   document.body.appendChild(shade);
   // Escape and Android's back button close it (escape-stack counts it as a dialog)
   popEsc = pushEscape(close);
@@ -762,7 +805,8 @@ const PREFS_KEY = "mobilePlayback";
 function readPrefs() {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* defaults */ }
-  const bg = p.backgroundAudio === "always" || p.backgroundAudio === "locked" ? p.backgroundAudio : "never";
+  // Background audio is When locked unless you've picked otherwise
+  const bg = p.backgroundAudio === "always" || p.backgroundAudio === "never" ? p.backgroundAudio : "locked";
   return { backgroundAudio: bg, pip: p.pip !== false, lowLatency: p.lowLatency === true };
 }
 
@@ -1007,6 +1051,7 @@ function openPlayerOptions() {
 
   shade.appendChild(sheet);
   shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
+  dragToClose(sheet, close);
   document.body.appendChild(shade);
   popEsc = pushEscape(close);
 }
