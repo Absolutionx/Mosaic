@@ -68,6 +68,7 @@ permissions = [
   "allow-set-system-bars",
   "allow-set-pip",
   "allow-pip-keep-playing",
+  "allow-set-background-playback",
   "allow-get-notify-channels",
   "allow-set-notify-channels",
   "allow-get-notify-category-targets",

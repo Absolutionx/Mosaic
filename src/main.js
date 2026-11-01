@@ -613,6 +613,8 @@ initMobile({
   watch: (login) => paletteWatch(login),
   stop: () => stopPlayback({ returnToPage: true }),
   showMini: () => activateMiniPlayer(),
+  liveLag: () => playbackControls.liveLag(),
+  jumpToLive: () => playbackControls.jumpToLive(),
   expandStream: () => returnToFullStream(),
   currentChannel: () => (session.playing ? String(playbackControls.currentChannel || "") : ""),
   currentQuality: () => playbackControls.currentQuality || "",

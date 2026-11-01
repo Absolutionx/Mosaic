@@ -838,6 +838,38 @@ fn android_pip(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, auto: bo
     Ok(())
 }
 
+// Background audio (the phone player's Options): mode 0 never, 1 while the screen is locked, 2 always.
+// `playing`: a stream is playing (full size or as the mini player). MainActivity (build-android.yml) keeps the
+// web view playing when the app is paused that way, and runs PlaybackService (src-tauri/android-src) while a
+// stream plays with it on, so Android keeps Mosaic awake with the screen off. title: the notification's line
+#[tauri::command]
+pub fn set_background_playback(webview: tauri::Webview, mode: i32, playing: bool, title: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, _webview| {
+                    let ok = (|| -> jni::errors::Result<()> {
+                        let t = env.new_string(&title)?;
+                        env.call_method(activity, "mosaicSetBackground", "(IZLjava/lang/String;)V",
+                            &[jni::objects::JValue::Int(mode.clamp(0, 2)), jni::objects::JValue::Bool(playing as u8), jni::objects::JValue::Object(&t)])?;
+                        Ok(())
+                    })();
+                    // an activity without the method (a build made before it was added): nothing to do
+                    if ok.is_err() {
+                        let _ = env.exception_clear();
+                    }
+                });
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (webview, mode, playing, title);
+    }
+    Ok(())
+}
+
 // Android pauses an app that goes into picture-in-picture, and Tauri's Android activity pauses the web view
 // with it (WryActivity.onPause -> WebView.onPause), which stops the video in the floating window. While the
 // app is floating, this resumes the web view so the stream keeps playing; and it says whether the app is still

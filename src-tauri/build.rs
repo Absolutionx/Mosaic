@@ -68,6 +68,7 @@ const APP_COMMANDS: &[&str] = &[
     "set_system_bars",
     "set_pip",
     "pip_keep_playing",
+    "set_background_playback",
     "get_notify_channels",
     "set_notify_channels",
     "get_notify_category_targets",

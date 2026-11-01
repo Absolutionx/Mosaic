@@ -1995,7 +1995,7 @@ pub async fn get_live_m3u8_url(
     check_login(&channel)?;
     check_quality(&quality)?;
     // Android has no streamlink: the live playlist straight from Twitch, ads filtered by /hls-preview, and with
-    // Low latency (the phone player asks for it; on unless turned off) Twitch's prefetched segments played too (/hls-live)
+    // Low latency (the phone player's Options; off unless turned on) Twitch's prefetched segments played too (/hls-live)
     if cfg!(target_os = "android") {
         let route = if low_latency == Some(true) { "hls-live" } else { "hls-preview" };
         return direct_playlist(&state, &live_usher_url(&channel).await?, &quality, route).await;

@@ -11138,3 +11138,12 @@ body.mobile .home-grid-card.hype-active.hype-golden .home-grid-thumb-wrap,
 body.mobile .m-thumb.hype-active.hype-golden {
   box-shadow: 0 0 0 2px rgba(245, 179, 1, .8), 0 0 14px rgba(245, 179, 1, .45);
 }
+
+/* ---- Phones: fallen behind live (mobile.js syncLive): the live dot goes grey and "Go live" shows, as the
+   desktop's Live button does ---- */
+.m-ov-golive { display: none; }
+body.mobile .m-ov-stats.m-behind .m-ov-golive {
+  display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border-radius: 14px; border: 0;
+  font: inherit; font-size: 13px; font-weight: 700; color: #0e1116; background: #fff; text-shadow: none;
+}
+body.mobile .m-ov-stats.m-behind .m-ov-uptime::before { background: #8a929e; }

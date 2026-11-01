@@ -103,12 +103,18 @@ jobs:
           grep -n -A3 '<activity' "$f"
           grep -q 'supportsPictureInPicture' "$f" || { echo "::error::couldn't mark the activity as picture-in-picture capable"; exit 1; }
 
-      # Android pauses the app when it goes into picture-in-picture, and Tauri's activity pauses the web view with
-      # it, which freezes the floating window on its last frame. MainActivity resumes the web view while floating
-      - name: Keep the stream playing in picture-in-picture
+      # Android pauses the app when it goes out of sight (picture-in-picture, the screen locking, another app), and
+      # Tauri's activity pauses the web view with it, which freezes the stream. MainActivity resumes the web view
+      # while floating, and while locked or in the background when Background audio says so (the player's Options).
+      # For that it also runs PlaybackService (src-tauri/android-src), the foreground service that lets Android
+      # keep Mosaic awake with the screen off; it goes next to MainActivity.kt with the same package
+      - name: Keep the stream playing in picture-in-picture and in the background
         run: |
           f=$(find src-tauri/gen/android/app/src/main -name MainActivity.kt | head -n1)
           if [ -z "$f" ]; then echo "::error::MainActivity.kt not found"; exit 1; fi
+          pkg=$(grep -m1 '^package ' "$f")
+          if [ -z "$pkg" ]; then echo "::error::MainActivity.kt has no package line"; exit 1; fi
+          { echo "$pkg"; echo; cat src-tauri/android-src/PlaybackService.kt; } > "$(dirname "$f")/PlaybackService.kt"
           echo "Before:"; cat "$f"
           python3 - "$f" <<'PY'
           import re, sys
@@ -126,16 +132,63 @@ jobs:
                   return null
               }
 
-              // floating (picture-in-picture): Android pauses the activity and Tauri pauses the web view with it,
-              // which freezes the video. Resume it so the stream keeps playing in the floating window
+              // Background audio (the player's Options; app_extras.rs set_background_playback): 0 never, 1 while the
+              // screen is locked, 2 always; and whether a stream is playing. While one plays with it on, PlaybackService
+              // keeps Mosaic awake with the screen off
+              private var mosaicBgMode = 0
+              private var mosaicPlaying = false
+
+              @Suppress("unused") // called from Rust (JNI)
+              fun mosaicSetBackground(mode: Int, playing: Boolean, title: String) {
+                  mosaicBgMode = mode
+                  mosaicPlaying = playing
+                  val service = android.content.Intent(this, PlaybackService::class.java)
+                  try {
+                      if (playing && mode > 0) {
+                          service.putExtra("title", title)
+                          if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+                      } else {
+                          stopService(service)
+                      }
+                  } catch (e: Exception) {
+                      android.util.Log.w("Mosaic", "background playback service: $e")
+                  }
+              }
+
+              // keep the stream going while the app is out of sight: floating (picture-in-picture), or Background audio
+              // says so (Always, or When locked with the screen off)
+              private fun mosaicKeepPlaying(): Boolean {
+                  if (isInPictureInPictureMode) return true
+                  if (!mosaicPlaying) return false
+                  if (mosaicBgMode == 2) return true
+                  if (mosaicBgMode == 1) {
+                      val power = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                      return !power.isInteractive
+                  }
+                  return false
+              }
+
+              // Android pauses the activity (floating, locked, another app in front) and Tauri pauses the web view with
+              // it, which stops the stream. When it should keep going, resume the web view
               override fun onPause() {
                   super.onPause()
-                  if (isInPictureInPictureMode) mosaicWebView(window.decorView)?.onResume()
+                  if (mosaicKeepPlaying()) mosaicWebView(window.decorView)?.onResume()
+              }
+
+              override fun onStop() {
+                  super.onStop()
+                  if (mosaicKeepPlaying()) mosaicWebView(window.decorView)?.onResume()
               }
 
               override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
                   super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
                   if (isInPictureInPictureMode) mosaicWebView(window.decorView)?.onResume()
+              }
+
+              override fun onDestroy() {
+                  // the app closing stops the playback service with it
+                  try { stopService(android.content.Intent(this, PlaybackService::class.java)) } catch (_: Exception) { }
+                  super.onDestroy()
               }
           """
           m = re.search(r"(class MainActivity\s*:\s*TauriActivity\(\))(\s*\{)?", src)
@@ -148,6 +201,32 @@ jobs:
           open(path, "w").write(src)
           PY
           echo "After:"; cat "$f"
+
+      # what PlaybackService needs: to run as a foreground service that plays media, to keep the processor awake,
+      # and to show its notification (Android 13+ asks you about notifications; without them it still plays)
+      - name: Allow background playback
+        run: |
+          f=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          python3 - "$f" <<'PY'
+          import sys
+          path = sys.argv[1]
+          src = open(path).read()
+          perms = ["android.permission.FOREGROUND_SERVICE", "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+                   "android.permission.WAKE_LOCK", "android.permission.POST_NOTIFICATIONS"]
+          add = "".join(f'    <uses-permission android:name="{p}" />\n' for p in perms if f'"{p}"' not in src)
+          i = src.find("<application")
+          if i < 0:
+              sys.exit("couldn't find <application in the manifest")
+          src = src[:i] + add + src[i:]
+          service = '        <service android:name=".PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback" />\n'
+          j = src.rfind("</application>")
+          if j < 0:
+              sys.exit("couldn't find </application> in the manifest")
+          src = src[:j] + service + src[j:]
+          open(path, "w").write(src)
+          PY
+          cat "$f"
+          grep -q 'PlaybackService' "$f" || { echo "::error::couldn't add the playback service to the manifest"; exit 1; }
 
       - name: Build the APK
         run: npx tauri android build --apk --target aarch64

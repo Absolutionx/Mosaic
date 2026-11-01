@@ -60,6 +60,8 @@ let searchEl = null;
 //   togglePin(login)         add it to, or take it out of, your favorites
 //   watch(login)             start watching a channel
 //   stop()                   stop the stream (the full stop the Stop button does)
+//   liveLag()                seconds a live stream is behind where it should play (null: not known)
+//   jumpToLive()             back to the live edge
 //   showMini()               float the stream as the mini player (mini-player.js)
 //   expandStream()           from the mini player back to the full stream
 //   currentChannel()         the channel playing now ("" when none)
@@ -544,7 +546,7 @@ function watchPlayer() {
     // a stream that ends any way (not just the back arrow) hands the screen's turning back to the phone
     if (!watching && was) setOrientation("auto");
     syncSystemBars();
-    if (watching !== was || mini !== wasMini) syncAutoPip();
+    if (watching !== was || mini !== wasMini) { syncAutoPip(); syncBackground(); }
     // the sleep timer runs while the stream plays, full size or as the mini player
     if (!watching && !mini && (was || wasMini)) stopSleepTimer();
     if (titleEl) titleEl.textContent = inVods && !watching ? "Videos" : TITLES[document.body.dataset.mtab] || "";
@@ -664,7 +666,12 @@ function buildPlayerOverlay() {
   const stats = el("div", "m-ov-stats");
   const uptime = el("span", "m-ov-uptime");
   const viewers = el("span", "m-ov-viewers");
-  stats.append(uptime, viewers);
+  // fallen behind live (after a pause, a buffering hiccup, time in the background): the red dot goes grey and
+  // "Go live" jumps back to the live edge, as the desktop's Live button does
+  const goLive = el("button", "m-ov-golive", "Go live");
+  goLive.type = "button";
+  goLive.addEventListener("click", (e) => { e.stopPropagation(); deps.jumpToLive?.(); setTimeout(syncLive, 300); });
+  stats.append(goLive, uptime, viewers);
   const right = el("div", "m-ov-right");
   const fullBtn = iconBtn("m-ov-btn m-ov-full", "full", "Full screen", () => toggleFull());
   right.append(
@@ -700,6 +707,8 @@ function buildPlayerOverlay() {
   window.addEventListener("mosaic:stream-info", (e) => {
     const { channel, stream, avatarUrl } = e.detail || {};
     name.textContent = stream?.user_name || channel || "";
+    bgTitle = name.textContent;
+    syncBackground();
     title.textContent = stream?.title || "";
     game.textContent = stream?.game_name || "";
     if (avatarUrl) avatar.src = avatarUrl;
@@ -709,10 +718,18 @@ function buildPlayerOverlay() {
     if (typeof stream?.viewer_count === "number") viewers.append(stream.viewer_count.toLocaleString());
     tick();
   });
+  // more than this many seconds behind where the player aims to be counts as behind (small drifts catch up
+  // by themselves, vod-player.js closeToLive)
+  const BEHIND_SECS = 4;
+  function syncLive() {
+    const lag = deps.liveLag?.();
+    stats.classList.toggle("m-behind", typeof lag === "number" && lag > BEHIND_SECS);
+  }
   const tick = () => {
     const up = fmtUptime(startedAt);
     uptime.textContent = up;
     uptime.style.display = up ? "" : "none";
+    syncLive();
   };
   setInterval(() => { if (frame?.classList.contains("controls-visible")) tick(); }, 1000);
   const drawFull = () => { fullBtn.innerHTML = svg(document.body.classList.contains("m-full") ? ICONS.fullExit : ICONS.full, 22); };
@@ -740,9 +757,32 @@ const PREFS_KEY = "mobilePlayback";
 function readPrefs() {
   let p = {};
   try { p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") || {}; } catch { /* defaults */ }
-  return { backgroundAudio: p.backgroundAudio === "always" ? "always" : "never", pip: p.pip !== false, lowLatency: p.lowLatency !== false };
+  const bg = p.backgroundAudio === "always" || p.backgroundAudio === "locked" ? p.backgroundAudio : "never";
+  return { backgroundAudio: bg, pip: p.pip !== false, lowLatency: p.lowLatency === true };
 }
-// Low latency (the Options sheet; on unless turned off): Twitch's prefetched segments played too, closer to
+
+// Background audio for Android itself (app_extras.rs set_background_playback): whether to keep the stream
+// going with the screen locked or the app in the background, and whether one is playing, so MainActivity keeps
+// the web view running and its playback service holds Android awake (build-android.yml). Sent when any of it
+// changes: the option, a stream starting or stopping (full size or the mini player), the channel's name
+let bgTitle = "";
+let lastBg = "";
+let bgTimer = null;
+// a moment's wait, so a stream starting (which flickers between states) starts the service once
+function syncBackground() {
+  clearTimeout(bgTimer);
+  bgTimer = setTimeout(sendBackground, 400);
+}
+function sendBackground() {
+  const b = document.body.classList;
+  const playing = b.contains("m-watching") || b.contains("m-mini");
+  const mode = { never: 0, locked: 1, always: 2 }[readPrefs().backgroundAudio] ?? 0;
+  const key = `${mode}|${playing}|${bgTitle}`;
+  if (key === lastBg) return;
+  lastBg = key;
+  invoke("set_background_playback", { mode, playing, title: bgTitle }).catch(() => {});
+}
+// Low latency (the player's Options sheet, under the gear; off unless turned on): Twitch's prefetched segments played too, closer to
 // live (stream_relay.rs prefetch_as_segments); main.js asks for the stream with it, vod-player.js plays it
 export function phoneLowLatency() {
   return readPrefs().lowLatency;
@@ -803,10 +843,10 @@ function keepPlayingWhileFloating() {
     const wasFloating = floatingNow;
     setFloating(false);
     // not floating any more: back to full size, or the floating window was closed (the window stays small,
-    // or the page is hidden). Closed with Background audio on Never: pause
+    // or the page is hidden). Closed with Background audio on anything but Always: pause
     const small = window.innerWidth < 520 && window.innerHeight < 360;
     const closed = wasFloating && (small || document.visibilityState === "hidden");
-    if (closed && readPrefs().backgroundAudio === "never" && video && !video.paused) {
+    if (closed && readPrefs().backgroundAudio !== "always" && video && !video.paused) {
       pausedForBackground = true;
       document.getElementById("play-pause-btn")?.click();
     }
@@ -911,16 +951,19 @@ function openPlayerOptions() {
     setTimeout(() => document.getElementById("settings-btn")?.dispatchEvent(new MouseEvent("click", { bubbles: true })), 0);
   });
   // takes effect at once: the stream restarts with it (as the player's refresh button does)
-  row("Low latency", "Plays a few seconds closer to live. Turn it off if the stream keeps buffering on a weak connection.",
+  row("Low latency", "Plays a few seconds closer to live. It can buffer more often on a weak connection.",
     toggle(prefs.lowLatency, (on) => {
       prefs.lowLatency = on; savePrefs(prefs);
       const c = deps.currentChannel?.();
       if (c) deps.watch?.(c);
     }));
   sheet.appendChild(el("div", "m-opt-section", "External playback options"));
-  const bg = row("Background audio", "Keep the stream's sound playing when you leave Mosaic.", null);
+  // When locked: keeps playing with the screen off, pauses when you switch to another app (unless it floats);
+  // Always: keeps playing either way. Android shows a notification while it plays in the background
+  const bg = row("Background audio", "Keep the stream's sound playing when you lock your phone or leave Mosaic.", null);
   bg.classList.add("m-opt-stack");
-  bg.appendChild(segmented([["never", "Never"], ["always", "Always"]], prefs.backgroundAudio, (v) => { prefs.backgroundAudio = v; savePrefs(prefs); }));
+  bg.appendChild(segmented([["never", "Never"], ["locked", "When locked"], ["always", "Always"]], prefs.backgroundAudio,
+    (v) => { prefs.backgroundAudio = v; savePrefs(prefs); syncBackground(); }));
   row("Picture-in-Picture", "Automatically continue playing in a floating window when you leave the app.",
     toggle(prefs.pip, (on) => { prefs.pip = on; savePrefs(prefs); syncAutoPip(); }));
   const sleep = row("Sleep timer", "Stop the stream after a while.", null);

@@ -2265,6 +2265,16 @@ export class PlaybackControls {
   }
 
   // normal live: seeks to the end of the MSE buffer. live-DVR mode (watching the in-progress VOD via HLS.js): fires onLiveDvrSeek(0) to signal "go back to live relay", main.js tears down HLS.js and reconnects the MSE feeder
+  // live through hls.js: how many seconds playback is behind where hls.js aims to play (null otherwise), for the
+  // phone's "Go live" (mobile.js)
+  liveLag() {
+    const h = this._nativeHlsLive && !this.isVod && !this._liveDvr ? this._hlsVod : null;
+    if (!h) return null;
+    const details = h.latestLevelDetails || h.levels?.[h.loadLevel]?.details;
+    if (!details?.live || !Number.isFinite(h.latency) || !Number.isFinite(h.targetLatency)) return null;
+    return Math.max(0, h.latency - h.targetLatency);
+  }
+
   // ---- catch up to live ----
   _catchUpEnabled() {
     try { return localStorage.getItem("catchUpToLive") !== "0"; } catch { return true; } // default on
@@ -2319,6 +2329,16 @@ export class PlaybackControls {
       // signal main.js to switch back to the live relay (0 = live edge)
       if (this.onLiveDvrSeek) this.onLiveDvrSeek(0);
       return;
+    }
+    // live through hls.js (macOS, Android): its own idea of where live playback belongs, a little behind the
+    // newest segment, so playback doesn't land at the very end of what's loaded and stall
+    if (this._nativeHlsLive && this._hlsVod) {
+      const t = this._hlsVod.liveSyncPosition;
+      if (Number.isFinite(t) && t > this.videoEl.currentTime) {
+        this.videoEl.currentTime = t;
+        this.videoEl.play().catch(() => {});
+        return;
+      }
     }
     // uses the ACTUAL buffered range, not videoEl.seekable, seekable reports the whole MediaSource range regardless of what trimBuffered() evicted. jumping to seekable's stale "end" would seek into a gap with nothing to play, confirmed as why clicking Live did nothing during a stall
     const actualRange = this._getActualBufferedRange();

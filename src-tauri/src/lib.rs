@@ -329,6 +329,7 @@ pub fn run() {
             app_extras::set_system_bars,
             app_extras::set_pip,
             app_extras::pip_keep_playing,
+            app_extras::set_background_playback,
             notify_prefs::get_notify_channels,
             notify_prefs::set_notify_channels,
             notify_prefs::get_notify_category_targets,
