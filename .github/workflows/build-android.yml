@@ -119,6 +119,19 @@ jobs:
           for kt in src-tauri/android-src/*.kt; do
             { echo "$pkg"; echo; cat "$kt"; } > "$(dirname "$f")/$(basename "$kt")"
           done
+          # The release build shrinks the code and drops whatever only Rust calls by name (mosaicSetBackground,
+          # mosaicBackgroundLog, ...), which then fail with a Java exception. Keep everything Mosaic adds.
+          name=$(echo "$pkg" | sed -E 's/^package[[:space:]]+//; s/[;[:space:]]+$//')
+          gradle=src-tauri/gen/android/app/build.gradle.kts
+          if ! grep -q 'include("\*\*/\*.pro")' "$gradle"; then
+            echo "::error::$gradle doesn't pick up extra .pro files any more"; grep -n -A6 'release' "$gradle"; exit 1
+          fi
+          printf '%s\n' \
+            "-keep class $name.MainActivity { public *; }" \
+            "-keep class $name.PlaybackService { *; }" \
+            "-keep class $name.RestartActivity { *; }" \
+            "-keep class $name.MosaicLog { *; }" > src-tauri/gen/android/app/proguard-mosaic.pro
+          cat src-tauri/gen/android/app/proguard-mosaic.pro
           echo "Before:"; cat "$f"
           python3 - "$f" <<'PY'
           import re, sys
