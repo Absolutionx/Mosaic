@@ -70,6 +70,7 @@ const APP_COMMANDS: &[&str] = &[
     "pip_keep_playing",
     "set_background_playback",
     "screen_on",
+    "background_log",
     "get_notify_channels",
     "set_notify_channels",
     "get_notify_category_targets",

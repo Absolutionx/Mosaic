@@ -138,7 +138,7 @@ jobs:
                       mosaicCreated = true
                       return
                   }
-                  android.util.Log.w("Mosaic", "a second copy of the activity: restarting Mosaic")
+                  MosaicLog.add(this, "a second copy of Mosaic's screen: restarting Mosaic")
                   try { stopService(android.content.Intent(this, PlaybackService::class.java)) } catch (_: Exception) { }
                   val restart = android.content.Intent(this, RestartActivity::class.java)
                       .putExtra(RestartActivity.EXTRA_PID, android.os.Process.myPid())
@@ -166,8 +166,10 @@ jobs:
 
               @Suppress("unused") // called from Rust (JNI)
               fun mosaicSetBackground(mode: Int, playing: Boolean, title: String) {
+                  val changed = mode != mosaicBgMode || playing != mosaicPlaying
                   mosaicBgMode = mode
                   mosaicPlaying = playing
+                  if (changed) MosaicLog.add(this, "Background audio ${arrayOf("never", "when locked", "always").getOrElse(mode) { "?" }}, ${if (playing) "playing" else "not playing"}")
                   val service = android.content.Intent(this, PlaybackService::class.java)
                   try {
                       if (playing && mode > 0) {
@@ -177,7 +179,7 @@ jobs:
                           stopService(service)
                       }
                   } catch (e: Exception) {
-                      android.util.Log.w("Mosaic", "background playback service: $e")
+                      MosaicLog.add(this, "couldn't start the playback service: $e")
                   }
               }
 
@@ -203,7 +205,46 @@ jobs:
 
               override fun onStop() {
                   super.onStop()
-                  if (mosaicKeepPlaying()) mosaicWebView(window.decorView)?.onResume()
+                  val keep = mosaicKeepPlaying()
+                  if (mosaicPlaying) {
+                      val power = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+                      MosaicLog.add(this, "out of sight (screen ${if (power.isInteractive) "on" else "off"}), keep playing: $keep")
+                      // how Android ranks Mosaic a few seconds later: playing in the background needs "foreground service"
+                      for (delay in longArrayOf(5000L, 15000L)) {
+                          mosaicHandler.postDelayed({ MosaicLog.add(this, "${delay / 1000}s later Android ranks Mosaic: ${mosaicImportance()}") }, delay)
+                      }
+                  }
+                  if (keep) mosaicWebView(window.decorView)?.onResume()
+              }
+
+              override fun onStart() {
+                  super.onStart()
+                  mosaicHandler.removeCallbacksAndMessages(null)
+                  if (mosaicPlaying) MosaicLog.add(this, "back in sight")
+              }
+
+              private val mosaicHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+              private fun mosaicImportance(): String {
+                  val info = android.app.ActivityManager.RunningAppProcessInfo()
+                  android.app.ActivityManager.getMyMemoryState(info)
+                  return when (info.importance) {
+                      android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND -> "in front"
+                      android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE -> "foreground service (good)"
+                      android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE -> "visible"
+                      android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE -> "perceptible"
+                      android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE -> "background service"
+                      android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED -> "cached (frozen soon)"
+                      else -> "importance ${info.importance}"
+                  }
+              }
+
+              // the log for Settings > Other > Background playback log (app_extras.rs background_log)
+              @Suppress("unused") // called from Rust (JNI)
+              fun mosaicBackgroundLog(clear: Boolean): String {
+                  if (clear) MosaicLog.clear(this)
+                  val notes = (getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).areNotificationsEnabled()
+                  return "Notifications allowed: $notes" + System.lineSeparator() + MosaicLog.read(this)
               }
 
               override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
@@ -212,6 +253,7 @@ jobs:
               }
 
               override fun onDestroy() {
+                  if (mosaicPlaying) MosaicLog.add(this, "Mosaic's screen closed (changing configuration: $isChangingConfigurations)")
                   // the app closing stops the playback service with it
                   try { stopService(android.content.Intent(this, PlaybackService::class.java)) } catch (_: Exception) { }
                   super.onDestroy()

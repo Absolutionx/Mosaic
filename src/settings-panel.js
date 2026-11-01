@@ -5,7 +5,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { getSetting, setSetting, onSettingChange, resetSettings, playChime } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
-import { isAndroid } from "./mobile.js";
+import { isAndroid, openBackgroundLog } from "./mobile.js";
 import { closeCommandPalette } from "./command-palette.js";
 import { THEME_PRESETS, THEME_PARTS, presetById, isHex, CUSTOM_PARTS } from "./themes.js";
 import { configureCustomize, startPicking, openEditor, changedParts, resetPart, customParts } from "./customize.js";
@@ -273,6 +273,10 @@ if (isAndroid) {
     if (sec.id === "notifications") sec.group = "Customize";
     if (sec.id === "app") { sec.label = "Other"; sec.group = "Other"; }
     if (sec.id === "twitch") sec.label = "Account";
+    if (sec.id === "app") {
+      sec.rows.push({ kind: "action", title: "Background playback log", desc: "What Android did the last few times a stream went into the background. For troubleshooting Background audio.",
+        button: "Show", run: () => { closeSettingsPanel(); openBackgroundLog(); } });
+    }
     // the header's Drops button and account menu live here on a phone
     if (sec.id === "twitch") {
       sec.rows.unshift(

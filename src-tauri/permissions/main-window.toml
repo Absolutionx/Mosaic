@@ -70,6 +70,7 @@ permissions = [
   "allow-pip-keep-playing",
   "allow-set-background-playback",
   "allow-screen-on",
+  "allow-background-log",
   "allow-get-notify-channels",
   "allow-set-notify-channels",
   "allow-get-notify-category-targets",

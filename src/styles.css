@@ -11169,3 +11169,10 @@ body.mobile .m-ov-stats.m-behind .m-ov-uptime::before { background: #8a929e; }
   body.mobile.m-watching.m-chatfold #video-column { height: 100%; display: flex; flex-direction: column; justify-content: center; }
   body.mobile.m-watching.m-chatfold #chat-pane { padding-bottom: var(--m-safe-bottom); }
 }
+
+/* the Background playback log (mobile.js openBackgroundLog) */
+.m-bglog-lines {
+  margin: 10px 0 12px; padding: 10px; max-height: 55dvh; overflow: auto; border-radius: 8px;
+  background: var(--m-bg, #0e1116); color: var(--m-text, #e7ebf2);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+}

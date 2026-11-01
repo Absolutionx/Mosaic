@@ -870,6 +870,46 @@ pub fn set_background_playback(webview: tauri::Webview, mode: i32, playing: bool
     Ok(())
 }
 
+// the background playback log Android keeps (MainActivity / PlaybackService, src-tauri/android-src MosaicLog), for
+// Settings > Other > Background playback log; `clear` empties it first. Off Android, an empty string
+#[tauri::command]
+pub async fn background_log(webview: tauri::Webview, clear: bool) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        let (tx, rx) = std::sync::mpsc::channel::<Result<String, String>>();
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, activity, _webview| {
+                    let got = (|| -> jni::errors::Result<String> {
+                        let v = env.call_method(activity, "mosaicBackgroundLog", "(Z)Ljava/lang/String;",
+                            &[jni::objects::JValue::Bool(clear as u8)])?.l()?;
+                        let s: String = env.get_string(&jni::objects::JString::from(v))?.into();
+                        Ok(s)
+                    })();
+                    let out = match got {
+                        Ok(s) => Ok(s),
+                        Err(e) => {
+                            let _ = env.exception_clear();
+                            Err(format!("this build can't read the log ({e})"))
+                        }
+                    };
+                    let _ = tx.send(out);
+                });
+            })
+            .map_err(|e| e.to_string())?;
+        return tauri::async_runtime::spawn_blocking(move || {
+            rx.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or_else(|_| Err("no answer from Android".into()))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (webview, clear);
+        Ok(String::new())
+    }
+}
+
 // whether the phone's screen is on (PowerManager.isInteractive). Background audio "When locked" asks when the
 // app goes out of sight: with the screen off it's locked, with it on another app came in front. true off Android
 #[tauri::command]

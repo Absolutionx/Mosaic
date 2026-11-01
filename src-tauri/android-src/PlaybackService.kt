@@ -25,6 +25,7 @@ class PlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra("title")?.takeIf { it.isNotBlank() } ?: "Mosaic"
+        MosaicLog.add(this, "service: starting for $title (notifications allowed: ${manager().areNotificationsEnabled()})")
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(
@@ -46,10 +47,17 @@ class PlaybackService : Service() {
             .setContentIntent(open)
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            MosaicLog.add(this, "service: in the foreground with its notification")
+        } catch (e: Exception) {
+            MosaicLog.add(this, "service: Android refused the foreground: $e")
+            stopSelf()
+            return START_NOT_STICKY
         }
         if (wake == null) {
             val power = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -62,10 +70,13 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        MosaicLog.add(this, "service: stopped")
         wake?.let { if (it.isHeld) it.release() }
         wake = null
         super.onDestroy()
     }
+
+    private fun manager() = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
     companion object {
         const val CHANNEL = "mosaic_playback"

@@ -1169,6 +1169,42 @@ function wireSwipeDown() {
   region.addEventListener("touchcancel", reset);
 }
 
+// ---- Background playback log (Settings › Other): what Android did the last few times a stream went into the
+// background (app_extras.rs background_log), for troubleshooting Background audio ----
+export async function openBackgroundLog() {
+  const overlay = el("div", "chat-filter-overlay");
+  const modal = el("div", "chat-filter-modal");
+  const head = el("div", "chat-filter-header");
+  head.appendChild(el("span", null, "Background playback log"));
+  const x = el("button", "chat-filter-close", "\u2715");
+  x.type = "button";
+  head.appendChild(x);
+  const body = el("pre", "m-bglog-lines", "Loading…");
+  const clear = el("button", "pin-auth-btn", "Clear");
+  clear.type = "button";
+  modal.append(head, body, clear);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  let popEsc = null;
+  const close = () => { overlay.remove(); popEsc?.(); popEsc = null; };
+  x.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  popEsc = pushEscape(close);
+  const show = async (wipe) => {
+    try {
+      const text = await invoke("background_log", { clear: wipe });
+      const lines = String(text || "").split("\n").filter(Boolean);
+      // newest first, the "Notifications allowed" line stays on top
+      body.textContent = lines.length > 1 ? [lines[0], ...lines.slice(1).reverse()].join("\n")
+        : (lines[0] || "") + "\n\nNothing yet. Play a stream, lock the phone for about 20 seconds, then come back here.";
+    } catch (e) {
+      body.textContent = `Couldn't read the log: ${e}`;
+    }
+  };
+  clear.addEventListener("click", () => show(true));
+  show(false);
+}
+
 // ---- folding chat away on a small, squarish screen (a Z Flip's cover screen) ----
 // There chat sits under the video with room for a few messages; a bar on top of it folds it away (and back), and
 // the choice is remembered. The bar only shows on screens that short (styles.css)
