@@ -146,7 +146,18 @@ jobs:
               // Tauri draws into the first copy of this screen in a run of the app only. Android making another (moving Mosaic
               // to the other screen of a foldable after it went to the background, say) would leave that copy black, so
               // Mosaic restarts instead (RestartActivity) and picks the stream back up. Called first thing in onCreate
+              // which screen Mosaic is on, its size, and its web view's size, for the background playback log
+              @Suppress("DEPRECATION")
+              private fun mosaicWhere(withWebView: Boolean = true): String {
+                  val display = try { if (android.os.Build.VERSION.SDK_INT >= 30) display?.displayId else windowManager.defaultDisplay.displayId } catch (_: Exception) { null }
+                  val c = resources.configuration
+                  if (!withWebView) return "display $display, ${c.screenWidthDp}x${c.screenHeightDp}dp"
+                  val web = mosaicWebView(window.decorView)?.let { "${it.width}x${it.height}px" } ?: "none"
+                  return "display $display, ${c.screenWidthDp}x${c.screenHeightDp}dp, web view $web"
+              }
+
               private fun mosaicRestartIfRecreated() {
+                  MosaicLog.add(this, "Mosaic's screen made (${if (mosaicCreated) "a second copy" else "first"}), ${mosaicWhere(withWebView = false)}")
                   if (!mosaicCreated) {
                       mosaicCreated = true
                       return
@@ -229,7 +240,9 @@ jobs:
                   val keep = mosaicKeepPlaying()
                   if (mosaicPlaying) {
                       val power = getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
-                      MosaicLog.add(this, "out of sight (screen ${if (power.isInteractive) "on" else "off"}), keep playing: $keep")
+                      val notes = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                      val shown = try { notes.activeNotifications.any { it.id == PlaybackService.NOTIFICATION_ID } } catch (_: Exception) { false }
+                      MosaicLog.add(this, "out of sight (screen ${if (power.isInteractive) "on" else "off"}), keep playing: $keep, notification up: $shown")
                       // how Android ranks Mosaic a few seconds later: playing in the background needs "foreground service"
                       for (delay in longArrayOf(5000L, 15000L)) {
                           mosaicHandler.postDelayed({ MosaicLog.add(this, "${delay / 1000}s later Android ranks Mosaic: ${mosaicImportance()}") }, delay)
@@ -241,7 +254,19 @@ jobs:
               override fun onStart() {
                   super.onStart()
                   mosaicHandler.removeCallbacksAndMessages(null)
-                  if (mosaicPlaying) MosaicLog.add(this, "back in sight")
+                  MosaicLog.add(this, "back in sight, ${mosaicWhere()}")
+                  // and a moment later, once it's laid out on that screen
+                  mosaicHandler.postDelayed({ MosaicLog.add(this, "1s later: ${mosaicWhere()}, has focus: ${hasWindowFocus()}") }, 1000L)
+              }
+
+              override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+                  super.onConfigurationChanged(newConfig)
+                  MosaicLog.add(this, "screen changed: ${mosaicWhere()}")
+              }
+
+              override fun onNewIntent(intent: android.content.Intent) {
+                  super.onNewIntent(intent)
+                  MosaicLog.add(this, "opened again (from the launcher or the notification)")
               }
 
               private val mosaicHandler = android.os.Handler(android.os.Looper.getMainLooper())

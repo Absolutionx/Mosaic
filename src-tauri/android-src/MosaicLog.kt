@@ -23,7 +23,7 @@ object MosaicLog {
             val stamp = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
             val lines = (prefs.getString(KEY, "") ?: "").split('\n').filter { it.isNotEmpty() }.toMutableList()
             lines.add("$stamp  $line")
-            prefs.edit().putString(KEY, lines.takeLast(KEEP).joinToString("\n")).apply()
+            prefs.edit().putString(KEY, lines.takeLast(KEEP).joinToString("\n")).commit() // written at once, so a restart right after keeps it
         } catch (_: Exception) { }
     }
 
