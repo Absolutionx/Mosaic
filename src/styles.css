@@ -10914,14 +10914,16 @@ body.mobile #chat-input {
 }
 body.mobile #chat-emote-btn { width: 32px; height: 32px; padding: 0; }
 /* channel points (the balance shows) and the mod tools, next to ⋯ */
+/* round icon buttons with the icon dead center; the points one widens into a pill when there's a balance to show */
 body.mobile .chat-input-row .m-chat-extra {
-  flex: none; height: 32px; padding: 0 8px; margin: 0; border-radius: 16px;
-  display: inline-flex; align-items: center; gap: 4px;
+  flex: none; box-sizing: border-box; width: auto; min-width: 36px; height: 36px; padding: 0; margin: 0;
+  border-radius: 18px; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
 }
-body.mobile .chat-input-row #rewards-btn .rewards-balance { display: inline; font-size: 12px; }
+body.mobile .chat-input-row #rewards-btn.has-balance { padding: 0 12px; }
+body.mobile .chat-input-row #rewards-btn .rewards-balance { font-size: 12px; }
 @media (min-aspect-ratio: 13/9) {
   body.mobile.m-watching #chat-input { height: 32px; padding: 6px 4px !important; font-size: 14px !important; }
-  body.mobile.m-watching .chat-input-row .m-chat-extra { padding: 0 6px; }
+  body.mobile.m-watching .chat-input-row #rewards-btn.has-balance { padding: 0 10px; }
 }
 
 /* the player's Options sheet (Twitch's layout): rows with a title and a line under it, switches and choices */
@@ -10963,7 +10965,7 @@ body.mobile .chat-input-wrapper { flex: 1 1 0; min-width: 0; }
   body.mobile.m-watching .chat-input-row { flex-wrap: wrap; row-gap: 4px; }
   body.mobile.m-watching .m-chat-extras { order: -1; flex: 0 0 100%; justify-content: flex-end; }
   body.mobile.m-watching .m-chat-extras:not(:has(.m-chat-extra:not([style*="display: none"]))) { display: none; }
-  body.mobile.m-watching .chat-input-row .m-chat-extra { height: 28px; padding: 0 8px; }
+  body.mobile.m-watching .chat-input-row .m-chat-extra { min-width: 30px; height: 30px; border-radius: 15px; }
   body.mobile.m-watching #chat-emote-btn { width: 28px; height: 28px; }
 }
 

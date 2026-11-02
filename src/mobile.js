@@ -670,6 +670,17 @@ window.addEventListener("deviceorientation", (e) => {
   }
 });
 
+// back from picture-in-picture or another app: the phone's own turning takes over again. A rotate-button hold
+// from before is dropped (the motion sensor that ends it stops while Mosaic is out of sight), and Android is made
+// to look at how the phone is held again, as it can lose track after picture-in-picture
+function releaseRotation() {
+  heldFor = null;
+  setOrientation("refresh");
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && document.body.classList.contains("m-watching")) releaseRotation();
+});
+
 function toggleFull() {
   if (!isLandscape()) return; // upright, the video already spans the width
   const on = document.body.classList.toggle("m-full");
@@ -911,6 +922,7 @@ function keepPlayingWhileFloating() {
     floatLoop = null;
     const wasFloating = floatingNow;
     setFloating(false);
+    if (wasFloating) releaseRotation();
     // not floating any more: back to full size, or the floating window was closed (the window stays small,
     // or the page is hidden). Closed with Background audio on anything but Always: pause
     const small = window.innerWidth < 520 && window.innerHeight < 360;

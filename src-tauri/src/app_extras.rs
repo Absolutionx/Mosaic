@@ -691,21 +691,29 @@ pub fn open_devtools(webview: tauri::Webview) {
 
 // ---- turning the screen on a phone (the player's rotate button, mobile.js) ----
 // Android lets an app ask for an orientation: "landscape" or "portrait" holds the screen that way (either way
-// up, by the phone's sensor) whatever the phone's tilt; "auto" hands it back to the phone (leaving a stream).
+// up, by the phone's sensor) whatever the phone's tilt; "auto" hands it back to the phone (leaving a stream);
+// "refresh" hands it back too and makes Android look at the phone's tilt again (after picture-in-picture).
 // The call goes to the app's Android activity on its own thread. Other platforms: nothing to do
 #[tauri::command]
 pub fn set_orientation(webview: tauri::Webview, mode: String) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
-        // ActivityInfo.SCREEN_ORIENTATION_*: SENSOR_LANDSCAPE 6, SENSOR_PORTRAIT 7, UNSPECIFIED -1
+        // ActivityInfo.SCREEN_ORIENTATION_*: SENSOR_LANDSCAPE 6, SENSOR_PORTRAIT 7, UNSPECIFIED -1, USER 2
         let value: i32 = match mode.as_str() {
             "landscape" => 6,
             "portrait" => 7,
             _ => -1,
         };
+        // "refresh": back to the phone deciding, by way of another setting first. Asking for the setting already in
+        // place does nothing, and Android can lose track of the phone's turning after picture-in-picture; the
+        // change makes it look at how the phone is held again
+        let refresh = mode == "refresh";
         webview
             .with_webview(move |w| {
                 w.jni_handle().exec(move |env, activity, _webview| {
+                    if refresh {
+                        android_set_orientation(env, activity, 2);
+                    }
                     android_set_orientation(env, activity, value);
                 });
             })
