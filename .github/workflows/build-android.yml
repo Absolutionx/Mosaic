@@ -178,15 +178,23 @@ jobs:
               private var mosaicPlaying = false
 
               @Suppress("unused") // called from Rust (JNI)
-              fun mosaicSetBackground(mode: Int, playing: Boolean, title: String) {
+              fun mosaicSetBackground(mode: Int, playing: Boolean, title: String, paused: Boolean, art: String) {
                   val changed = mode != mosaicBgMode || playing != mosaicPlaying
                   mosaicBgMode = mode
                   mosaicPlaying = playing
                   if (changed) MosaicLog.add(this, "Background audio ${arrayOf("never", "when locked", "always").getOrElse(mode) { "?" }}, ${if (playing) "playing" else "not playing"}")
+                  // the media notification's play / pause button (PlaybackService) plays or pauses the stream here
+                  PlaybackService.onMediaButton = { play ->
+                      runOnUiThread {
+                          mosaicWebView(window.decorView)?.evaluateJavascript("window.__mosaicMediaButton && window.__mosaicMediaButton(" + play + ")", null)
+                      }
+                  }
                   val service = android.content.Intent(this, PlaybackService::class.java)
                   try {
                       if (playing && mode > 0) {
                           service.putExtra("title", title)
+                          service.putExtra("paused", paused)
+                          service.putExtra("art", art)
                           if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
                       } else {
                           stopService(service)
@@ -269,6 +277,7 @@ jobs:
                   if (mosaicPlaying) MosaicLog.add(this, "Mosaic's screen closed (changing configuration: $isChangingConfigurations)")
                   // the app closing stops the playback service with it
                   try { stopService(android.content.Intent(this, PlaybackService::class.java)) } catch (_: Exception) { }
+                  PlaybackService.onMediaButton = null
                   super.onDestroy()
               }
           """

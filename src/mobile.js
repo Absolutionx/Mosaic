@@ -743,6 +743,12 @@ function buildPlayerOverlay() {
   region.appendChild(spinner);
   const setLoading = (on) => region.classList.toggle("m-is-loading", on);
   if (video) {
+    // the media notification shows play or pause to match; its button plays or pauses the stream here
+    for (const ev of ["play", "pause"]) video.addEventListener(ev, syncBackground);
+    window.__mosaicMediaButton = (play) => {
+      if (play) video.play().catch(() => {});
+      else video.pause();
+    };
     for (const ev of ["loadstart", "waiting", "stalled"]) video.addEventListener(ev, () => { if (!video.paused || ev === "loadstart") setLoading(true); });
     for (const ev of ["playing", "canplay", "pause", "error", "emptied", "ended"]) video.addEventListener(ev, () => setLoading(false));
     // a channel that turns out offline never loads: its message shows instead of the spinner
@@ -757,6 +763,8 @@ function buildPlayerOverlay() {
     const { channel, stream, avatarUrl } = e.detail || {};
     name.textContent = stream?.user_name || channel || "";
     bgTitle = name.textContent;
+    // the stream's preview picture for the phone's media player (avatar when there isn't one)
+    bgArt = stream?.thumbnail_url ? stream.thumbnail_url.replace("{width}", "640").replace("{height}", "360") : (avatarUrl || "");
     syncBackground();
     title.textContent = stream?.title || "";
     game.textContent = stream?.game_name || "";
@@ -814,8 +822,10 @@ function readPrefs() {
 // Background audio for Android itself (app_extras.rs set_background_playback): whether to keep the stream
 // going with the screen locked or the app in the background, and whether one is playing, so MainActivity keeps
 // the web view running and its playback service holds Android awake (build-android.yml). Sent when any of it
-// changes: the option, a stream starting or stopping (full size or the mini player), the channel's name
+// changes: the option, a stream starting or stopping (full size or the mini player), pausing or playing it, the
+// channel's name and picture
 let bgTitle = "";
+let bgArt = "";
 let lastBg = "";
 let bgTimer = null;
 // a moment's wait, so a stream starting (which flickers between states) starts the service once
@@ -826,11 +836,12 @@ function syncBackground() {
 function sendBackground() {
   const b = document.body.classList;
   const playing = b.contains("m-watching") || b.contains("m-mini");
+  const paused = !!document.getElementById("video-element")?.paused;
   const mode = { never: 0, locked: 1, always: 2 }[readPrefs().backgroundAudio] ?? 0;
-  const key = `${mode}|${playing}|${bgTitle}`;
+  const key = `${mode}|${playing}|${bgTitle}|${paused}|${bgArt}`;
   if (key === lastBg) return;
   lastBg = key;
-  invoke("set_background_playback", { mode, playing, title: bgTitle }).catch(() => {});
+  invoke("set_background_playback", { mode, playing, title: bgTitle, paused, art: bgArt }).catch(() => {});
   // the notification that shows while it plays in the background (and takes you back to Mosaic) needs Android's
   // permission to show notifications (Android 13+): ask the first time it's needed. Android itself stops asking
   // after you've said no twice
