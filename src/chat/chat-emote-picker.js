@@ -46,6 +46,18 @@ const EMOTE_PICKER_SECTIONS = {
   emoji: "Emoji",
 };
 
+// the emotes and emoji last picked here, newest first (Frosty's recent emotes), kept between sessions
+const RECENT_KEY = "recentEmotes";
+const RECENT_MAX = 24;
+function readRecent() {
+  try { const a = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); return Array.isArray(a) ? a.filter((x) => typeof x === "string") : []; } catch { return []; }
+}
+function rememberRecent(name) {
+  if (!name) return;
+  const list = [name, ...readRecent().filter((x) => x !== name)].slice(0, RECENT_MAX);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* full or blocked: just not remembered */ }
+}
+
 function bucketForProvider(provider) {
   if (provider === "seventv-channel" || provider === "bttv-channel" ||
       provider === "ffz-channel" || provider === "kick-channel") return "channel";
@@ -248,6 +260,43 @@ export const chatEmotePickerMixin = {
       return;
     }
 
+    // "Recently used" first on All (not while searching): the ones this channel still has, emoji always
+    if (this._emotePickerTab === "all" && !q) {
+      const recent = [];
+      for (const name of readRecent()) {
+        const e = this.sevenTvEmotes.get(name) || (!this._isKickChat ? this.twitchNativeEmotes.get(name) : null);
+        if (e?.url) recent.push({ name, url: e.url });
+        else if (!/[A-Za-z0-9]/.test(name)) recent.push({ name, emoji: true });
+      }
+      if (recent.length) {
+        const section = document.createElement("div");
+        section.className = "emote-picker-section emote-picker-recent";
+        const title = document.createElement("div");
+        title.className = "emote-picker-section-title";
+        title.textContent = "Recently used";
+        const grid = document.createElement("div");
+        grid.className = "emote-picker-grid";
+        for (const r of recent) {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "emote-picker-item" + (r.emoji ? " emote-picker-emoji-item" : "");
+          item.title = r.name;
+          item.dataset.insert = r.name;
+          if (r.emoji) item.textContent = r.name;
+          else {
+            const img = document.createElement("img");
+            img.decoding = "async";
+            img.src = r.url;
+            img.alt = r.name;
+            item.appendChild(img);
+          }
+          grid.appendChild(item);
+        }
+        section.append(title, grid);
+        gridWrap.appendChild(section);
+      }
+    }
+
     const buckets = this._collectEmotePickerBuckets();
     const order = this._emotePickerTab === "all"
       ? (this._isKickChat
@@ -381,6 +430,7 @@ export const chatEmotePickerMixin = {
   _insertEmoteAtCursor(name) {
     const input = this.inputEl;
     if (!input) return;
+    rememberRecent(name);
     const val = input.value;
     const pos = input.selectionStart ?? val.length;
     const needsLeadingSpace = pos > 0 && val[pos - 1] !== " ";

@@ -726,6 +726,39 @@ pub fn set_orientation(webview: tauri::Webview, mode: String) -> Result<(), Stri
     Ok(())
 }
 
+// a short vibration, as Android's own controls give (View.performHapticFeedback): no permission needed, and it
+// follows the phone's own "touch feedback" setting. "tick" a small one (a skip, a seek, a list refreshing),
+// "hold" a long press, "confirm" something done (copied). Other platforms: nothing
+#[tauri::command]
+pub fn haptic(webview: tauri::Webview, kind: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        // HapticFeedbackConstants: LONG_PRESS 0, VIRTUAL_KEY 1, CLOCK_TICK 4, CONFIRM 16 (Android 11+)
+        let value: i32 = match kind.as_str() {
+            "hold" => 0,
+            "confirm" => 16,
+            _ => 4,
+        };
+        webview
+            .with_webview(move |w| {
+                w.jni_handle().exec(move |env, _activity, view| {
+                    if env
+                        .call_method(view, "performHapticFeedback", "(I)Z", &[jni::objects::JValue::Int(value)])
+                        .is_err()
+                    {
+                        let _ = env.exception_clear();
+                    }
+                });
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (webview, kind);
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "android")]
 fn android_set_orientation(env: &mut jni::JNIEnv, activity: &jni::objects::JObject, value: i32) {
     if env

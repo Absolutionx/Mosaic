@@ -133,6 +133,29 @@ export class BrowsePage {
     }, RELEASE_AFTER_MS);
   }
 
+  // pull to refresh (the phone's Top page): load again whatever is showing, a category's streams, the Live list,
+  // or the categories, keeping where you are
+  refresh() {
+    if (this.activeGame) {
+      const g = this.activeGame;
+      if (g.isPill) this.openPillCategory(this.activePill); else this.openGame(g);
+      return;
+    }
+    if (this.activeTab === "live") {
+      this.topLiveStreams = [];
+      this.nextLiveCursor = null;
+      this.hasMoreLive = true;
+      this.loadTopLiveStreams();
+      return;
+    }
+    this.games = [];
+    this.categoryCounts = new Map();
+    this.nextGamesCursor = null;
+    this.hasMoreGames = true;
+    this._allDupGamePages = 0;
+    this.loadTopGames();
+  }
+
   // reload now if showing, else mark stale for the next show()
   reloadForPlatformChange() {
     this._released = false; // the next show() loads afresh anyway

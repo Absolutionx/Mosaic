@@ -23,6 +23,13 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
 const ICONS = {
+  moreV: '<circle cx="12" cy="5" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="19" r="1.6" fill="currentColor"/>',
+  points: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M8.5 9.5 12 7l3.5 2.5"/>',
+  drops: '<path d="M20 12v9H4v-9"/><path d="M2 7h20v5H2z"/><path d="M12 21V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>',
+  shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/>',
+  gavel: '<path d="m14 13-7.5 7.5a2.1 2.1 0 0 1-3-3L11 10"/><path d="m16 16 6-6"/><path d="m8 8 6-6"/><path d="m9 7 8 8"/><path d="m21 11-8-8"/>',
+  people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.2a5 5 0 0 1 5.5 5.8"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   videos: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/>',
   clips: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M14.5 14.5 20 20"/><path d="M8.1 8.1 12 12"/>',
   category: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
@@ -74,6 +81,9 @@ let searchEl = null;
 //   searchCategories(q)      Twitch categories matching q: [{ name, box_art_url }]
 //   openCategory(game)       Top's page for that category
 //   openVods(login, {clips}) that channel's videos page (vods.js), on its Clips tab with clips
+//   vodsChannel()            the channel whose videos page is (or was last) open
+//   chatMenuInfo()           { modes: ["Slow Mode (30s)", ...], users: [names], isMod } for the ⋮ menu
+//   openUser(login)          that person's user card
 //   openSettings()           the Settings page
 export function initMobile(d = {}) {
   if (!isAndroid) return;
@@ -92,6 +102,9 @@ export function initMobile(d = {}) {
   wireBack();
   wireWake();
   wireKeyboard();
+  wirePullToRefresh(followingEl, "following");
+  wirePullToRefresh(document.getElementById("browse-page"), "top");
+  wirePullToRefresh(document.getElementById("vods-page"), "videos");
   setTab("following");
 }
 
@@ -328,13 +341,26 @@ function thumbUrl(t) {
 }
 
 // long-press a stream (as in Frosty): pin or unpin it
+// a short vibration, as Android's own controls give (app_extras.rs haptic; follows the phone's touch feedback
+// setting): "tick" small, "hold" a long press, "confirm" done
+export function haptic(kind = "tick") {
+  if (isAndroid) invoke("haptic", { kind }).catch(() => {});
+}
+
 function onLongPress(node, run) {
   let timer = null;
   let fired = false;
   const cancel = () => { clearTimeout(timer); timer = null; };
-  node.addEventListener("pointerdown", () => { fired = false; cancel(); timer = setTimeout(() => { fired = true; run(); }, 500); });
+  let from = null;
+  node.addEventListener("pointerdown", (e) => {
+    fired = false; cancel(); from = { x: e.clientX, y: e.clientY };
+    timer = setTimeout(() => { fired = true; haptic("hold"); run(); }, 500);
+  });
+  // a finger that moves (scrolling, pulling to refresh) isn't holding still
   for (const ev of ["pointerup", "pointerleave", "pointercancel", "pointermove"]) {
-    node.addEventListener(ev, (e) => { if (ev !== "pointermove" || Math.abs(e.movementY) > 4) cancel(); });
+    node.addEventListener(ev, (e) => {
+      if (ev !== "pointermove" || !from || Math.hypot(e.clientX - from.x, e.clientY - from.y) > 10) cancel();
+    });
   }
   node.addEventListener("contextmenu", (e) => e.preventDefault());
   // the click that ends a long press isn't a tap
@@ -593,6 +619,8 @@ function watchPlayer() {
     const inVods = !!vods && getComputedStyle(vods).display !== "none";
     const was = document.body.classList.contains("m-watching");
     const wasVods = document.body.classList.contains("m-vods");
+    // a past broadcast picked on a channel's videos page: leaving it goes back to that page (minimizePlayer)
+    if (watching && !was) cameFromVideos = wasVods ? (deps.vodsChannel?.() || "") : "";
     document.body.classList.toggle("m-watching", watching);
     document.body.classList.toggle("m-vods", inVods && !watching);
     // the stream floating over the pages as the mini player (mini-player.js; placed by placeMini)
@@ -623,6 +651,8 @@ function watchPlayer() {
 
 // leaving the stream (back, the overlay's back arrow, swiping the video down) shrinks it to the mini player
 // over the tab you came from, as Twitch's app does; the mini player's ✕ stops it
+// the channel whose videos page the stream was opened from, or "" (watchPlayer)
+let cameFromVideos = "";
 function minimizePlayer() {
   heldFor = null;
   setOrientation("auto");
@@ -632,6 +662,8 @@ function minimizePlayer() {
   setTab(document.body.dataset.mtab || "following");
   // even with the desktop's Mini player setting off, or its ✕ used on desktop this session
   if (!document.getElementById("app")?.classList.contains("mini-player-active")) deps.showMini?.();
+  // opened from a channel's videos page: back to that page, with the video floating over it
+  if (cameFromVideos) deps.openVods?.(cameFromVideos);
 }
 
 // stopping the stream outright (the sleep timer, the mini player's ✕): back to the tab you came from
@@ -695,6 +727,19 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && document.body.classList.contains("m-watching")) releaseRotation();
 });
 
+// seconds as a clock: 4:05, or 1:04:05 past an hour
+function clockTime(sec) {
+  const t = Math.max(0, Math.floor(Number(sec) || 0));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = String(t % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+// "−10s" / "+10s" for a moment on the side that was double-tapped
+function showSkip(region, step) {
+  const b = el("div", `m-skip ${step < 0 ? "m-skip-back" : "m-skip-ahead"}`, `${step < 0 ? "−" : "+"}${Math.abs(step)}s`);
+  region.appendChild(b);
+  setTimeout(() => b.remove(), 650);
+}
+
 function toggleFull() {
   if (!isLandscape()) return; // upright, the video already spans the width
   const on = document.body.classList.toggle("m-full");
@@ -750,11 +795,61 @@ function buildPlayerOverlay() {
   const fullBtn = iconBtn("m-ov-btn m-ov-full", "full", "Full screen", () => toggleFull());
   right.append(
     iconBtn("m-ov-btn", "pip", "Picture-in-picture", () => enterPip()),
-    iconBtn("m-ov-btn", "refresh", "Refresh", () => { const c = deps.currentChannel?.(); if (c) deps.watch?.(c); }),
+    iconBtn("m-ov-btn m-ov-refresh", "refresh", "Refresh", () => { const c = deps.currentChannel?.(); if (c) deps.watch?.(c); }),
     iconBtn("m-ov-btn", "rotate", "Turn the screen", () => rotate()),
     fullBtn,
   );
   bottom.append(stats, right);
+  // a past broadcast's timeline: where you are, how long it is, and a bar to drag (live streams don't have one)
+  const timeline = el("div", "m-ov-timeline");
+  const cur = el("span", "m-ov-time", "0:00");
+  const track = el("div", "m-ov-track");
+  const fillBar = el("div", "m-ov-track-fill");
+  const knob = el("div", "m-ov-track-knob");
+  track.append(fillBar, knob);
+  const total = el("span", "m-ov-time", "0:00");
+  timeline.append(cur, track, total);
+  let dragTo = null; // seconds while dragging, so the bar follows the finger, not the video
+  const drawTimeline = () => {
+    const t = deps.vodTime?.();
+    region.classList.toggle("m-has-timeline", !!t);
+    if (!t) return;
+    const pos = dragTo ?? t.pos;
+    const ratio = t.dur > 0 ? Math.min(1, Math.max(0, pos / t.dur)) : 0;
+    fillBar.style.width = `${ratio * 100}%`;
+    knob.style.left = `${ratio * 100}%`;
+    cur.textContent = clockTime(pos);
+    total.textContent = clockTime(t.dur);
+  };
+  const secondsAt = (x) => {
+    const t = deps.vodTime?.();
+    const r = track.getBoundingClientRect();
+    return t && r.width ? Math.min(1, Math.max(0, (x - r.left) / r.width)) * t.dur : 0;
+  };
+  track.addEventListener("pointerdown", (e) => {
+    if (!deps.vodTime?.()) return;
+    e.stopPropagation();
+    track.setPointerCapture(e.pointerId);
+    timeline.classList.add("m-dragging");
+    dragTo = secondsAt(e.clientX);
+    drawTimeline();
+  });
+  track.addEventListener("pointermove", (e) => { if (dragTo != null) { dragTo = secondsAt(e.clientX); drawTimeline(); } });
+  const endDrag = () => {
+    if (dragTo == null) return;
+    const to = dragTo;
+    dragTo = null;
+    timeline.classList.remove("m-dragging");
+    deps.seekVod?.(to);
+    haptic("tick");
+    drawTimeline();
+  };
+  track.addEventListener("pointerup", endDrag);
+  track.addEventListener("pointercancel", () => { dragTo = null; timeline.classList.remove("m-dragging"); drawTimeline(); });
+  // taps on the timeline mustn't reach the video (which would hide the controls)
+  timeline.addEventListener("click", (e) => e.stopPropagation());
+  if (video) for (const ev of ["timeupdate", "durationchange", "loadedmetadata", "seeked"]) video.addEventListener(ev, drawTimeline);
+  bottom.prepend(timeline);
   ov.append(top, play, bottom);
   region.appendChild(ov);
 
@@ -818,9 +913,20 @@ function buildPlayerOverlay() {
   new MutationObserver(drawFull).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
   // double tap: full screen, sideways only (upright, the video already spans the width)
+  // on a past broadcast, a double tap on the left or right third skips back or ahead 10 seconds (as YouTube's)
   region.addEventListener("dblclick", (e) => {
     e.stopImmediatePropagation();
     e.preventDefault();
+    const t = deps.vodTime?.();
+    const r = region.getBoundingClientRect();
+    const side = (e.clientX - r.left) / (r.width || 1);
+    if (t && (side < 0.35 || side > 0.65)) {
+      const step = side < 0.35 ? -10 : 10;
+      deps.seekVod?.(Math.min(Math.max(0, t.pos + step), Math.max(0, t.dur - 1)));
+      showSkip(region, step);
+      haptic("tick");
+      return;
+    }
     if (isLandscape()) toggleFull();
   }, true);
   // the desktop's theater and full-screen buttons (hidden here, but their shortcuts still reach them)
@@ -1182,6 +1288,9 @@ function wireSwipeDown() {
     if (!document.body.classList.contains("m-watching") || e.touches.length !== 1) { start = null; return; }
     // the overlay's buttons take their own taps
     if (e.target.closest?.("button, input, .m-ov-bottom")) { start = null; return; }
+    // a swipe from the very top edge is Android's own (the notification shade, the hidden bars sideways), not
+    // a drag of the video
+    if (e.touches[0].clientY < 56) { start = null; return; }
     start = { x: e.touches[0].clientX, y: e.touches[0].clientY, down: false };
   }, { passive: true });
   region.addEventListener("touchmove", (e) => {
@@ -1195,6 +1304,9 @@ function wireSwipeDown() {
       start.down = true;
     }
     e.preventDefault();
+    // past the point where letting go shrinks it: a tick, and another if you drag back (as Frosty)
+    const armed = dy > 70;
+    if (armed !== !!start.armed) { start.armed = armed; haptic(armed ? "hold" : "tick"); }
     region.style.transition = "none";
     region.style.transform = `translateY(${Math.min(dy, 160) * 0.5}px) scale(${1 - Math.min(dy, 160) / 1600})`;
   }, { passive: false });
@@ -1324,26 +1436,177 @@ function buildChatRow() {
     else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   }, 20);
   row.appendChild(send);
-  // channel points (and, on channels you moderate, the mod tools) from the row Frosty doesn't have: here,
-  // next to ⋯, with their own buttons and panels as on desktop
-  // grouped, so sideways (narrow chat) they can sit on their own line above the box (styles.css)
+  // channel points and the mod tools live in the ⋮ menu (openChatMenu), not as buttons by the box, so chat keeps
+  // the room; their buttons stay in the page, out of sight, and the menu presses them
   const extras = el("div", "m-chat-extras");
   for (const id of ["modmenu-btn", "modlog-btn", "rewards-btn"]) {
     const b = document.getElementById(id);
     if (b) { b.classList.add("m-chat-extra"); extras.appendChild(b); }
   }
   row.appendChild(extras);
-  // the chat settings button becomes Frosty's ⋯ at the end of the row (its menu opens as a sheet)
+  // the chat settings button becomes a ⋮ at the end of the row, opening the chat menu
   if (gear) {
-    gear.innerHTML = svg(ICONS.more, 22);
-    gear.title = "More";
-    gear.setAttribute("aria-label", "More");
+    gear.innerHTML = svg(ICONS.moreV, 22);
+    gear.title = "Chat menu";
+    gear.setAttribute("aria-label", "Chat menu");
+    gear.addEventListener("click", (e) => { e.stopImmediatePropagation(); e.preventDefault(); openChatMenu(); }, true);
     row.appendChild(gear);
+    // the mod log's unread dot shows on ⋮ too, since its own button is out of sight
+    const log = document.getElementById("modlog-btn");
+    if (log) {
+      const syncDot = () => gear.classList.toggle("m-has-unread", log.classList.contains("has-unread"));
+      new MutationObserver(syncDot).observe(log, { attributes: true, attributeFilter: ["class"] });
+      syncDot();
+    }
   }
   const syncSend = () => row.classList.toggle("m-has-text", !!input.value.trim());
   input.addEventListener("input", syncSend);
   input.addEventListener("keyup", syncSend);
   syncSend();
+}
+
+// ---- pull to refresh (Frosty's): at the top of a list, drag down and let go to load it again ----
+function wirePullToRefresh(list, which) {
+  if (!list) return;
+  const ring = el("div", "m-ptr");
+  ring.innerHTML = svg(ICONS.refresh, 20);
+  document.body.appendChild(ring);
+  let start = null;
+  let pulled = 0;
+  let busy = false;
+  const PULL = 70; // how far to drag before letting go refreshes
+  const place = (dy) => {
+    const top = list.getBoundingClientRect().top;
+    ring.style.top = `${top + Math.min(dy, PULL + 20) * 0.6 - 30}px`;
+    ring.style.opacity = String(Math.min(1, dy / PULL));
+    ring.style.transform = `translateX(-50%) rotate(${dy * 3}deg)`;
+    ring.classList.toggle("m-ptr-ready", dy >= PULL);
+  };
+  const hide = () => { ring.style.opacity = "0"; ring.classList.remove("m-ptr-ready", "m-ptr-busy"); };
+  list.addEventListener("touchstart", (e) => {
+    // only from the very top of the list, with one finger, and not while a refresh runs
+    if (busy || list.scrollTop > 0 || e.touches.length !== 1 || list.offsetParent === null) { start = null; return; }
+    start = { y: e.touches[0].clientY, x: e.touches[0].clientX, armed: false };
+    pulled = 0;
+  }, { passive: true });
+  list.addEventListener("touchmove", (e) => {
+    if (!start) return;
+    const dy = e.touches[0].clientY - start.y;
+    const dx = e.touches[0].clientX - start.x;
+    if (dy <= 0 || Math.abs(dx) > dy || list.scrollTop > 0) { if (pulled) hide(); start = dy < 0 || Math.abs(dx) > 12 ? null : start; pulled = 0; return; }
+    e.preventDefault();
+    pulled = dy;
+    place(dy);
+    // past the point where letting go refreshes: a tick, as Frosty
+    const armed = dy >= PULL;
+    if (armed !== start.armed) { start.armed = armed; if (armed) haptic("tick"); }
+  }, { passive: false });
+  const end = async () => {
+    if (!start) return;
+    const go = pulled >= PULL;
+    start = null;
+    pulled = 0;
+    if (!go) { hide(); return; }
+    busy = true;
+    ring.classList.add("m-ptr-busy");
+    place(PULL);
+    try { await Promise.all([deps.refreshList?.(which), new Promise((r) => setTimeout(r, 600))]); } catch { /* the page shows its own error */ }
+    busy = false;
+    hide();
+  };
+  list.addEventListener("touchend", end);
+  list.addEventListener("touchcancel", () => { start = null; pulled = 0; hide(); });
+}
+
+// ---- chat's ⋮ menu (Frosty's chat details): the chat's modes, then channel points, drops, the mod tools, who's in
+// chat, and settings ----
+function openChatMenu() {
+  const info = deps.chatMenuInfo?.() || {};
+  const shade = el("div", "m-sheet-shade");
+  const sheet = el("div", "m-sheet m-chat-menu");
+  sheet.setAttribute("role", "dialog");
+  sheet.appendChild(el("div", "m-sheet-grip"));
+  sheet.appendChild(el("div", "m-sheet-title", "Chat"));
+  // slow mode, subscribers only and the like, as chips under the title (nothing when chat's open to everyone)
+  if (info.modes?.length) {
+    const chips = el("div", "m-chat-modes");
+    for (const m of info.modes) chips.appendChild(el("span", "m-chat-mode", m));
+    sheet.appendChild(chips);
+  }
+  let popEsc = null;
+  const close = () => { shade.remove(); popEsc?.(); popEsc = null; };
+  const item = (icon, label, run, { sub = "", dot = false } = {}) => {
+    const b = el("button", "m-sheet-item");
+    b.type = "button";
+    b.innerHTML = svg(ICONS[icon], 20);
+    const words = el("span", "m-sheet-words");
+    words.appendChild(el("span", null, label));
+    if (sub) words.appendChild(el("span", "m-sheet-sub", sub));
+    b.appendChild(words);
+    if (dot) b.appendChild(el("span", "m-sheet-dot"));
+    b.addEventListener("click", () => { close(); setTimeout(run, 0); });
+    sheet.appendChild(b);
+  };
+  const press = (id) => document.getElementById(id)?.click();
+  const shown = (id) => { const b = document.getElementById(id); return !!b && b.style.display !== "none" && !b.hidden; };
+  const kick = document.body.classList.contains("kick-mode");
+  if (!kick && shown("rewards-btn")) {
+    const bal = document.getElementById("rewards-balance")?.textContent?.trim();
+    item("points", "Channel points", () => press("rewards-btn"), { sub: bal ? `${bal} points` : "" });
+  }
+  if (!kick) item("drops", "Drops", () => document.querySelector('#chat-settings-menu [data-action="drops"]')?.click());
+  if (shown("modmenu-btn")) item("shield", "Moderator controls", () => press("modmenu-btn"));
+  if (shown("modlog-btn")) item("gavel", "Mod actions log", () => press("modlog-btn"), { dot: document.getElementById("modlog-btn").classList.contains("has-unread") });
+  item("people", "Chatters", () => openChatters(), { sub: info.users?.length ? `${info.users.length.toLocaleString()} seen` : "" });
+  item("sliders", "All settings", () => document.querySelector('#chat-settings-menu [data-action="settings"]')?.click());
+  shade.appendChild(sheet);
+  shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
+  dragToClose(sheet, close);
+  document.body.appendChild(shade);
+  popEsc = pushEscape(close);
+}
+
+// who's been in chat (Frosty's Chatters): everyone who's talked since you joined, and for a moderator everyone
+// connected. A filter on top; a tap opens that person's card
+function openChatters() {
+  const info = deps.chatMenuInfo?.() || {};
+  const users = [...(info.users || [])].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const shade = el("div", "m-sheet-shade");
+  const sheet = el("div", "m-sheet m-chatters");
+  sheet.setAttribute("role", "dialog");
+  sheet.appendChild(el("div", "m-sheet-grip"));
+  sheet.appendChild(el("div", "m-sheet-title", "Chatters"));
+  const filter = el("input", "m-chatters-filter");
+  filter.type = "search";
+  filter.placeholder = "Filter chatters";
+  filter.setAttribute("autocomplete", "off");
+  const count = el("div", "m-chatters-count");
+  const list = el("div", "m-chatters-list");
+  sheet.append(filter, count, list);
+  let popEsc = null;
+  const close = () => { shade.remove(); popEsc?.(); popEsc = null; };
+  const draw = () => {
+    const q = filter.value.trim().toLowerCase();
+    const hits = q ? users.filter((u) => u.toLowerCase().includes(q)) : users;
+    count.textContent = !users.length ? (info.isMod ? "Loading chatters…" : "Nobody has chatted since you joined")
+      : q ? `${hits.length.toLocaleString()} of ${users.length.toLocaleString()}`
+      : `${users.length.toLocaleString()} ${info.isMod ? "in chat" : "chatted since you joined"}`;
+    list.replaceChildren();
+    for (const name of hits.slice(0, 300)) {
+      const b = el("button", "m-chatter", name);
+      b.type = "button";
+      b.addEventListener("click", () => { close(); deps.openUser?.(name); });
+      list.appendChild(b);
+    }
+    if (hits.length > 300) list.appendChild(el("div", "m-chatters-count", `and ${(hits.length - 300).toLocaleString()} more: filter to find someone`));
+  };
+  filter.addEventListener("input", draw);
+  draw();
+  shade.appendChild(sheet);
+  shade.addEventListener("click", (e) => { if (e.target === shade) close(); });
+  dragToClose(sheet, close);
+  document.body.appendChild(shade);
+  popEsc = pushEscape(close);
 }
 
 // ---- Android's back button ----

@@ -289,6 +289,13 @@ export const chatVodReplayMixin = {
     _syncWaitStartedAt = performance.now();
     this.container.innerHTML = "";
     this.setStatus("replay");
+    // a broadcast's chat often starts a while in (nobody types during the intro): say when, so an empty chat
+    // doesn't look stuck
+    if (queue.length > 0 && queue[0].offset > initialPositionSecs + 10) {
+      const at = Math.floor(queue[0].offset);
+      const h = Math.floor(at / 3600), m = Math.floor((at % 3600) / 60), sec = String(at % 60).padStart(2, "0");
+      this.systemLine(`Chat replay starts at ${h ? `${h}:${String(m).padStart(2, "0")}` : m}:${sec}`);
+    }
     console.log(`[vod-chat] ${_ts()} replay loop started  fetchedUpTo=${fetchedUpTo}  queue=${queue.length}`);
 
     // how close pos must get to expectedPosition to count as caught up

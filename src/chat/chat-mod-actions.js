@@ -3,6 +3,7 @@
 // non-mods and self-targeting (Helix would 400)
 
 import { invoke } from "@tauri-apps/api/core";
+import { haptic } from "../mobile.js";
 export const chatModActionsMixin = {
   // handled means success or failure both count, so it isn't also sent as a plain message
   async _tryHandleSlashCommand(text) {
@@ -319,10 +320,12 @@ export const chatModActionsMixin = {
     }
     addItem("copy", "Copy message", () => {
       navigator.clipboard.writeText(line.dataset.msgText || "").catch(() => {});
+      haptic("confirm"); // a phone buzzes to say it's copied (nothing on desktop)
     });
     if (username) {
       addItem("at", "Copy username", () => {
         navigator.clipboard.writeText(username).catch(() => {});
+        haptic("confirm");
       });
     }
     const nameEl = line.querySelector(".chat-username-clickable");

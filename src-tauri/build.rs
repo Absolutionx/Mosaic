@@ -65,6 +65,7 @@ const APP_COMMANDS: &[&str] = &[
     "cancel_device_login",
     "chat_wake",
     "set_orientation",
+    "haptic",
     "set_system_bars",
     "set_pip",
     "pip_keep_playing",

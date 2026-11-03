@@ -326,6 +326,7 @@ pub fn run() {
             oauth::cancel_device_login,
             chat::chat_wake,
             app_extras::set_orientation,
+            app_extras::haptic,
             app_extras::set_system_bars,
             app_extras::set_pip,
             app_extras::pip_keep_playing,

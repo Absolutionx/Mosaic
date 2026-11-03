@@ -631,7 +631,36 @@ initMobile({
   },
   liveLag: () => playbackControls.liveLag(),
   jumpToLive: () => playbackControls.jumpToLive(),
+  // a past broadcast's place and length (null for a live stream), and a jump to a second in it (the phone's timeline)
+  vodTime: () => (playbackControls.isVod
+    ? { pos: playbackControls.videoEl.currentTime || 0, dur: playbackControls.vodTotalSeconds || playbackControls.videoEl.duration || 0 }
+    : null),
+  seekVod: (sec) => playbackControls._seekToVodPosition(sec),
   expandStream: () => returnToFullStream(),
+  vodsChannel: () => session.vodsChannel || "",
+  // pull to refresh on the phone's pages: the followed channels, Top (what's showing there), a channel's videos
+  refreshList: (which) => {
+    if (which === "following") return sidebar.refresh();
+    if (which === "top") return browsePage.refresh();
+    if (which === "videos" && session.vodsChannel) {
+      vodsPage.openNextOn = vodsPage.tab || null; // stay on Clips if that's what's open
+      return vodsPage.show(session.vodsChannel, { kick: session.vodsChannelIsKick });
+    }
+    return null;
+  },
+  // the phone's chat menu: the chat's modes (as the desktop's chips read), who's been in chat, and whether you moderate it
+  chatMenuInfo: () => ({
+    modes: [...document.querySelectorAll("#chat-mode-indicators .chat-mode-chip")].map((c) => c.textContent),
+    users: [...(chat._chatUsers?.values() || [])],
+    isMod: !!chat.isMod || (!!chat.ownLogin && chat.ownLogin.toLowerCase() === chat.channel),
+  }),
+  // a user card from a name alone (the phone's Chatters list): its Twitch id first, then the card as chat opens it
+  openUser: async (login) => {
+    try {
+      const user = JSON.parse(await invoke("get_user_by_login", { login }));
+      if (user?.id) chat._showUserCard(document.getElementById("chat-input-row"), user.id, user.login || login, null, null, null);
+    } catch { /* not found */ }
+  },
   // a channel's past broadcasts (or clips), as the desktop's Videos button under the player opens them
   openVods: (login, { clips = false } = {}) => {
     session.vodsChannel = login;

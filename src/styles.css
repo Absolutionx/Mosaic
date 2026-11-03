@@ -10997,7 +10997,9 @@ body.mobile .chat-input-wrapper { flex: 1 1 0; min-width: 0; }
   body.mobile .whisper-modal,
   body.mobile .notif-panel,
   body.mobile .modmenu { position: fixed; top: auto !important; bottom: 0 !important; left: 0 !important; right: 0 !important; }
-  body.mobile .whisper-modal { height: 85dvh; max-height: none; }
+  /* shorter than the screen, and never taller than what's above the keyboard (--m-vh, mobile.js wireKeyboard):
+     typing used to push its top, and the person's name, off the screen */
+  body.mobile .whisper-modal { height: min(62dvh, 560px, calc(var(--m-vh, 100dvh) - 12px)); max-height: none; }
   body.mobile .notif-panel { height: 85dvh !important; max-height: none !important; }
   body.mobile .modmenu { max-height: 85dvh; overflow-y: auto; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); }
   body.mobile .whisper-overlay, body.mobile .modmenu-overlay { background: rgba(0, 0, 0, .5); }
@@ -11183,3 +11185,140 @@ body.mobile .m-ov-stats.m-behind .m-ov-uptime::before { background: #8a929e; }
    button (downloads use ffmpeg, which the phone doesn't have) */
 body.mobile .vods-tab.active { border-bottom-color: #fff; }
 body.mobile .vod-card-download { display: none !important; }
+
+/* ---- sideways: menus as a floating card over chat, not a bar across the whole screen (long-press menus, the
+   player's Options, chat's ⋯, quality, emotes) ---- */
+@media (min-aspect-ratio: 13/9) {
+  body.mobile .m-sheet-shade { justify-content: flex-end; }
+  body.mobile .m-sheet {
+    width: min(380px, 46vw); max-height: calc(100% - 16px); overflow-y: auto; overscroll-behavior: contain;
+    margin: 0 calc(8px + env(safe-area-inset-right, 0px)) 8px 0; padding-bottom: 8px;
+    border-radius: 16px; border: 1px solid var(--m-border, #29313d); box-shadow: 0 10px 40px rgba(0,0,0,.6);
+  }
+  body.mobile .m-options { max-height: calc(100% - 16px); }
+  body.mobile .quality-menu.open,
+  body.mobile #chat-settings-menu,
+  body.mobile .emote-picker-menu {
+    left: auto !important; right: calc(8px + env(safe-area-inset-right, 0px)) !important; bottom: 8px !important;
+    width: min(380px, 46vw) !important; max-height: calc(100% - 16px); overflow-y: auto;
+    border: 1px solid var(--m-border, #29313d) !important; border-radius: 16px !important;
+    padding-bottom: 6px !important; box-shadow: 0 10px 40px rgba(0,0,0,.6) !important;
+  }
+  body.mobile .emote-picker-menu { height: min(calc(100% - 16px), 340px) !important; }
+}
+
+/* ---- the hype train on a phone: one line when folded, and its details scroll in their own box (sideways chat
+   is short, and they used to push everything else out of reach) ---- */
+body.mobile .hype-train-banner .hype-left, body.mobile .hype-train-banner .hype-right,
+body.mobile .hype-train-banner .hype-level, body.mobile .hype-train-banner .hype-pct { white-space: nowrap; }
+body.mobile .hype-train-banner .hype-right { gap: 6px; }
+body.mobile .hype-train-banner .hype-row { gap: 10px; }
+body.mobile .hype-train-banner .hype-left { min-width: 0; overflow: hidden; }
+body.mobile .hype-details { max-height: 42vh; overflow-y: auto; overscroll-behavior: contain; }
+body.mobile .hype-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-aspect-ratio: 13/9) {
+  body.mobile .hype-details { max-height: calc(var(--m-vh, 100dvh) * .5); padding: 8px; }
+  /* chat is narrow sideways: one stat per line, its number then what it is */
+  body.mobile .hype-stats { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  body.mobile .hype-stat { display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; }
+  body.mobile .hype-stat-value { font-size: 13.5px; white-space: nowrap; }
+  body.mobile .hype-stat-label { font-size: 12px; }
+}
+
+/* ---- typing sideways: the keyboard leaves a short strip, so the video sizes to that height on the left and chat
+   takes the rest of the width, with the hype train and the mod/points row out of the way until you're done ---- */
+@media (min-aspect-ratio: 13/9) and (max-height: 300px) {
+  body.mobile.m-watching:not(.m-full) #app {
+    grid-template-columns: min(calc(var(--m-vh, 100dvh) * 16 / 9), 50vw) minmax(0, 1fr) !important;
+  }
+  body.mobile.m-watching #hype-train-banner,
+  body.mobile.m-watching .m-chat-extras { display: none !important; }
+}
+
+/* ---- a past broadcast's timeline in the phone player (mobile.js buildPlayerOverlay): the time so far, a bar to
+   drag, the length; live streams don't show it, nor their uptime/viewers row on a past broadcast ---- */
+.m-ov-timeline { display: none; }
+body.mobile .m-has-timeline .m-ov-timeline {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 0 4px 0 0;
+  font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.85);
+}
+body.mobile .m-has-timeline .m-ov-bottom { flex-wrap: wrap; row-gap: 0; }
+/* the overlay passes touches through except to its controls: the bar is one */
+body.mobile #video-frame.controls-visible .m-ov-timeline { pointer-events: auto; }
+body.mobile .m-has-timeline .m-ov-stats { visibility: hidden; }
+body.mobile .m-has-timeline .m-ov-right { margin-left: auto; }
+/* refresh restarts a live stream; a past broadcast has the timeline instead */
+body.mobile .m-has-timeline .m-ov-refresh { display: none; }
+.m-ov-time { flex: none; min-width: 34px; }
+.m-ov-time:last-child { text-align: right; }
+/* a tall invisible strip, so the thin bar is easy to grab */
+.m-ov-track { position: relative; flex: 1; height: 28px; cursor: pointer; touch-action: none; }
+.m-ov-track::before, .m-ov-track-fill {
+  content: ""; position: absolute; left: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px;
+}
+.m-ov-track::before { right: 0; background: rgba(255,255,255,.3); }
+.m-ov-track-fill { background: #fff; }
+.m-ov-track-knob {
+  position: absolute; top: 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.6); transition: transform .1s ease;
+}
+.m-ov-timeline.m-dragging .m-ov-track-knob { transform: scale(1.4); }
+.m-ov-timeline.m-dragging .m-ov-track::before, .m-ov-timeline.m-dragging .m-ov-track-fill { height: 5px; margin-top: -2.5px; }
+/* double-tap skips: "−10s" / "+10s" for a moment on that side */
+.m-skip {
+  position: absolute; top: 50%; z-index: 8; transform: translateY(-50%); padding: 10px 16px; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 15px; font-weight: 700; pointer-events: none;
+  animation: m-skip-fade .65s ease-out forwards;
+}
+.m-skip-back { left: 12%; }
+.m-skip-ahead { right: 12%; }
+@keyframes m-skip-fade { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---- chat's ⋮ menu (mobile.js openChatMenu): channel points and the mod tools moved in here, so the box has
+   the row to itself ---- */
+body.mobile .m-chat-extras { display: none !important; }
+body.mobile #chat-settings-btn { position: relative; }
+body.mobile #chat-settings-btn.m-has-unread::after {
+  content: ""; position: absolute; top: 7px; right: 9px; width: 8px; height: 8px; border-radius: 50%; background: #eb0400;
+}
+.m-chat-modes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 8px; }
+.m-chat-mode {
+  padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+  background: var(--m-surface-2, #1c222c); color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d);
+}
+.m-sheet-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.m-sheet-sub { font-size: 13px; font-weight: 500; color: var(--m-muted, #9aa5b4); }
+.m-sheet-dot { width: 8px; height: 8px; border-radius: 50%; background: #eb0400; flex: none; }
+/* Chatters: a filter, a count, and the names */
+.m-chatters { display: flex; flex-direction: column; max-height: 75vh; }
+.m-chatters-filter {
+  margin: 0 16px 6px; padding: 10px 14px; border-radius: 12px; font: inherit; font-size: 15px;
+  background: var(--m-bg, #0e1116); color: var(--m-text, #e7ebf2); border: 1px solid var(--m-border, #29313d); outline: none;
+}
+.m-chatters-filter:focus { border-color: #fff; }
+.m-chatters-count { padding: 4px 20px 6px; font-size: 12.5px; color: var(--m-muted, #9aa5b4); }
+.m-chatters-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.m-chatter {
+  display: block; width: 100%; padding: 11px 20px; border: 0; background: none; text-align: left;
+  font: inherit; font-size: 15px; font-weight: 600; color: var(--m-text, #e7ebf2);
+}
+.m-chatter:active { background: var(--m-surface-2, #1c222c); }
+@media (min-aspect-ratio: 13/9) {
+  body.mobile .m-chatters { max-height: calc(100% - 16px); }
+}
+
+/* ---- pull to refresh (mobile.js wirePullToRefresh): a round arrow that follows the finger down, turns white
+   once letting go will refresh, and spins while it loads ---- */
+.m-ptr {
+  position: fixed; left: 50%; z-index: 9000; width: 40px; height: 40px; border-radius: 50%; opacity: 0; pointer-events: none;
+  display: flex; align-items: center; justify-content: center; transform: translateX(-50%);
+  background: var(--m-surface-2, #1c222c); color: var(--m-muted, #9aa5b4); box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  transition: opacity .15s ease;
+}
+.m-ptr.m-ptr-ready { color: #fff; }
+.m-ptr.m-ptr-busy { color: #fff; opacity: 1; animation: m-ptr-spin .8s linear infinite; }
+@keyframes m-ptr-spin { from { transform: translateX(-50%) rotate(0deg); } to { transform: translateX(-50%) rotate(360deg); } }
+
+/* whispers on a phone in the neutral look: white instead of the purple accent */
+body.mobile .whisper-input-wrap:focus-within { border-color: #fff; }
+body.mobile .whisper-send { background: #fff; color: #0e1116; border-color: #fff; }
