@@ -2118,9 +2118,11 @@ pub async fn get_live_preview_url(
 
 // a live channel's master playlist on usher, with an anonymous web playback token (no streamlink)
 async fn live_usher_url(login: &str) -> Result<String, String> {
+    // "embed", as streamlink asks: since 11-02-26 a "site" token gets a playlist of nothing but stitched ads
+    // (they never end), which the ad filter empties, so the stream never starts
     let (value, sig) = preview_token(
         PREVIEW_TOKEN_QUERY,
-        serde_json::json!({ "login": login, "playerType": "site" }),
+        serde_json::json!({ "login": login, "playerType": "embed" }),
         "streamPlaybackAccessToken",
     )
     .await
