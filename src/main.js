@@ -632,6 +632,14 @@ initMobile({
   liveLag: () => playbackControls.liveLag(),
   jumpToLive: () => playbackControls.jumpToLive(),
   expandStream: () => returnToFullStream(),
+  // a channel's past broadcasts (or clips), as the desktop's Videos button under the player opens them
+  openVods: (login, { clips = false } = {}) => {
+    session.vodsChannel = login;
+    session.vodsChannelIsKick = false;
+    if (clips) vodsPage.openNextOn = "clips";
+    if (session.lastActivePage === "vods" && session.pageVisible) vodsPage.show(login, { kick: false });
+    else switchPage("vods");
+  },
   currentChannel: () => (session.playing ? String(playbackControls.currentChannel || "") : ""),
   currentQuality: () => playbackControls.currentQuality || "",
   searchChannels: (q) => invoke("search_twitch_channels", { query: q }),

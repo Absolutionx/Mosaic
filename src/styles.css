@@ -11178,3 +11178,8 @@ body.mobile .m-ov-stats.m-behind .m-ov-uptime::before { background: #8a929e; }
   background: var(--m-bg, #0e1116); color: var(--m-text, #e7ebf2);
   font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
 }
+
+/* a channel's videos page on a phone (mobile.js openChannelVideos): the neutral white underline, and no download
+   button (downloads use ffmpeg, which the phone doesn't have) */
+body.mobile .vods-tab.active { border-bottom-color: #fff; }
+body.mobile .vod-card-download { display: none !important; }

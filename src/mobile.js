@@ -23,6 +23,9 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
 const ICONS = {
+  videos: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/>',
+  clips: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9"/><path d="M14.5 14.5 20 20"/><path d="M8.1 8.1 12 12"/>',
+  category: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   following: '<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>',
   top: '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
@@ -70,6 +73,7 @@ let searchEl = null;
 //   searchChannels(q)        Twitch channels matching q: [{ login, name, live, game, title, avatar }]
 //   searchCategories(q)      Twitch categories matching q: [{ name, box_art_url }]
 //   openCategory(game)       Top's page for that category
+//   openVods(login, {clips}) that channel's videos page (vods.js), on its Clips tab with clips
 //   openSettings()           the Settings page
 export function initMobile(d = {}) {
   if (!isAndroid) return;
@@ -339,9 +343,22 @@ function onLongPress(node, run) {
 
 function streamActions(c) {
   const pinned = !!deps.isPinned?.(c.login);
-  openSheet(c.name || c.login, [
+  const items = [
     { icon: "pin", label: pinned ? "Unpin" : "Pin", run: () => { deps.togglePin?.(c.login); renderFollowing(); } },
-  ]);
+    { icon: "videos", label: "Past broadcasts", run: () => openChannelVideos(c.login) },
+    { icon: "clips", label: "Clips", run: () => openChannelVideos(c.login, true) },
+  ];
+  // the category opens its streams in Top, as in Frosty (only from here: a tap on the row always watches)
+  if (c.live !== false && c.game) items.push({ icon: "category", label: `Go to ${c.game}`, run: () => { setTab("browse"); deps.openCategory?.({ name: c.game }); } });
+  openSheet(c.name || c.login, items);
+}
+
+// a channel's videos page (vods.js): its past broadcasts, or its clips. Watching, the stream shrinks to the mini
+// player first, so it keeps playing while you look; back returns to where you were
+function openChannelVideos(login, clips = false) {
+  if (!login) return;
+  if (document.body.classList.contains("m-watching")) minimizePlayer();
+  deps.openVods?.(login, { clips });
 }
 
 // one live channel, as Frosty draws it: the thumbnail with its uptime, then who, what, the category and viewers
@@ -371,12 +388,8 @@ function liveRow(c) {
   }
   who.appendChild(el("span", "m-row-name", c.name || c.login));
   text.append(who, el("div", "m-row-title", c.title || ""));
-  if (c.game) {
-    const game = el("div", "m-row-game", c.game);
-    // the category opens its streams in Top, as in Frosty
-    game.addEventListener("click", (e) => { e.stopPropagation(); setTab("browse"); deps.openCategory?.({ name: c.game }); });
-    text.appendChild(game);
-  }
+  // the category: a hold on the row offers "Go to" it (streamActions); a tap anywhere on the row watches
+  if (c.game) text.appendChild(el("div", "m-row-game", c.game));
   text.appendChild(el("div", "m-row-viewers", `${(Number(c.viewers) || 0).toLocaleString()} viewers`));
   row.append(thumb, text);
   row.addEventListener("click", () => deps.watch?.(c.login));
@@ -392,8 +405,9 @@ function offlineRow(c) {
   a.loading = "lazy";
   if (c.avatar) a.src = c.avatar;
   row.append(a, el("span", "m-row-name", c.name || c.login));
-  row.addEventListener("click", () => deps.watch?.(c.login));
-  onLongPress(row, () => streamActions(c));
+  // nothing live to watch: its past broadcasts, as Twitch's app opens an offline channel's page
+  row.addEventListener("click", () => openChannelVideos(c.login));
+  onLongPress(row, () => streamActions({ ...c, live: false }));
   return row;
 }
 
@@ -1065,6 +1079,13 @@ function openPlayerOptions() {
       const c = deps.currentChannel?.();
       if (c) deps.watch?.(c);
     }));
+  // the channel being watched (not a past broadcast's "vod:" id)
+  const login = String(deps.currentChannel?.() || "");
+  if (/^[a-z0-9_]{2,25}$/i.test(login)) {
+    sheet.appendChild(el("div", "m-opt-section", "Channel"));
+    row("Past broadcasts", "The channel's earlier streams. This one keeps playing in the mini player.", null, () => { close(); openChannelVideos(login); });
+    row("Clips", "The channel's most watched moments.", null, () => { close(); openChannelVideos(login, true); });
+  }
   sheet.appendChild(el("div", "m-opt-section", "External playback options"));
   // When locked: keeps playing with the screen off, pauses when you switch to another app (unless it floats);
   // Always: keeps playing either way. Android shows a notification while it plays in the background
