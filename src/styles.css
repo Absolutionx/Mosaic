@@ -11358,3 +11358,55 @@ body.mobile .user-card::before, body.mobile .emote-picker-menu::before, body.mob
   border-radius: 2px; background: rgba(255,255,255,.25); z-index: 2; pointer-events: none;
 }
 body.mobile .emote-picker-menu, body.mobile .quality-menu.open { padding-top: 14px !important; }
+
+/* ---- the emote picker stands where the keyboard would (mobile.js wireEmotePanel): docked at the bottom, with the
+   chat box lifted just above it so each emote shows as it's added, and chat and the stream above that ---- */
+body.mobile { --m-emote-h: min(42dvh, 340px); }
+body.mobile .emote-picker-menu { height: var(--m-emote-h) !important; border-radius: 16px 16px 0 0 !important; }
+body.mobile.m-emotes.m-watching #chat-pane { padding-bottom: var(--m-emote-h) !important; }
+/* a tapped emote pops, so you can tell it took */
+body.mobile .emote-picker-item.emote-picked { animation: m-emote-pop .25s ease-out; }
+@keyframes m-emote-pop { 40% { transform: scale(1.35); } 100% { transform: scale(1); } }
+@media (min-aspect-ratio: 13/9) {
+  /* sideways it fills the bottom of the chat column instead of floating over the video */
+  body.mobile { --m-emote-h: min(58dvh, 260px); }
+  body.mobile .emote-picker-menu {
+    left: auto !important; right: env(safe-area-inset-right, 0px) !important; bottom: 0 !important;
+    width: min(30vw, 360px) !important; height: var(--m-emote-h) !important; max-height: none;
+    border-radius: 16px 16px 0 0 !important; border-width: 1px 1px 0 !important;
+  }
+}
+
+/* ---- Points & Drops on a phone (rewards.js, ledger-view.js, watch-stats.js): the desktop's two columns, each with
+   its own scroll, stacked into one column that scrolls as a whole (the side boxes used to sit on top of the list,
+   and nothing scrolled); the stat cards two to a row; white for the accent, as the rest of the phone app ---- */
+body.mobile .rewards-body .lg, body.mobile .rewards-body .ws {
+  display: block; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 18px;
+}
+body.mobile .rewards-body .lg-col, body.mobile .rewards-body .ws-col, body.mobile .rewards-body .lg-side {
+  overflow: visible !important; min-height: auto; max-height: none; padding-right: 0;
+}
+body.mobile .rewards-body .lg-side { margin-top: 18px; }
+body.mobile .ws .stats-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+body.mobile .ws .stats-cards > :nth-child(3):last-child { grid-column: 1 / -1; }
+body.mobile .ws .stats-card { padding: 12px 14px; min-width: 0; }
+body.mobile .ws .stats-card-big { font-size: 22px; }
+
+/* ---- the phone app is neutral: white where the desktop uses the accent (Twitch purple, a theme's color, Kick
+   green), with dark text on it; on a light theme, near-black with white text. "!important" so it holds over a
+   theme's colors, which are set directly on the page. Colors that mean something stay: chat names, a cheer's tier,
+   announcement colors, and the Twitch and Kick colors where they label a platform ---- */
+body.mobile:not(.theme-light) {
+  --m-accent: #e7ebf2 !important; --m-accent-hover: #ffffff !important; --m-accent-soft: rgba(255, 255, 255, .08) !important;
+  --m-accent-fg: #0e1116 !important; --m-accent-text: #ffffff !important;
+  --accent: #e7ebf2 !important; --accent-dark: #c9ced6 !important; --accent-light: #ffffff !important;
+  --accent-text: #ffffff !important; --accent-soft: rgba(255, 255, 255, .08) !important; --accent-fg: #0e1116 !important;
+}
+body.mobile.theme-light {
+  --m-accent: #1f2328 !important; --m-accent-hover: #000000 !important; --m-accent-soft: rgba(0, 0, 0, .06) !important;
+  --m-accent-fg: #ffffff !important; --m-accent-text: #1f2328 !important;
+  --accent: #1f2328 !important; --accent-dark: #000000 !important; --accent-light: #3a4048 !important;
+  --accent-text: #1f2328 !important; --accent-soft: rgba(0, 0, 0, .06) !important; --accent-fg: #ffffff !important;
+}
+/* the settings switches keep a white knob, which would vanish on the white "on" track */
+body.mobile .settings-switch.on .settings-switch-knob { background: var(--m-accent-fg); }

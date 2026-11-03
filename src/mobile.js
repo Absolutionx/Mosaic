@@ -103,6 +103,7 @@ export function initMobile(d = {}) {
   wireWake();
   wireKeyboard();
   wireDialogDrag();
+  wireEmotePanel();
   wirePullToRefresh(followingEl, "following");
   wirePullToRefresh(document.getElementById("browse-page"), "top");
   wirePullToRefresh(document.getElementById("vods-page"), "videos");
@@ -172,11 +173,12 @@ function dragToClose(sheet, close, startsAt = null) {
     if (!start.moving) {
       if (dy < 6) { if (dy < -6) start = null; return; } // a tap, or scrolling the sheet up: leave it
       start.moving = true;
-      sheet.style.transition = "none";
+      sheet.style.setProperty("transition", "none", "important");
     }
     e.preventDefault();
     start.dy = Math.max(0, dy);
-    sheet.style.transform = `translateY(${start.dy}px)`;
+    // "important": some sheets (the emote picker, the quality menu) are pinned in place by the stylesheet
+    sheet.style.setProperty("transform", `translateY(${start.dy}px)`, "important");
   }, { passive: false });
   const end = () => {
     if (!start) return;
@@ -184,12 +186,14 @@ function dragToClose(sheet, close, startsAt = null) {
     start = null;
     if (!moving) return;
     const fast = dy > 40 && dy / Math.max(1, performance.now() - t) > 0.6;
-    sheet.style.transition = "transform .18s ease-out";
+    sheet.style.setProperty("transition", "transform .18s ease-out", "important");
+    const clear = () => { sheet.style.removeProperty("transform"); sheet.style.removeProperty("transition"); };
     if (dy > sheet.offsetHeight / 4 || fast) {
-      sheet.style.transform = "translateY(100%)";
-      setTimeout(close, 170);
+      sheet.style.setProperty("transform", "translateY(100%)", "important");
+      setTimeout(() => { close(); clear(); }, 170);
     } else {
-      sheet.style.transform = "";
+      sheet.style.setProperty("transform", "translateY(0)", "important");
+      setTimeout(clear, 190);
     }
   };
   sheet.addEventListener("touchend", end);
@@ -213,7 +217,6 @@ function wireDialogDrag() {
     dragToClose(d, () => {
       if (d.matches(".quality-menu")) d.classList.remove("open");
       else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-      d.style.transform = "";
     }, (e) => {
       // sideways the app's dialogs are ordinary centered ones; only the menus and the card stay sheets
       if (window.matchMedia(SIDEWAYS).matches && !d.matches(SHEET_ANY_WAY)) return false;
@@ -233,6 +236,40 @@ function wireDialogDrag() {
     for (const m of list) if (!chatPane?.contains(m.target)) m.addedNodes.forEach(scan);
   }).observe(document.body, { childList: true, subtree: true });
   scan(document.body);
+}
+
+// the emote picker on a phone stands where the keyboard would (as in Twitch's and Frosty's apps): the chat box
+// stays in sight just above it, showing each emote as it's added, with chat and the stream above that.
+// Opening it puts the keyboard away; tapping the chat box brings the keyboard back (the picker closes on any
+// tap outside it)
+function wireEmotePanel() {
+  const menu = document.getElementById("emote-picker-menu");
+  if (!menu) return;
+  const sync = () => {
+    const open = menu.classList.contains("open");
+    if (open && !document.body.classList.contains("m-emotes")) {
+      const a = document.activeElement;
+      if (a && a.id === "chat-input") a.blur();
+    }
+    document.body.classList.toggle("m-emotes", open);
+    fit();
+  };
+  // sideways it fills exactly the chat column (whose width depends on the screen), not over the video
+  const fit = () => {
+    const pane = document.getElementById("chat-pane");
+    const sideways = window.matchMedia(SIDEWAYS).matches && document.body.classList.contains("m-watching");
+    if (menu.classList.contains("open") && sideways && pane) {
+      const r = pane.getBoundingClientRect();
+      menu.style.setProperty("left", `${Math.round(r.left)}px`, "important");
+      menu.style.setProperty("width", `${Math.round(r.width)}px`, "important");
+      menu.style.setProperty("right", "auto", "important");
+    } else {
+      for (const k of ["left", "width", "right"]) menu.style.removeProperty(k);
+    }
+  };
+  new MutationObserver(sync).observe(menu, { attributes: true, attributeFilter: ["class"] });
+  window.addEventListener("resize", fit);
+  sync();
 }
 
 // ---- a bottom sheet of choices (long-press on a stream, as in Frosty) ----

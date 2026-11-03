@@ -3,6 +3,7 @@
 // TwitchChat (see ../chat.js). reads this.sevenTvEmotes / this.twitchNativeEmotes fresh each
 // render rather than snapshotting, since those maps change live and the picker is open briefly
 
+import { isAndroid, haptic } from "../mobile.js";
 import { EMOJI_GROUPS } from "../emoji-data.js";
 
 // one collator for sorting emote names: String#localeCompare made a fresh one for each of the thousands of
@@ -167,7 +168,14 @@ export const chatEmotePickerMixin = {
     // one click listener for every emote and emoji button (each carries what it inserts)
     gridWrap.addEventListener("click", (e) => {
       const item = e.target instanceof Element ? e.target.closest(".emote-picker-item") : null;
-      if (item && gridWrap.contains(item) && item.dataset.insert != null) this._insertEmoteAtCursor(item.dataset.insert);
+      if (item && gridWrap.contains(item) && item.dataset.insert != null) {
+        this._insertEmoteAtCursor(item.dataset.insert);
+        // you can see it land in the chat box; the button pops and (on a phone) a light buzz says it took
+        item.classList.remove("emote-picked");
+        void item.offsetWidth;
+        item.classList.add("emote-picked");
+        haptic("tick");
+      }
     });
 
     const tabs = document.createElement("div");
@@ -242,7 +250,8 @@ export const chatEmotePickerMixin = {
     menu.appendChild(searchWrap);
 
     this._renderEmoteGrid(gridWrap);
-    search.focus();
+    // a phone's keyboard would cover the picker, the chat box and the stream: it comes up only when you tap Search
+    if (!isAndroid) search.focus();
   },
 
   _renderEmoteGrid(scroller) {
@@ -442,6 +451,7 @@ export const chatEmotePickerMixin = {
     // fires the input listener (chat.js) that toggles .has-text and drives Send, a plain assignment doesn't dispatch it
     input.dispatchEvent(new Event("input", { bubbles: true }));
     this._autosizeChatInput();
-    input.focus();
+    // on a phone the picker stands in for the keyboard: focusing the box would bring the keyboard back over it
+    if (!isAndroid) input.focus();
   },
 };
