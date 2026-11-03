@@ -50,6 +50,13 @@ class PlaybackService : Service() {
             ACTION_PLAY -> { onMediaButton?.invoke(true); return START_NOT_STICKY }
             ACTION_PAUSE -> { onMediaButton?.invoke(false); return START_NOT_STICKY }
         }
+        // Mosaic's window is gone (swiped away from recent apps): a late update from the closing app mustn't bring
+        // the notification back with nothing playing behind it
+        if (!appOnScreenOrInRecents()) {
+            MosaicLog.add(this, "service: Mosaic's window is gone, not starting")
+            stopEverything()
+            return START_NOT_STICKY
+        }
         title = intent?.getStringExtra("title")?.takeIf { it.isNotBlank() } ?: title
         paused = intent?.getBooleanExtra("paused", false) ?: false
         val wantArt = intent?.getStringExtra("art") ?: ""
@@ -156,6 +163,28 @@ class PlaybackService : Service() {
             false
         }
     }
+
+    // swiping Mosaic away from recent apps closes it: the playback (and its notification) go with it
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        MosaicLog.add(this, "service: Mosaic was closed from recent apps, stopping")
+        stopEverything()
+        super.onTaskRemoved(rootIntent)
+    }
+
+    private fun stopEverything() {
+        try {
+            if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE)
+            else @Suppress("DEPRECATION") stopForeground(true)
+        } catch (_: Exception) { }
+        manager().cancel(NOTIFICATION_ID)
+        foreground = false
+        stopSelf()
+    }
+
+    // whether Mosaic still has its window (on screen, floating, or in the background in recent apps)
+    private fun appOnScreenOrInRecents(): Boolean = try {
+        (getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).appTasks.isNotEmpty()
+    } catch (_: Exception) { true }
 
     // the stream's picture, fetched off the main thread and shrunk to what a media player shows, then put up
     private fun loadArt(url: String) {

@@ -102,6 +102,7 @@ export function initMobile(d = {}) {
   wireBack();
   wireWake();
   wireKeyboard();
+  wireDialogDrag();
   wirePullToRefresh(followingEl, "following");
   wirePullToRefresh(document.getElementById("browse-page"), "top");
   wirePullToRefresh(document.getElementById("vods-page"), "videos");
@@ -153,12 +154,16 @@ function iconBtn(cls, icon, label, onClick, size = 22) {
 // Down from the grip or the title, or from anywhere in the sheet while it's scrolled to its top. The sheet follows
 // the finger; let go past a quarter of its height (or with a quick flick) and it slides away and closes, otherwise
 // it springs back. A tap still taps: nothing moves until the finger has gone a few pixels down
-function dragToClose(sheet, close) {
+// `startsAt(e)`, when given, decides where a drag may begin (the app's older dialogs: only their top, so
+// scrolling a list inside them never closes them)
+function dragToClose(sheet, close, startsAt = null) {
   let start = null;
   sheet.addEventListener("touchstart", (e) => {
     if (e.touches.length !== 1) return;
-    const onTop = e.target.closest?.(".m-sheet-grip, .m-sheet-title");
-    if (!onTop && sheet.scrollTop > 0) return;
+    if (startsAt) { if (!startsAt(e)) return; } else {
+      const onTop = e.target.closest?.(".m-sheet-grip, .m-sheet-title");
+      if (!onTop && sheet.scrollTop > 0) return;
+    }
     start = { y: e.touches[0].clientY, t: performance.now(), dy: 0, moving: false };
   }, { passive: true });
   sheet.addEventListener("touchmove", (e) => {
@@ -189,6 +194,45 @@ function dragToClose(sheet, close) {
   };
   sheet.addEventListener("touchend", end);
   sheet.addEventListener("touchcancel", end);
+}
+
+// the app's own dialogs that a phone shows as bottom sheets upright (styles.css "dialogs as bottom sheets"):
+// whispers, notifications, Points & Drops, the Drops hub, the chat filter, hidden channels, the mod menu.
+// Each gets the same drag down to close, from its grip or header; closing goes through Escape, which every
+// one of them already answers (the back button does the same)
+// The user card, the emote picker and the quality menu are sheets too (the last two sideways as well, as the
+// floating card over chat); the quality menu closes when it loses "open" rather than on Escape
+const SHEET_DIALOGS = ".whisper-modal, .notif-panel, .rewards-modal, .hub-panel, .chat-filter-modal, .hidden-channels-modal, .modmenu, .user-card, .emote-picker-menu, .quality-menu";
+const SHEET_HEADS = ".whisper-header, .notif-head, .hub-head, .chat-filter-header, .rw-tabs, .user-card-header";
+const SHEET_ANY_WAY = ".emote-picker-menu, .quality-menu, .user-card";
+function wireDialogDrag() {
+  const seen = new WeakSet();
+  const attach = (d) => {
+    if (seen.has(d)) return;
+    seen.add(d);
+    dragToClose(d, () => {
+      if (d.matches(".quality-menu")) d.classList.remove("open");
+      else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      d.style.transform = "";
+    }, (e) => {
+      // sideways the app's dialogs are ordinary centered ones; only the menus and the card stay sheets
+      if (window.matchMedia(SIDEWAYS).matches && !d.matches(SHEET_ANY_WAY)) return false;
+      if (e.target.closest?.("input, textarea, select")) return false;
+      const fromTop = e.touches[0].clientY - d.getBoundingClientRect().top;
+      return fromTop < 28 || !!e.target.closest?.(SHEET_HEADS);
+    });
+  };
+  const scan = (root) => {
+    if (!(root instanceof Element)) return;
+    if (root.matches(SHEET_DIALOGS)) attach(root);
+    root.querySelectorAll?.(SHEET_DIALOGS).forEach(attach);
+  };
+  // chat adds lines all the time; nothing in it is one of these dialogs
+  const chatPane = document.getElementById("chat-pane");
+  new MutationObserver((list) => {
+    for (const m of list) if (!chatPane?.contains(m.target)) m.addedNodes.forEach(scan);
+  }).observe(document.body, { childList: true, subtree: true });
+  scan(document.body);
 }
 
 // ---- a bottom sheet of choices (long-press on a stream, as in Frosty) ----
