@@ -636,6 +636,11 @@ initMobile({
     ? { pos: playbackControls.videoEl.currentTime || 0, dur: playbackControls.vodTotalSeconds || playbackControls.videoEl.duration || 0 }
     : null),
   seekVod: (sec) => playbackControls._seekToVodPosition(sec),
+  // a live stream's place since it started (null without one), a jump along it (0 the start, 1 live), and a
+  // jump by seconds (live or past broadcast), as the desktop's seek bar and arrow keys do
+  liveTime: () => playbackControls.liveTimeline(),
+  seekLive: (ratio) => playbackControls.seekToRatio(ratio),
+  seekBy: (sec) => playbackControls.seekRelative(sec),
   expandStream: () => returnToFullStream(),
   vodsChannel: () => session.vodsChannel || "",
   // pull to refresh on the phone's pages: the followed channels, Top (what's showing there), a channel's videos

@@ -891,24 +891,38 @@ function buildPlayerOverlay() {
   const total = el("span", "m-ov-time", "0:00");
   timeline.append(cur, track, total);
   let dragTo = null; // seconds while dragging, so the bar follows the finger, not the video
+  // a past broadcast's place, or a live stream's since it started (the desktop's live seek bar: rewinding plays
+  // what's still in memory, and further back the stream's recording so far)
+  const timeNow = () => {
+    const v = deps.vodTime?.();
+    if (v) return { ...v, live: false };
+    const l = deps.liveTime?.();
+    return l ? { ...l, live: true } : null;
+  };
   const drawTimeline = () => {
-    const t = deps.vodTime?.();
+    const t = timeNow();
     region.classList.toggle("m-has-timeline", !!t);
+    region.classList.toggle("m-timeline-live", !!t?.live);
     if (!t) return;
     const pos = dragTo ?? t.pos;
     const ratio = t.dur > 0 ? Math.min(1, Math.max(0, pos / t.dur)) : 0;
     fillBar.style.width = `${ratio * 100}%`;
     knob.style.left = `${ratio * 100}%`;
     cur.textContent = clockTime(pos);
-    total.textContent = clockTime(t.dur);
+    if (!t.live) total.textContent = clockTime(t.dur);
+    else {
+      // live: "LIVE" at the edge, else how far behind it you are
+      const behind = Math.max(0, t.dur - pos);
+      total.textContent = behind < 15 ? "LIVE" : `-${clockTime(behind)}`;
+    }
   };
   const secondsAt = (x) => {
-    const t = deps.vodTime?.();
+    const t = timeNow();
     const r = track.getBoundingClientRect();
     return t && r.width ? Math.min(1, Math.max(0, (x - r.left) / r.width)) * t.dur : 0;
   };
   track.addEventListener("pointerdown", (e) => {
-    if (!deps.vodTime?.()) return;
+    if (!timeNow()) return;
     e.stopPropagation();
     track.setPointerCapture(e.pointerId);
     timeline.classList.add("m-dragging");
@@ -921,7 +935,9 @@ function buildPlayerOverlay() {
     const to = dragTo;
     dragTo = null;
     timeline.classList.remove("m-dragging");
-    deps.seekVod?.(to);
+    const t = timeNow();
+    if (t?.live) deps.seekLive?.(t.dur > 0 ? to / t.dur : 1);
+    else deps.seekVod?.(to);
     haptic("tick");
     drawTimeline();
   };
@@ -930,6 +946,8 @@ function buildPlayerOverlay() {
   // taps on the timeline mustn't reach the video (which would hide the controls)
   timeline.addEventListener("click", (e) => e.stopPropagation());
   if (video) for (const ev of ["timeupdate", "durationchange", "loadedmetadata", "seeked"]) video.addEventListener(ev, drawTimeline);
+  // a live stream's length keeps growing: redraw while the controls are showing
+  setInterval(() => { if (frame?.classList.contains("controls-visible")) drawTimeline(); }, 1000);
   bottom.prepend(timeline);
   ov.append(top, play, bottom);
   region.appendChild(ov);
@@ -999,11 +1017,14 @@ function buildPlayerOverlay() {
     e.stopImmediatePropagation();
     e.preventDefault();
     const t = deps.vodTime?.();
+    const live = !t && deps.liveTime?.();
     const r = region.getBoundingClientRect();
     const side = (e.clientX - r.left) / (r.width || 1);
-    if (t && (side < 0.35 || side > 0.65)) {
+    if ((t || live) && (side < 0.35 || side > 0.65)) {
       const step = side < 0.35 ? -10 : 10;
-      deps.seekVod?.(Math.min(Math.max(0, t.pos + step), Math.max(0, t.dur - 1)));
+      // live, ahead only goes as far as live
+      if (live) deps.seekBy?.(step);
+      else deps.seekVod?.(Math.min(Math.max(0, t.pos + step), Math.max(0, t.dur - 1)));
       showSkip(region, step);
       haptic("tick");
       return;

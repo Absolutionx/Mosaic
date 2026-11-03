@@ -11228,7 +11228,8 @@ body.mobile .hype-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* ---- typing sideways: the keyboard leaves a short strip, so the video sizes to that height on the left and chat
    takes the rest of the width, with the hype train and the mod/points row out of the way until you're done ---- */
 @media (min-aspect-ratio: 13/9) and (max-height: 300px) {
-  body.mobile.m-watching:not(.m-full) #app {
+  /* (not the floating window: it's short and wide too, but it's only the video) */
+  body.mobile.m-watching:not(.m-full):not(.m-pip) #app {
     grid-template-columns: min(calc(var(--m-vh, 100dvh) * 16 / 9), 50vw) minmax(0, 1fr) !important;
   }
   body.mobile.m-watching #hype-train-banner,
@@ -11245,10 +11246,10 @@ body.mobile .m-has-timeline .m-ov-timeline {
 body.mobile .m-has-timeline .m-ov-bottom { flex-wrap: wrap; row-gap: 0; }
 /* the overlay passes touches through except to its controls: the bar is one */
 body.mobile #video-frame.controls-visible .m-ov-timeline { pointer-events: auto; }
-body.mobile .m-has-timeline .m-ov-stats { visibility: hidden; }
+body.mobile .m-has-timeline:not(.m-timeline-live) .m-ov-stats { visibility: hidden; }
 body.mobile .m-has-timeline .m-ov-right { margin-left: auto; }
 /* refresh restarts a live stream; a past broadcast has the timeline instead */
-body.mobile .m-has-timeline .m-ov-refresh { display: none; }
+body.mobile .m-has-timeline:not(.m-timeline-live) .m-ov-refresh { display: none; }
 .m-ov-time { flex: none; min-width: 34px; }
 .m-ov-time:last-child { text-align: right; }
 /* a tall invisible strip, so the thin bar is easy to grab */
@@ -11410,3 +11411,6 @@ body.mobile.theme-light {
 }
 /* the settings switches keep a white knob, which would vanish on the white "on" track */
 body.mobile .settings-switch.on .settings-switch-knob { background: var(--m-accent-fg); }
+
+/* a live stream's timeline: "LIVE" or how far behind on the right, a little wider so it doesn't jump about */
+body.mobile .m-timeline-live .m-ov-time:last-child { min-width: 52px; }

@@ -2050,8 +2050,12 @@ export class PlaybackControls {
   // Twitch live is limited to what the MSE feeder buffered (one byte stream from the live edge, no on-demand segments, trimBuffered() evicts past TRAILING_WINDOW). Kick shares this branch but has a real server-side DVR window via hls.js, so it can seek anywhere in that window
   seekToClickPosition(event) {
     const rect = this.seekBarTrack.getBoundingClientRect();
-    const clickRatio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    this.seekToRatio(Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)));
+  }
 
+  // where along the seek bar (0 = start, 1 = now / the end) to go: the click above, and the phone's own timeline
+  // (mobile.js), which has its own bar since the desktop one is hidden there
+  seekToRatio(clickRatio) {
     if (this.isVod) {
       const total = this.videoEl.duration || this.vodTotalSeconds || 0;
       if (total <= 0) return;
@@ -2267,7 +2271,29 @@ export class PlaybackControls {
   // normal live: seeks to the end of the MSE buffer. live-DVR mode (watching the in-progress VOD via HLS.js): fires onLiveDvrSeek(0) to signal "go back to live relay", main.js tears down HLS.js and reconnects the MSE feeder
   // live through hls.js: how many seconds playback is behind where hls.js aims to play (null otherwise), for the
   // phone's "Go live" (mobile.js)
+  // a live stream's place for the phone's timeline: { pos, dur } in seconds from when the stream started, or null
+  // (a past broadcast, or the stream's start not known yet). Rewound past what's buffered (live-DVR), playback is
+  // in the stream's recording, whose time is the stream's
+  liveTimeline() {
+    if (this.isVod) return null;
+    if (this._liveDvr) {
+      const dur = (Date.now() - this._liveDvr.streamStartedAt) / 1000;
+      return { pos: Math.min(dur, this.videoEl.currentTime || 0), dur };
+    }
+    if (!this.liveDvrStreamStartedAt) return null;
+    const dur = (Date.now() - this.liveDvrStreamStartedAt) / 1000;
+    const seekable = this.videoEl.seekable;
+    const edge = seekable && seekable.length ? seekable.end(seekable.length - 1) : this.videoEl.currentTime;
+    const behind = Math.max(0, edge - (this.videoEl.currentTime || 0));
+    return { pos: Math.max(0, dur - behind), dur };
+  }
+
   liveLag() {
+    // rewound into the recording: as far behind as that is
+    if (this._liveDvr && !this.isVod) {
+      const t = this.liveTimeline();
+      return t ? Math.max(0, t.dur - t.pos) : null;
+    }
     const h = this._nativeHlsLive && !this.isVod && !this._liveDvr ? this._hlsVod : null;
     if (!h) return null;
     const details = h.latestLevelDetails || h.levels?.[h.loadLevel]?.details;
