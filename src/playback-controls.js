@@ -2066,6 +2066,9 @@ export class PlaybackControls {
       const streamStartedAt = this._liveDvr.streamStartedAt;
       const totalSecs = (Date.now() - streamStartedAt) / 1000;
       const targetVodOffset = clickRatio * totalSecs;
+      // at the end of the bar (the last minute, or the last 2.5% of it, so a finger reaching the end gets there):
+      // that's live (the recording trails it by ~45s, so it can't play that part anyway)
+      if (totalSecs - targetVodOffset < Math.max(60, totalSecs * 0.025) && this.onLiveDvrSeek) { this.onLiveDvrSeek(0); return; }
       this.videoEl.currentTime = targetVodOffset;
       this.onSeek(this.videoEl.currentTime);
     } else {
@@ -2134,6 +2137,8 @@ export class PlaybackControls {
         : (this.videoEl.duration || this.vodTotalSeconds || 0);
       if (total <= 0) return;
       const target = this.videoEl.currentTime + deltaSeconds;
+      // skipping ahead into the last minute of a rewound live stream: back to live (the recording trails it)
+      if (this._liveDvr && deltaSeconds > 0 && total - target < 60 && this.onLiveDvrSeek) { this.onLiveDvrSeek(0); return; }
       this.videoEl.currentTime = Math.min(total, Math.max(0, target));
       this.onSeek(this.videoEl.currentTime);
     } else {

@@ -19,6 +19,7 @@ export const DEFAULTS = {
   emotesFfz: true,
   sevenTvPaints: true,       // 7TV gradient/image username paints
   liveRewindSecs: 120,       // live video kept in memory for instant rewinding (Twitch relay + Kick); 1080p is ~45 MB a minute
+  dvrChat: "live",           // rewound into a live stream's recording: keep the live chat ("live", as Twitch does), or that moment's chat ("replay")
   chatSpellcheck: true,      // red underlines on misspelled words in the chat box; right-click one for suggestions
   sevenTvPaintsAnimate: false, // the paints' colors slowly flowing. off: each repaint of an animated name costs CPU every frame
   clipCards: true,           // Twitch clip links -> playable cards

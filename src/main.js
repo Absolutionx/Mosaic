@@ -349,21 +349,31 @@ const playbackControls = new PlaybackControls({
     }
 
     if (secondsBehindLive <= 0) {
-      // "go live": tear down HLS.js, reconnect the MSE relay
+      // "go live": tear down HLS.js, back to the live stream
       if (playbackControls._liveDvr) {
         playbackControls._liveDvr = null;
         const channel = session.intendedChannel;
         try {
           setStatus(`Returning to live…`);
-          const relayUrl = await invoke("start_stream", { channel, quality: session.currentQuality, lowLatency: session.lowLatency });
-          playbackControls.attachLiveMse(relayUrl);
-          // switch chat back from VOD replay to live IRC
-          await chat.connect(channel);
+          if (session.useNativeHlsForLive) {
+            // Android and macOS play live through hls.js too (no streamlink relay, so start_stream isn't there):
+            // a fresh live playlist, the way a quality change restarts it. the stream's start stays known, so the
+            // phone's timeline stays
+            const m3u8Url = await invoke("get_live_m3u8_url", { channel, quality: session.currentQuality, lowLatency: isAndroid ? phoneLowLatency() : null });
+            if (session.intendedChannel !== channel) return;
+            playbackControls.start(channel, m3u8Url, session.currentQuality, 0, 0, { nativeHlsLive: true });
+          } else {
+            const relayUrl = await invoke("start_stream", { channel, quality: session.currentQuality, lowLatency: session.lowLatency });
+            playbackControls.attachLiveMse(relayUrl);
+          }
           setStatus(`Playing: ${channel}`);
         } catch (err) {
           console.error("Failed to return to live:", err);
           setStatus(`Error returning to live: ${err}`);
         }
+        // chat back from replay to live, whatever happened to the video (it used to wait on the video, so a
+        // failed restart left the chat box hidden for good)
+        if (chat._isVodMode && session.intendedChannel === channel) await chat.connect(channel).catch(() => {});
       }
       return;
     }
@@ -386,8 +396,11 @@ const playbackControls = new PlaybackControls({
       playbackControls._liveDvr = { channel: session.intendedChannel, videoId, streamStartedAt };
       playbackControls.attachHlsDvr(m3u8Url, vodOffset);
       resolvePipVodUrl(videoId);
-      // switch chat to VOD replay, using the channel login for badge loading. vodOffset tells replay where playback lands, see setVodMode's initialPositionSecs for why it matters on long streams
-      await chat.setVodMode(videoId, () => playbackControls.lastKnownPosition, session.intendedChannel, vodOffset);
+      // switch chat to VOD replay, using the channel login for badge loading. vodOffset tells replay where playback lands, see setVodMode's initialPositionSecs for why it matters on long streams.
+      // Settings > Video > Chat while rewound: "live" keeps the live chat (and the chat box) instead
+      if (getSetting("dvrChat") !== "live") {
+        await chat.setVodMode(videoId, () => playbackControls.lastKnownPosition, session.intendedChannel, vodOffset);
+      }
       setStatus(`DVR: ${session.intendedChannel}`);
     } catch (err) {
       console.error("Failed to enter live-DVR mode:", err);
@@ -483,6 +496,17 @@ const trackId = new TrackId(playbackControls.videoEl, {
     });
   }
 }
+// Chat while rewound changed while rewound: switch chat over now (live chat, or the replay from where playback is)
+onSettingChange((id) => {
+  if (id !== "dvrChat") return;
+  const dvr = playbackControls._liveDvr;
+  if (!dvr || !dvr.videoId || session.liveDvrInfo?.kick || session.intendedChannel !== dvr.channel) return;
+  if (getSetting("dvrChat") === "live") {
+    if (chat._isVodMode) chat.connect(dvr.channel).catch(() => {});
+  } else if (!chat._isVodMode) {
+    chat.setVodMode(dvr.videoId, () => playbackControls.lastKnownPosition, dvr.channel, playbackControls.lastKnownPosition || 0).catch(() => {});
+  }
+});
 // Points & Drops: Rewards | Ledger | Watch stats (rewards.js). tab picks where it opens
 function openPointsPanel(tab) {
   openRewardsModal(chat.channel, chat.roomId, () => {

@@ -94,6 +94,8 @@ const SECTIONS = [
       options: [{ value: "light", label: "Light" }, { value: "balanced", label: "Balanced" }, { value: "strong", label: "Strong" }] },
     { kind: "select", id: "liveRewindSecs", title: "Live rewind", desc: "How far back you can rewind a live stream instantly. Each minute of 1080p is about 45 MB of memory. Applies to the next stream.",
       options: [{ value: 30, label: "30 seconds" }, { value: 60, label: "1 minute" }, { value: 120, label: "2 minutes" }] },
+    { kind: "segmented", id: "dvrChat", title: "Chat while rewound", desc: "Rewinding a live stream: keep the live chat so you can still talk (as Twitch does), or see chat from that moment in the stream.",
+      options: [{ value: "live", label: "Live chat" }, { value: "replay", label: "Chat replay" }] },
     { kind: "toggle", id: "lowLatency", title: "Low latency", desc: "Closer to live, with more rebuffering on shaky connections. Applies to the next stream." },
     { kind: "toggle", id: "preloadFavorites", title: "Preload favorites", desc: "Keep your live favorites loading in the background so they start instantly when you open them. Each one uses about as much data as watching it." },
     { kind: "segmented", id: "preloadCount", title: "How many to preload", desc: "Live favorites loading at once, besides the one you're watching.",

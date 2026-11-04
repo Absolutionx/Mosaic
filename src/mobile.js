@@ -18,6 +18,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { escapeCount, onEscapeChange, closeTopEscape, pushEscape } from "./escape-stack.js";
+import { getSetting, setSetting } from "./settings.js";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 
 export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
@@ -1287,6 +1288,15 @@ function openPlayerOptions() {
       const c = deps.currentChannel?.();
       if (c) deps.watch?.(c);
     }));
+  // rewinding a live stream (the timeline): that moment's chat, or keep the live chat to talk in (Settings >
+  // Video has it too); changing it while rewound switches chat at once (main.js)
+  const live = !deps.vodTime?.() && deps.liveTime?.();
+  if (live) {
+    const dvr = row("Chat while rewound", "When you rewind this stream: keep the live chat so you can still talk, or see chat from that moment.", null);
+    dvr.classList.add("m-opt-stack");
+    dvr.appendChild(segmented([["live", "Live chat"], ["replay", "Chat replay"]], getSetting("dvrChat") === "replay" ? "replay" : "live",
+      (v) => setSetting("dvrChat", v)));
+  }
   // the channel being watched (not a past broadcast's "vod:" id)
   const login = String(deps.currentChannel?.() || "");
   if (/^[a-z0-9_]{2,25}$/i.test(login)) {
