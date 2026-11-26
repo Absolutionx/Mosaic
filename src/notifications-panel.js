@@ -8,11 +8,13 @@
 // - clicking an item marks it read and opens what it's about: a channel, VOD or clip in Mosaic, anything else
 //   on twitch.tv in the browser. a watch streak's notice opens the clip or VOD Twitch picked to save it
 // - the count refreshes every 3 minutes, and when Mosaic comes back to the front
+// - Twitch posts nothing when a broken watch streak is saved, so Mosaic adds its own "is saved" entry (kept in
+//   localStorage for 30 days) when it sees one go through, and tags the "broke!" notice Saved
 // Settings > App > Notifications button hides the bell.
 
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { openClipPlayer } from "./chat/chat-clips.js";
+import { openClipPlayer, setClipPlayerNote } from "./chat/chat-clips.js";
 import { showAppToast } from "./app-toast.js";
 import { getSetting, onSettingChange } from "./settings.js";
 import { pushEscape } from "./escape-stack.js";
@@ -141,6 +143,72 @@ export function categoryLabel(c) {
   return t ? t[0].toUpperCase() + t.slice(1) : "";
 }
 
+// ---- streak saves Mosaic saw go through (Twitch sends no notification for them, 10-24-26) ----
+const SAVES_KEY = "mosaicStreakSaves";
+const SAVES_DAYS = 30;
+
+function readSaves(now = Date.now()) {
+  try {
+    const a = JSON.parse(localStorage.getItem(SAVES_KEY) || "[]");
+    return Array.isArray(a) ? a.filter((x) => x && typeof x.login === "string" && now - x.at < SAVES_DAYS * DAY) : [];
+  } catch { return []; }
+}
+function writeSaves(a) {
+  try { localStorage.setItem(SAVES_KEY, JSON.stringify(a.slice(0, 30))); } catch { /* storage off: this run only */ }
+}
+export function recordSave(login, length = 0, thumbnail = "", now = Date.now()) {
+  const a = readSaves(now);
+  if (a.some((x) => x.login === login && now - x.at < DAY)) return; // the same save, seen twice
+  a.unshift({ login, length: length | 0, thumbnail: thumbnail || "", at: now, read: false, seen: false });
+  writeSaves(a);
+}
+
+// a save as a notification, shaped like Twitch's
+export function saveItem(x) {
+  return {
+    id: `mosaic-save:${x.login}:${x.at}`, local: true, at: x.at,
+    read: !!x.read, created_at: new Date(x.at).toISOString(),
+    body: x.length ? `Your **${x.length}-stream** watch streak on **${x.login}** is saved.` : `Your watch streak on **${x.login}** is saved.`,
+    note: "Saved in Mosaic", category: "watch_streaks", thumbnail: x.thumbnail || "",
+    target: { kind: "channel", login: x.login },
+  };
+}
+const localUnread = () => readSaves().filter((x) => !x.read).length;
+const localUnseen = () => readSaves().filter((x) => !x.seen).length;
+function updateSave(item, patch) {
+  const a = readSaves();
+  const x = a.find((y) => `mosaic-save:${y.login}:${y.at}` === item.id);
+  if (x) { Object.assign(x, patch); writeSaves(a); }
+}
+
+// broken streaks saved since their notice: login -> true, from Mosaic's saves or from asking Twitch
+const savedNow = new Map(); // login -> { saved, checked }
+export function noticeSaved(n, saves = readSaves()) {
+  const login = rescueLogin(n);
+  if (!login) return false;
+  const t = Date.parse(n.created_at || 0) || 0;
+  if (saves.some((x) => x.login === login && x.at >= t)) return true;
+  return !!(savedNow.get(login) && savedNow.get(login).saved);
+}
+// "broke!" notices from the last day (a streak can only be saved for 24 h): ask Twitch once every 5 minutes
+// whether it's been saved since (on twitch.tv, by watching the stream...), then tag it
+function checkSaved(items) {
+  const now = Date.now();
+  const logins = new Set();
+  for (const n of items) {
+    const login = rescueLogin(n);
+    if (login && now - (Date.parse(n.created_at || 0) || 0) < DAY + 3600000) logins.add(login);
+  }
+  for (const login of [...logins].slice(0, 6)) {
+    const c = savedNow.get(login);
+    if (c && (c.saved || now - c.checked < 5 * 60000)) continue;
+    savedNow.set(login, { saved: false, checked: now });
+    invoke("get_streak_rescue", { channelLogin: login }).then((r) => {
+      if (r && r.state === "recovered") { savedNow.set(login, { saved: true, checked: Date.now() }); if (panel) render(); }
+    }).catch(() => { /* not this time */ });
+  }
+}
+
 // ---- state ----
 let deps = { watchChannel: () => {}, openVod: () => {}, connectTwitch: (done) => done?.() };
 let btn = null, badge = null, pollTimer = null, lastPoll = 0;
@@ -152,12 +220,14 @@ const tabs = {
 let tab = "VIEWER";
 let panel = null, popEscape = null, connected = null;
 
+// n: Twitch's unseen count. Mosaic's own unseen saves count on top
 function setBadge(n) {
   unseen = Math.max(0, n | 0);
   if (!badge) return;
-  badge.textContent = badgeText(unseen);
-  badge.style.display = unseen > 0 ? "" : "none";
-  if (btn) btn.title = unseen > 0 ? `Notifications (${unseen} new)` : "Notifications";
+  const all = unseen + localUnseen();
+  badge.textContent = badgeText(all);
+  badge.style.display = all > 0 ? "" : "none";
+  if (btn) btn.title = all > 0 ? `Notifications (${all} new)` : "Notifications";
 }
 
 function applySummary(r) {
@@ -224,6 +294,7 @@ export function openNotificationsPanel() {
   render();
   load(tab, false);
   // opened: Twitch counts them as seen, the bell's count goes
+  if (localUnseen() > 0) { writeSaves(readSaves().map((x) => ({ ...x, seen: true }))); setBadge(unseen); }
   if (unseen > 0) {
     setBadge(0);
     invoke("notifications_action", { action: "seen" }).catch((e) => console.warn("[notifications] seen:", e));
@@ -293,7 +364,7 @@ function render() {
   const head = el("div", "notif-head");
   const markAll = el("button", "notif-icon-btn");
   markAll.type = "button"; markAll.title = "Mark all as read"; markAll.innerHTML = ICON(MAIL_OPEN, 16);
-  markAll.disabled = !connected || !userId || tab !== "VIEWER" || !tabs.VIEWER.items.some((i) => !i.read);
+  markAll.disabled = !connected || !userId || tab !== "VIEWER" || (!tabs.VIEWER.items.some((i) => !i.read) && !localUnread());
   markAll.addEventListener("click", markAllRead);
   const title = el("div", "notif-title", "Notifications");
   const settings = el("button", "notif-icon-btn");
@@ -325,7 +396,8 @@ function render() {
   const tabRow = el("div", "notif-tabs");
   for (const kind of ["VIEWER", "CREATOR"]) {
     const t = tabs[kind];
-    const b = el("button", "notif-tab" + (kind === tab ? " active" : ""), t.unread ? `${t.label} (${t.unread})` : t.label);
+    const count = t.unread + (kind === "VIEWER" ? localUnread() : 0);
+    const b = el("button", "notif-tab" + (kind === tab ? " active" : ""), count ? `${t.label} (${count})` : t.label);
     b.type = "button";
     b.addEventListener("click", () => { if (tab === kind) return; tab = kind; render(); load(kind, false); });
     tabRow.append(b);
@@ -334,17 +406,20 @@ function render() {
 
   const list = el("div", "notif-list");
   const t = tabs[tab];
+  const saves = readSaves();
+  const items = tab === "VIEWER" && t.loaded ? withSaves(t.items, saves, t.hasMore) : t.items;
+  if (tab === "VIEWER" && t.loaded) checkSaved(t.items);
   if (!t.loaded && (t.loading || connected === null)) list.append(el("div", "notif-empty", "Loading…"));
-  else if (t.error && !t.items.length) list.append(el("div", "notif-empty", t.error));
-  else if (!t.items.length) list.append(el("div", "notif-empty", tab === "VIEWER" ? "No notifications yet." : "Nothing about your channel yet."));
+  else if (t.error && !items.length) list.append(el("div", "notif-empty", t.error));
+  else if (!items.length) list.append(el("div", "notif-empty", tab === "VIEWER" ? "No notifications yet." : "Nothing about your channel yet."));
   else {
     const now = Date.now();
-    const recent = t.items.filter((i) => now - Date.parse(i.created_at || 0) < DAY);
-    const older = t.items.filter((i) => !(now - Date.parse(i.created_at || 0) < DAY));
+    const recent = items.filter((i) => now - Date.parse(i.created_at || 0) < DAY);
+    const older = items.filter((i) => !(now - Date.parse(i.created_at || 0) < DAY));
     for (const [label, group] of [["Last 24 hours", recent], ["Earlier", older]]) {
       if (!group.length) continue;
       list.append(el("div", "notif-group", label));
-      for (const n of group) list.append(buildItem(n, now));
+      for (const n of group) list.append(buildItem(n, now, saves));
     }
     if (t.hasMore) {
       const more = el("div", "notif-more", t.loading ? "Loading…" : "");
@@ -358,7 +433,16 @@ function render() {
   list.scrollTop = keepScroll;
 }
 
-function buildItem(n, now) {
+// Twitch's list with Mosaic's saves in time order. while there's more to load, only saves newer than the
+// oldest loaded notice (the rest come in as you scroll)
+export function withSaves(items, saves, hasMore = false) {
+  if (!saves.length) return items;
+  const oldest = items.length ? Date.parse(items[items.length - 1].created_at || 0) || 0 : 0;
+  const mine = saves.filter((x) => !hasMore || x.at >= oldest).map(saveItem);
+  return items.concat(mine).sort((a, b) => (Date.parse(b.created_at || 0) || 0) - (Date.parse(a.created_at || 0) || 0));
+}
+
+function buildItem(n, now, saves = []) {
   const row = el("div", "notif-item" + (n.read ? "" : " unread"));
   row.tabIndex = 0;
   row.setAttribute("role", "button");
@@ -372,7 +456,14 @@ function buildItem(n, now) {
   const text = el("div", "notif-text");
   const body = el("div", "notif-body");
   for (const p of parseBody(n.body)) body.append(p.bold ? el("strong", null, p.text) : document.createTextNode(p.text));
-  const meta = el("div", "notif-meta", [timeAgo(n.created_at, now), categoryLabel(n.category)].filter(Boolean).join(" · "));
+  const meta = el("div", "notif-meta", [timeAgo(n.created_at, now), categoryLabel(n.category), n.note].filter(Boolean).join(" · "));
+  if (!n.local && noticeSaved(n, saves)) {
+    const chip = el("span", "notif-chip");
+    chip.innerHTML = ICON('<path d="M20 6 9 17l-5-5"/>', 10, ' stroke-width="3"');
+    chip.append("Saved");
+    chip.title = "This streak has been saved since";
+    meta.append(chip);
+  }
   text.append(body, meta);
   const dot = el("span", "notif-dot");
   const del = el("button", "notif-del");
@@ -388,6 +479,7 @@ function buildItem(n, now) {
 function markRead(n) {
   if (n.read) return;
   n.read = true;
+  if (n.local) { updateSave(n, { read: true, seen: true }); return; }
   const t = tabs[tab];
   t.unread = Math.max(0, t.unread - 1);
   invoke("notifications_action", { action: "read", ids: [n.id] }).catch((e) => console.warn("[notifications] read:", e));
@@ -401,7 +493,7 @@ function openItem(n) {
   if (target.app === "channel") deps.watchChannel(target.login);
   else if (target.app === "vod") deps.openVod(target.id, target.length, target.login);
   else if (target.app === "clip") openClip(target);
-  else if (target.app === "rescue") openRescue(target.login, streakLength(n));
+  else if (target.app === "rescue") openRescue(target.login, streakLength(n), n.thumbnail || "");
   else if (target.url) openUrl(target.url).catch(() => {});
 }
 
@@ -412,19 +504,27 @@ async function openClip(target) {
   openClipPlayer(info && info.slug ? info : { slug: target.slug, url: target.url || `https://clips.twitch.tv/${target.slug}`, title: "Clip" });
 }
 
-// "Your 2-stream streak on X broke!": the 2
+// "Your 2-stream streak on X broke!": the 2 (Twitch bolds it: "**2-stream** streak")
 function streakLength(n) {
-  const m = /(\d+)-stream streak/i.exec(`${n && n.title || ""} ${n && n.body || ""} ${n && n.text || ""}`);
+  const m = /(\d+)-stream\**\s+streak/i.exec(`${n && n.title || ""} ${n && n.body || ""} ${n && n.text || ""}`);
   return m ? Number(m[1]) : 0;
 }
 
 // what twitch.tv's save-streak page would play: a clip, else a past broadcast, else the channel
-async function openRescue(login, length = 0) {
+async function openRescue(login, length = 0, thumbnail = "") {
   let r = null;
   try { r = await invoke("get_streak_rescue", { channelLogin: login }); } catch (e) { console.warn("[notifications] streak rescue:", e); }
+  if (r && r.state === "recovered") savedNow.set(login, { saved: true, checked: Date.now() });
   // still to save: say so once Twitch counts it (it sends no notice of its own, 10-24-26)
-  if (r && r.state === "suspended") watchForSave(login, length);
-  if (r && r.clip && r.clip.slug) { openClipPlayer(r.clip); return; }
+  const slug = r && r.clip && r.clip.slug ? r.clip.slug : null;
+  if (r && r.state === "suspended") watchForSave(login, length, thumbnail, slug);
+  if (slug) {
+    openClipPlayer(r.clip);
+    // in the clip player itself: its backdrop covers the rest of the window
+    if (r.state === "suspended") setClipPlayerNote(slug, `Keep this clip playing to save your ${length ? `${length}-stream ` : ""}streak on ${login}…`, "pending");
+    else if (r.state === "recovered") setClipPlayerNote(slug, "This watch streak is already saved", "done");
+    return;
+  }
   if (r && r.vod && r.vod.id) { deps.openVod(String(r.vod.id), r.vod.length || 0, login); return; }
   deps.watchChannel(login);
   if (r && r.state === "recovered") showAppToast("This watch streak is already saved.");
@@ -436,7 +536,7 @@ async function openRescue(login, length = 0) {
 // is saved yet, and say so when it is. Twitch marks it saved a few seconds after a clip's or VOD's reports
 // arrive, but tells nobody: no notification on twitch.tv or here, only its save-streak page if you go back
 let saveWatch = null;
-function watchForSave(login, length) {
+function watchForSave(login, length, thumbnail = "", slug = null) {
   if (saveWatch) clearTimeout(saveWatch.timer);
   const w = saveWatch = { login, until: Date.now() + 15 * 60_000, timer: null };
   const tick = async () => {
@@ -446,7 +546,12 @@ function watchForSave(login, length) {
     if (saveWatch !== w) return;
     if (r && r.state === "recovered") {
       saveWatch = null;
-      showAppToast(length ? `Your ${length}-stream watch streak on ${login} is saved` : `Your watch streak on ${login} is saved`, { ms: 8000 });
+      savedNow.set(login, { saved: true, checked: Date.now() });
+      recordSave(login, length, thumbnail);
+      const text = length ? `Your ${length}-stream watch streak on ${login} is saved` : `Your watch streak on ${login} is saved`;
+      setClipPlayerNote(slug, "Streak saved. You can close the clip", "done");
+      showAppToast(text, { success: true, ms: 10000 });
+      if (panel) render(); else setBadge(unseen);
       return;
     }
     if ((r && r.state === "expired") || Date.now() > w.until) { saveWatch = null; return; }
@@ -456,6 +561,11 @@ function watchForSave(login, length) {
 }
 
 async function removeItem(n) {
+  if (n.local) {
+    writeSaves(readSaves().filter((x) => `mosaic-save:${x.login}:${x.at}` !== n.id));
+    render();
+    return;
+  }
   const t = tabs[tab];
   const i = t.items.indexOf(n);
   if (i < 0) return;
@@ -475,6 +585,7 @@ async function removeItem(n) {
 async function markAllRead() {
   if (!userId) return;
   const t = tabs.VIEWER;
+  writeSaves(readSaves().map((x) => ({ ...x, read: true, seen: true })));
   const before = t.items.map((i) => i.read);
   for (const i of t.items) i.read = true;
   const prevUnread = t.unread;
