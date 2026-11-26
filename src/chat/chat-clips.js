@@ -104,6 +104,28 @@ let playerEl = null;
 let restoreMain = null;
 let hls = null;
 let stopReplay = null;
+let playerSlug = null;
+
+const NOTE_CHECK = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+// a line at the bottom of the open clip player, if it's still showing this clip: kind "pending" (a spinner,
+// e.g. saving a watch streak) or "done" (a check mark). false when that clip isn't open anymore
+export function setClipPlayerNote(slug, text, kind = "pending") {
+  if (!playerEl || !slug || playerSlug !== slug) return false;
+  const note = playerEl.querySelector(".clip-player-note");
+  if (!note) return false;
+  note.className = `clip-player-note ${kind}`;
+  note.replaceChildren();
+  if (text) {
+    const icon = document.createElement("span");
+    icon.className = "clip-player-note-icon";
+    if (kind === "done") icon.innerHTML = NOTE_CHECK;
+    const t = document.createElement("span");
+    t.textContent = text;
+    note.append(icon, t);
+  }
+  return true;
+}
 
 export function closeClipPlayer() {
   if (!playerEl) return;
@@ -113,6 +135,7 @@ export function closeClipPlayer() {
   if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
   playerEl.remove();
   playerEl = null;
+  playerSlug = null;
   document.removeEventListener("keydown", onKey, true);
   if (restoreMain) { restoreMain(); restoreMain = null; }
 }
@@ -140,7 +163,7 @@ export async function openClipPlayer(info) {
       '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="clip-player-stage"><video class="clip-player-video" controls playsinline></video>' +
       '<div class="clip-player-status">Loading clip…</div></div>' +
-      '<div class="clip-player-foot"><button type="button" class="clip-player-open">Open on Twitch</button></div>' +
+      '<div class="clip-player-foot"><div class="clip-player-note" role="status" aria-live="polite"></div><button type="button" class="clip-player-open">Open on Twitch</button></div>' +
     "</div>";
   el.querySelector(".clip-player-title").textContent = info.title || "Clip";
   // a clip opened from a notification may have no details yet (logged out of Helix): show only what's known
@@ -157,6 +180,7 @@ export async function openClipPlayer(info) {
   });
   document.body.appendChild(el);
   playerEl = el;
+  playerSlug = info.slug || null;
   document.addEventListener("keydown", onKey, true);
 
   const video = el.querySelector("video");

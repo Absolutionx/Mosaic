@@ -8202,7 +8202,25 @@ header .titlebar-action-buttons { overflow: visible; }
   display: flex; align-items: center; justify-content: center;
   color: var(--m-muted, #9aa5b4); font-size: 13px; pointer-events: none; text-align: center; padding: 20px;
 }
-.clip-player-foot { display: flex; justify-content: flex-end; padding: 10px 12px; }
+.clip-player-foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 12px; }
+/* a watch streak being saved by this clip (notifications-panel.js): what's happening, then that it worked */
+.clip-player-note {
+  margin-right: auto; min-width: 0; display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px; line-height: 1.35; color: var(--m-muted, #9aa5b4);
+}
+.clip-player-note:empty { display: none; }
+.clip-player-note-icon {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  border: 1.5px solid var(--m-border, #29313d); color: var(--m-muted, #9aa5b4);
+}
+.clip-player-note.pending .clip-player-note-icon { border-top-color: var(--m-text, #e7ebf2); animation: clip-note-spin 1s linear infinite; }
+.clip-player-note.done { color: var(--m-text, #e7ebf2); font-weight: 700; }
+.clip-player-note.done .clip-player-note-icon { border: none; background: var(--m-text, #e7ebf2); color: var(--m-surface, #161b22); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12); }
+body.theme-light .app-toast.success { border-color: rgba(0, 0, 0, 0.35); box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.06), 0 10px 30px rgba(0, 0, 0, 0.18); }
+body.theme-light .notif-chip { border-color: rgba(0, 0, 0, 0.3); }
+body.theme-light .clip-player-note.done .clip-player-note-icon { box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08); }
+@keyframes clip-note-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .clip-player-note.pending .clip-player-note-icon { animation: none; } }
 .clip-player-open {
   font-family: inherit; font-size: 12.5px; font-weight: 600;
   color: var(--m-text, #e7ebf2);
@@ -10056,6 +10074,11 @@ body:not(.rich-glow) #ambient-glow-wrap::after { display: none; }
 .notif-meta { margin-top: 3px; font-size: 11.5px; color: var(--m-faint, #697386); }
 .notif-dot { position: absolute; right: 12px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; background: #efeff1; opacity: 0; }
 .notif-item.unread .notif-dot { opacity: 1; }
+/* a broken watch streak that's been saved since (Twitch's notice still says "broke!") */
+.notif-chip {
+  display: inline-flex; align-items: center; gap: 3px; margin-left: 6px; padding: 0 6px; height: 17px; vertical-align: 1px;
+  border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.4); color: var(--m-text, #e7ebf2); font-size: 10.5px; font-weight: 700;
+}
 .notif-del {
   position: absolute; right: 6px; top: 6px; width: 22px; height: 22px; padding: 0; display: none;
   align-items: center; justify-content: center; border: none; border-radius: 6px; background: var(--m-raised, #232b36);
@@ -10237,7 +10260,8 @@ header .titlebar-action-buttons #login-btn { position: relative; overflow: hidde
 
 /* app-wide toast (app-toast.js): bottom center, neutral surface like the panels, red-tinted text for errors */
 .app-toast {
-  position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); z-index: 13000;
+  /* above modals and the clip player (13000), which otherwise dim and blur it */
+  position: fixed; left: 50%; bottom: 22px; transform: translate(-50%, 12px); z-index: 20500;
   max-width: min(560px, calc(100vw - 32px)); padding: 10px 16px; border-radius: 10px;
   background: var(--m-surface-2, #1c222c); border: 1px solid var(--m-border, #29313d); color: var(--m-text, #e7ebf2);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45); font-size: 13px; line-height: 1.4; cursor: pointer;
@@ -10245,6 +10269,15 @@ header .titlebar-action-buttons #login-btn { position: relative; overflow: hidde
 }
 .app-toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
 .app-toast.error { color: #ff9c9c; border-color: rgba(235, 87, 87, 0.5); }
+.app-toast.success {
+  display: flex; align-items: center; gap: 9px; font-weight: 700; font-size: 13.5px; padding: 11px 18px 11px 14px;
+  border-color: rgba(255, 255, 255, 0.55); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.08), 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.app-toast-icon {
+  flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--m-text, #e7ebf2); color: var(--m-surface-2, #1c222c);
+}
+.app-toast-icon svg { width: 13px; height: 13px; }
 @media (prefers-reduced-motion: reduce) { .app-toast { transition: none; } }
 
 /* ---- Points & Drops > Ledger (ledger-view.js) ---- */
