@@ -4,6 +4,15 @@
 //   top: true puts an item first, ahead of the usual New / Improved / Fixed grouping
 export const CHANGELOG = [
   {
+    version: "1.8.8",
+    items: [
+      { kind: "improved", top: true, title: "Watch streak saves you can see", desc: "When a watch streak is saved, the notifications bell now lists it (\"is saved\"), since Twitch posts nothing for it, and a broken streak's notice gets a Saved tag once it's been saved anywhere, on twitch.tv too." },
+      { kind: "fixed", title: "Streak saved message", desc: "The message that a streak is saved showed behind the clip player's dimmed backdrop. It's now on top, and the clip player itself says to keep the clip playing, then that the streak is saved." },
+      { kind: "fixed", title: "Streak length", desc: "Streak messages left out the streak's length (\"your 31-stream streak\")." },
+      { kind: "improved", title: "Security updates", desc: "Updated three libraries Mosaic uses for web requests, following fixes for known problems." },
+    ],
+  },
+  {
     version: "1.8.7",
     items: [
       { kind: "new", top: true, title: "Clip a chosen part", desc: "The clip panel has a new Choose a part mode: pick 5 to 60 seconds anywhere in a VOD, or anywhere in a live stream you can rewind, preview it right in the panel, give it a title and clip it. Alt+X opens it on a VOD too. It uses the Twitch connection (Settings › Twitch account)." },
