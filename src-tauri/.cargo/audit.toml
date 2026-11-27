@@ -1,0 +1,9 @@
+# cargo-audit settings, read when it runs in src-tauri (the Dependency audit workflow and by hand).
+# Ignored, with reasons (remove a line once tauri-plugin-updater ships with a fixed zip that fits our Tauri):
+#   RUSTSEC-2026-0429 / 0545 / 0548: zip 4.6, used only by tauri-plugin-updater 2.10. Its first release on
+#   zip 9 is 2.14.1, which needs Tauri 2.12 (we stay on 2.11.5 to match @tauri-apps/api 2.11). The bugs are
+#   a crash on a symlink entry, AES-encrypted entries and ZipStreamReader names; Windows updates are an NSIS
+#   installer whose signature is checked before anything runs, with no zip involved (11-26-26).
+#   The workflow's own --ignore list covers RUSTSEC-2026-0367 / 0368 / 0369, same crate.
+[advisories]
+ignore = ["RUSTSEC-2026-0429", "RUSTSEC-2026-0545", "RUSTSEC-2026-0548"]
